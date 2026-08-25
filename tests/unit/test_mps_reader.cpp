@@ -729,5 +729,68 @@ TEST(MpsReader, ReadsAnUncompressedFileThroughTheSameCodePath) {
 }
 #endif  // SANKHYA_WITH_ZLIB
 
+// =========================================================================================
+// Non-finite coefficients
+//
+// These pin down a defect that reached main: nothing inspected the VALUE of a matrix entry.
+// Bounds, costs and the objective offset were all checked for NaN; the constraint matrix was
+// not. The consequences were worse than a bad number surviving.
+//
+// A NaN fails every comparison, so `fabs(v) >= drop_tol` answered "no, do not keep" and the
+// zero-dropping pass DELETED the entry. The model that reached the simplex was well formed,
+// solved cleanly, and reported `optimal` - for a problem with one fewer constraint
+// coefficient than the file described. On a two-column example that moved the objective
+// from a constrained optimum to -110 with no warning of any kind.
+// =========================================================================================
+
+TEST(MpsReader, RejectsANaNCoefficient) {
+  const std::string error = parse_expecting_failure(
+      "NAME          NANCOEF\n"
+      "ROWS\n"
+      " N  COST\n"
+      " L  R1\n"
+      "COLUMNS\n"
+      "    X         COST         1.0   R1           nan\n"
+      "    Y         COST         2.0   R1           1.0\n"
+      "RHS\n"
+      "    RHS       R1          10.0\n"
+      "ENDATA\n");
+  EXPECT_NE(error.find("not a number"), std::string::npos) << error;
+}
+
+TEST(MpsReader, RejectsAnInfiniteCoefficient) {
+  // 1e400 overflows to +inf. Infinity is legitimate in a BOUND, where MPS spells it 1e30,
+  // but it is meaningless as an entry of A.
+  const std::string error = parse_expecting_failure(
+      "NAME          INFCOEF\n"
+      "ROWS\n"
+      " N  COST\n"
+      " L  R1\n"
+      "COLUMNS\n"
+      "    X         COST         1.0   R1         1e400\n"
+      "RHS\n"
+      "    RHS       R1          10.0\n"
+      "ENDATA\n");
+  EXPECT_NE(error.find("must be finite"), std::string::npos) << error;
+}
+
+TEST(MpsReader, LargeBoundsAreStillInfinityNotAnError) {
+  // The guard above must not break the 1e30 convention, which is how every MPS file in
+  // existence spells an absent bound.
+  const Model model = parse_or_fail(
+      "NAME          BIGBOUND\n"
+      "ROWS\n"
+      " N  COST\n"
+      " L  R1\n"
+      "COLUMNS\n"
+      "    X         COST         1.0   R1           1.0\n"
+      "RHS\n"
+      "    RHS       R1          10.0\n"
+      "BOUNDS\n"
+      " UP BND       X         1.0E30\n"
+      "ENDATA\n");
+  EXPECT_TRUE(is_infinite(model.col_upper[0]));
+}
+
 }  // namespace
 }  // namespace sankhya

@@ -10,6 +10,7 @@
 
 #include <cctype>
 #include <cerrno>
+#include <cmath>
 #include <cstdlib>
 #include <string>
 #include <string_view>
@@ -74,6 +75,19 @@ inline void tokenize(std::string_view line, std::vector<std::string_view>* out) 
   if (end == buffer.c_str()) return false;
   while (end != nullptr && *end != '\0' && is_space(*end)) ++end;
   if (end == nullptr || *end != '\0') return false;
+
+  // strtod happily accepts "nan", "NaN" and "-nan". No field of an MPS or LP file can
+  // usefully hold one: a NaN bound, right-hand side or coefficient makes the model
+  // meaningless rather than merely extreme. Rejecting it here means the reader reports the
+  // offending line instead of the value travelling on to be diagnosed later, or worse
+  // vanishing - a NaN fails every comparison, so a zero-dropping pass deletes it and leaves
+  // a well formed model of a different problem.
+  //
+  // Infinity is NOT rejected here. It is meaningless in a coefficient but legitimate in a
+  // bound, where MPS spells it 1e30 and where readers normalise anything that large to a
+  // true infinity. The distinction is per-field, so it is enforced at the call sites that
+  // read coefficients rather than in this shared parser.
+  if (std::isnan(value)) return false;
 
   *out = value;
   return true;

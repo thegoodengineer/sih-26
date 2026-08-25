@@ -143,6 +143,26 @@ std::string Model::validate() const {
   if (matrix.num_cols() != n)
     return fmt::format("matrix has {} columns, model has {}", matrix.num_cols(), n);
 
+  // Coefficient VALUES, not just the shape. Bounds, costs and the offset were already
+  // checked for NaN below; the matrix was the one numeric input nothing inspected, and it
+  // is the worst place to leave unguarded. A NaN or infinite entry does not crash the
+  // simplex - it propagates through the ratio test into a plausible-looking optimum for a
+  // problem nobody posed. An infinity is equally meaningless as a coefficient: MPS uses
+  // 1e30 to mean "no bound", which is a statement about a BOUND, never about an entry of A.
+  //
+  // This check also covers models built programmatically through the C API in Phase 10,
+  // which never pass through a reader at all, so it belongs here rather than only in the
+  // readers - validate() is the last gate before any engine sees the model.
+  for (Index j = 0; j < n; ++j) {
+    const ColumnView c = matrix.column(j);
+    for (Index k = 0; k < c.size; ++k) {
+      if (!std::isfinite(c.values[k])) {
+        return fmt::format("matrix entry ({}, {}) is {}, which is not a usable coefficient",
+                           c.rows[k], j, c.values[k]);
+      }
+    }
+  }
+
   if (has_quadratic_objective()) {
     if (!hessian.frozen()) return "hessian is not finalized";
     if (hessian.num_rows() != n || hessian.num_cols() != n) {
@@ -156,6 +176,10 @@ std::string Model::validate() const {
               "hessian entry ({}, {}) is above the diagonal; only the lower "
               "triangle is stored",
               c.rows[k], j);
+        }
+        if (!std::isfinite(c.values[k])) {
+          return fmt::format("hessian entry ({}, {}) is {}, which is not a usable coefficient",
+                             c.rows[k], j, c.values[k]);
         }
       }
     }
