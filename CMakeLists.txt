@@ -183,6 +183,7 @@ set(SANKHYA_CORE_SOURCES
   src/io/lp_reader.cpp
   src/io/mps_reader.cpp
   src/io/writer.cpp
+  src/la/lu.cpp
   src/la/sparse.cpp
   src/simplex/dense_lu.cpp
   src/mip/branch_and_bound.cpp

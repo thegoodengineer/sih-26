@@ -17,6 +17,7 @@ add_executable(sankhya_tests
   unit/test_lp_reader.cpp
   unit/test_simplex.cpp
   unit/test_dense_lu.cpp
+  unit/test_sparse_lu.cpp
   unit/test_writer.cpp
   unit/test_pdhg.cpp
   unit/test_branch_and_bound.cpp
