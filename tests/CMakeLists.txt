@@ -17,7 +17,13 @@ add_executable(sankhya_tests
   unit/test_lp_reader.cpp
   unit/test_simplex.cpp
   unit/test_dense_lu.cpp
-  unit/test_writer.cpp)
+  unit/test_writer.cpp
+  # The verification spine (Phase 3). The oracle is exact-arithmetic reference code
+  # that lives only in the test binary; nothing in src/ can reach it.
+  oracles/rational_simplex.cpp
+  oracles/lp_generator.cpp
+  oracles/test_rational_oracle.cpp
+  oracles/test_fuzz_against_oracle.cpp)
 
 # nlohmann_json is PRIVATE to sankhya_objects, so the stats-blob test has to ask for it
 # directly rather than inheriting it.
@@ -33,4 +39,4 @@ target_include_directories(sankhya_tests PRIVATE
 
 gtest_discover_tests(sankhya_tests
   DISCOVERY_TIMEOUT 60
-  PROPERTIES TIMEOUT 300)
+  PROPERTIES TIMEOUT 900)

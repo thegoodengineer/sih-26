@@ -96,6 +96,12 @@ jobs:
           echo '--- objective must match the hand-verified value ---'
           python3 tools/check_demo_result.py blend.json
 
+          echo '--- the solution must survive INDEPENDENT verification ---'
+          # verify_solution.py shares no code with the solver: it re-parses the model
+          # with its own MPS reader and re-derives feasibility, the objective and
+          # strong duality. A reader bug shows up here as a disagreement.
+          python3 tools/verify_solution.py demo/crude_blend.mps blend.sol
+
           echo '--- a MILP must be REFUSED, never answered with its relaxation ---'
           set +e
           ./build/sankhya solve demo/blend_milp.mps > milp.log 2>&1
@@ -107,6 +113,41 @@ jobs:
           test "$milp_status" -eq 5
           grep -q 'not_solved' milp.log
           echo 'MILP correctly refused'
+
+  benchmarks:
+    name: netlib benchmark
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build zlib1g-dev
+
+      - name: Build
+        run: |
+          cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Release -DSANKHYA_BUILD_TESTS=OFF
+          cmake --build build -j
+
+      # Downloads the instances and PARSES the reference optima out of Netlib's own
+      # readme. No expected value is stored in this repository, so the benchmark cannot
+      # be made to pass by editing a constant.
+      - name: Fetch the Netlib set and its published optima
+        run: python3 bench/runners/fetch_data.py
+
+      # Gates on BOTH the published optimum and independent verification of every
+      # solution. Exits non-zero if any instance fails either one.
+      - name: Solve and verify
+        run: python3 bench/runners/netlib.py --binary build/sankhya --time-limit 120
+
+      - name: Upload the evidence CSV
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: netlib-results
+          path: bench/results/*.csv
+          if-no-files-found: warn
 
   provenance:
     name: provenance
