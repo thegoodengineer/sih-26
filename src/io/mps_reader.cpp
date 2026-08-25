@@ -215,6 +215,20 @@ Index MpsParser::find_column(std::string_view name) const {
 bool MpsParser::record_entry(Index row, Index col, double value, std::string* error) {
   if (row == kIgnoredRow) return true;  // a dropped free row
 
+  // An infinite coefficient is meaningless. MPS spells infinity 1e30, but that convention
+  // describes a BOUND - "this variable is unconstrained above" - and says nothing about an
+  // entry of A. A coefficient that overflowed to infinity (a stray "1e400", a corrupted
+  // exponent) is a broken file, and letting it through produces a model that still solves,
+  // still prints "optimal", and reports NaN reduced costs alongside it. parse_double has
+  // already rejected NaN in every field; this is the coefficient-only half of the rule.
+  if (!std::isfinite(value)) {
+    *error = reader_.error_at(
+        fmt::format("coefficient for column '{}' is {}; a constraint or objective "
+                    "coefficient must be finite",
+                    col_names_[static_cast<std::size_t>(col)], value));
+    return false;
+  }
+
   if (row == kObjectiveRow) {
     if (!seen_objective_.insert(col).second) {
       *error = reader_.error_at(fmt::format("duplicate objective coefficient for column '{}'",

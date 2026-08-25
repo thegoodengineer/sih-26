@@ -9,6 +9,7 @@
 //     stored off-diagonal entry stands for two entries of the symmetric matrix
 
 #include <cmath>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -316,6 +317,45 @@ TEST(Solve, RefusesAMilpRatherThanReportingItsRelaxation) {
   EXPECT_EQ(solution.algorithm, "none");
   EXPECT_NE(solution.message.find("MILP"), std::string::npos);
   EXPECT_FALSE(solution.has_primal_values());
+}
+
+// =========================================================================================
+// Coefficient values
+//
+// validate() is the LAST gate before an engine sees a model, and the only one a model built
+// through the C API in Phase 10 will pass through at all - such a model never touches a
+// reader. So the check has to live here as well as in the readers, not instead of.
+// =========================================================================================
+
+TEST(Model, ValidateRejectsANaNMatrixCoefficient) {
+  Model model = make_small_lp();
+  model.matrix.unfreeze();
+  model.matrix.add_entry(0, 0, std::numeric_limits<double>::quiet_NaN());
+  model.matrix.finalize();
+  const std::string problem = model.validate();
+  EXPECT_NE(problem.find("not a usable coefficient"), std::string::npos) << problem;
+}
+
+TEST(Model, ValidateRejectsAnInfiniteMatrixCoefficient) {
+  Model model = make_small_lp();
+  model.matrix.unfreeze();
+  model.matrix.add_entry(0, 0, kInfinity);
+  model.matrix.finalize();
+  const std::string problem = model.validate();
+  EXPECT_NE(problem.find("not a usable coefficient"), std::string::npos) << problem;
+}
+
+TEST(SparseMatrix, FinalizeDoesNotSilentlyDeleteANaN) {
+  // The direct spelling of the drop test, `fabs(sum) >= drop_tol`, is false for NaN and so
+  // deletes the entry - converting a corrupt model into a well formed model of a different
+  // problem, which is the single most dangerous outcome in this codebase. The entry must
+  // survive finalize() so that validate() can name it.
+  SparseMatrix matrix;
+  matrix.reset(2, 2);
+  matrix.add_entry(0, 0, std::numeric_limits<double>::quiet_NaN());
+  matrix.add_entry(1, 1, 1.0);
+  matrix.finalize();
+  EXPECT_EQ(matrix.num_nonzeros(), 2) << "the NaN entry was dropped instead of retained";
 }
 
 }  // namespace

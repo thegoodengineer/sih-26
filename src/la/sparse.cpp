@@ -109,7 +109,15 @@ void SparseMatrix::finalize(double drop_tol) {
         sum += scratch_values[begin + static_cast<std::size_t>(order[p])];
         ++p;
       }
-      if (std::fabs(sum) >= drop_tol) {
+      // Written as the NEGATION of "negligible" rather than as `fabs(sum) >= drop_tol`,
+      // and the difference is not stylistic. Every comparison involving NaN is false, so
+      // the direct form quietly answers "no, do not keep this" for a NaN coefficient and
+      // DELETES it - turning a corrupt model into a well formed but different one, which
+      // then solves cleanly and reports a confident wrong optimum. This form keeps NaN and
+      // infinity so that Model::validate() can reject them by name. Behaviour is unchanged
+      // for every finite value.
+      const bool negligible = std::fabs(sum) < drop_tol;
+      if (!negligible) {
         row_indices_.push_back(row);
         values_.push_back(sum);
       }
