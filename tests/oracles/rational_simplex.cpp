@@ -36,10 +36,21 @@ StandardForm to_standard_form(const GeneratedLp& lp) {
   for (Index j = 0; j < lp.num_cols; ++j) {
     if (lp.upper[static_cast<std::size_t>(j)] != kNoUpperBound) bounded.push_back(j);
   }
+  // A non-zero lower bound becomes an ordinary >= row. Shifting the variable instead would
+  // be faster and would also mean every objective and right-hand side had to be adjusted to
+  // match - one more transformation for an oracle to get wrong, for no benefit at this size.
+  std::vector<Index> lower_bounded;
+  if (!lp.lower.empty()) {
+    for (Index j = 0; j < lp.num_cols; ++j) {
+      if (lp.lower[static_cast<std::size_t>(j)] != 0) lower_bounded.push_back(j);
+    }
+  }
 
   StandardForm sf;
-  sf.rows = lp.num_rows + static_cast<Index>(bounded.size());
-  sf.cols = lp.num_cols + lp.num_rows + static_cast<Index>(bounded.size());
+  sf.rows = lp.num_rows + static_cast<Index>(bounded.size()) +
+            static_cast<Index>(lower_bounded.size());
+  sf.cols = lp.num_cols + lp.num_rows + static_cast<Index>(bounded.size()) +
+            static_cast<Index>(lower_bounded.size());
   sf.a.assign(static_cast<std::size_t>(sf.rows),
               std::vector<Rational>(static_cast<std::size_t>(sf.cols), Rational(0)));
   sf.b.assign(static_cast<std::size_t>(sf.rows), Rational(0));
@@ -67,6 +78,16 @@ StandardForm to_standard_form(const GeneratedLp& lp) {
     sf.a[row][static_cast<std::size_t>(j)] = Rational(1);
     sf.a[row][static_cast<std::size_t>(lp.num_cols + lp.num_rows) + k] = Rational(1);
     sf.b[row] = Rational(lp.upper[static_cast<std::size_t>(j)]);
+  }
+
+  for (std::size_t k = 0; k < lower_bounded.size(); ++k) {
+    const Index j = lower_bounded[k];
+    const auto row = static_cast<std::size_t>(lp.num_rows) + bounded.size() + k;
+    const auto surplus =
+        static_cast<std::size_t>(lp.num_cols + lp.num_rows) + bounded.size() + k;
+    sf.a[row][static_cast<std::size_t>(j)] = Rational(1);
+    sf.a[row][surplus] = Rational(-1);  // x_j - s = L  with s >= 0, i.e. x_j >= L
+    sf.b[row] = Rational(lp.lower[static_cast<std::size_t>(j)]);
   }
 
   // Normalise to b >= 0.
@@ -350,6 +371,110 @@ OracleResult solve_exact(const GeneratedLp& lp) {
     result.status = OracleStatus::kOverflow;
     return result;
   }
+}
+
+namespace {
+
+/// Exact floor of a normalised rational. C++ integer division truncates toward zero, so a
+/// negative numerator needs the extra step - getting this wrong branches on the wrong side
+/// and quietly discards feasible integer points.
+Rational::Int rational_floor(const Rational& r) {
+  const Rational::Int n = r.numerator();
+  const Rational::Int d = r.denominator();  // always positive
+  const Rational::Int q = n / d;
+  return (n % d != 0 && n < 0) ? q - 1 : q;
+}
+
+[[nodiscard]] bool is_integral(const Rational& r) {
+  return r.denominator() == 1;
+}
+
+}  // namespace
+
+OracleResult solve_exact_milp(const GeneratedLp& lp, std::int64_t node_limit) {
+  OracleResult best;
+  best.status = OracleStatus::kInfeasible;
+  bool have_incumbent = false;
+  Rational incumbent;
+
+  const auto cols = static_cast<std::size_t>(lp.num_cols);
+  std::vector<char> integral = lp.integral.empty() ? std::vector<char>(cols, 0) : lp.integral;
+
+  // Each open node is a complete (lower, upper) box. Copying the two bound vectors per node
+  // is O(columns) and this oracle solves instances with fewer than a dozen; the production
+  // search uses a domain-change stack precisely because that does not scale.
+  struct Node {
+    std::vector<std::int64_t> lower;
+    std::vector<std::int64_t> upper;
+  };
+  Node root;
+  root.lower = lp.lower.empty() ? std::vector<std::int64_t>(cols, 0) : lp.lower;
+  root.upper = lp.upper;
+
+  std::vector<Node> open;
+  open.push_back(std::move(root));
+  std::int64_t nodes = 0;
+
+  while (!open.empty()) {
+    if (nodes >= node_limit) {
+      best.status = OracleStatus::kIterationLimit;
+      return best;
+    }
+    Node node = std::move(open.back());
+    open.pop_back();
+    ++nodes;
+
+    GeneratedLp relaxation = lp;
+    relaxation.lower = node.lower;
+    relaxation.upper = node.upper;
+    relaxation.integral.clear();  // solve_exact is a pure LP solver
+
+    const OracleResult r = solve_exact(relaxation);
+    if (r.status == OracleStatus::kOverflow || r.status == OracleStatus::kIterationLimit) {
+      return r;  // abstain for the whole instance rather than fathom on a missing bound
+    }
+    if (r.status == OracleStatus::kInfeasible) continue;
+    if (r.status == OracleStatus::kUnbounded) {
+      best.status = OracleStatus::kUnbounded;
+      return best;
+    }
+    // Exact arithmetic, so the bound comparison needs no tolerance at all.
+    if (have_incumbent && !(r.objective < incumbent)) continue;
+
+    Index branch = -1;
+    for (Index j = 0; j < lp.num_cols; ++j) {
+      const auto u = static_cast<std::size_t>(j);
+      if (integral[u] != 0 && !is_integral(r.x[u])) {
+        branch = j;
+        break;
+      }
+    }
+
+    if (branch < 0) {
+      have_incumbent = true;
+      incumbent = r.objective;
+      best = r;
+      best.status = OracleStatus::kOptimal;
+      continue;
+    }
+
+    const Rational::Int floor_value = rational_floor(r.x[static_cast<std::size_t>(branch)]);
+    const auto u = static_cast<std::size_t>(branch);
+
+    Node down = node;
+    down.upper[u] = static_cast<std::int64_t>(floor_value);
+    Node up = node;
+    up.lower[u] = static_cast<std::int64_t>(floor_value + 1);
+
+    // Only keep a child whose box is still non-empty.
+    if (down.lower[u] <= down.upper[u]) open.push_back(std::move(down));
+    if (up.upper[u] == kNoUpperBound || up.lower[u] <= up.upper[u]) {
+      open.push_back(std::move(up));
+    }
+  }
+
+  best.iterations = nodes;
+  return best;
 }
 
 }  // namespace sankhya::oracle
