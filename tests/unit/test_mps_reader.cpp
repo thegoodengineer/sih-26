@@ -122,18 +122,21 @@ TEST(MpsReader, ReadsASmallCompleteModel) {
 
 /// Build a one-row model of the given type with RHS 10 and the given RANGES value.
 [[nodiscard]] Model ranged_row(const char* type, const char* range_value) {
-  return parse_or_fail(std::string(
-      "NAME          RANGETEST\n"
-      "ROWS\n"
-      " N  COST\n"
-      " ") + type + "  R1\n"
-      "COLUMNS\n"
-      "    X         COST         1.0   R1           1.0\n"
-      "RHS\n"
-      "    RHS       R1          10.0\n"
-      "RANGES\n"
-      "    RNG       R1          " + range_value + "\n"
-      "ENDATA\n");
+  return parse_or_fail(std::string("NAME          RANGETEST\n"
+                                   "ROWS\n"
+                                   " N  COST\n"
+                                   " ") +
+                       type +
+                       "  R1\n"
+                       "COLUMNS\n"
+                       "    X         COST         1.0   R1           1.0\n"
+                       "RHS\n"
+                       "    RHS       R1          10.0\n"
+                       "RANGES\n"
+                       "    RNG       R1          " +
+                       range_value +
+                       "\n"
+                       "ENDATA\n");
 }
 
 TEST(MpsRanges, GreaterRowWithPositiveRange) {
@@ -216,8 +219,7 @@ TEST(MpsRanges, RangeOnTheObjectiveRowIsRejected) {
       "RHS\n"
       "    RHS       R1          10.0\n"
       "BOUNDS\n" +
-      bounds_lines +
-      "ENDATA\n");
+      bounds_lines + "ENDATA\n");
 }
 
 TEST(MpsBounds, UpWithAPositiveValue) {
@@ -565,10 +567,9 @@ TEST(MpsReader, FixedFormatNamesMayContainBlanks) {
   const std::string text =
       "NAME          FIXED\n"
       "ROWS\n" +
-      fixed_line("N", "MY COST", "", "") + fixed_line("L", "MY ROW", "", "") +
-      "COLUMNS\n" + fixed_line("", "MY COL", "MY COST", "1.0") +
-      fixed_line("", "MY COL", "MY ROW", "2.0") + "RHS\n" +
-      fixed_line("", "RHS", "MY ROW", "10.0") + "ENDATA\n";
+      fixed_line("N", "MY COST", "", "") + fixed_line("L", "MY ROW", "", "") + "COLUMNS\n" +
+      fixed_line("", "MY COL", "MY COST", "1.0") + fixed_line("", "MY COL", "MY ROW", "2.0") +
+      "RHS\n" + fixed_line("", "RHS", "MY ROW", "10.0") + "ENDATA\n";
 
   const TempFile file(text);
   Model model;

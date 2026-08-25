@@ -74,8 +74,7 @@ bool write_solution(const std::string& path, const Model& model, const Solution&
   fmt::print(out, "# All numbers carry 17 significant digits and round-trip exactly.\n");
   fmt::print(out, "model {}\n", model.name.empty() ? "(unnamed)" : model.name);
   fmt::print(out, "source {}\n", model.source_path);
-  fmt::print(out, "sense {}\n",
-             model.sense == ObjSense::kMaximize ? "maximize" : "minimize");
+  fmt::print(out, "sense {}\n", model.sense == ObjSense::kMaximize ? "maximize" : "minimize");
   fmt::print(out, "status {}\n", to_string(solution.status));
   fmt::print(out, "algorithm {}\n",
              solution.algorithm.empty() ? "unknown" : solution.algorithm);
@@ -95,16 +94,18 @@ bool write_solution(const std::string& path, const Model& model, const Solution&
   fmt::print(out, "\n# name value reduced_cost basis_status\n");
   fmt::print(out, "begin columns {}\n", n);
   for (Index j = 0; j < n; ++j) {
-    fmt::print(out, "{} {} {} {}\n", column_name(model, j), exact(value_or(solution.col_value, j)),
-               exact(value_or(solution.col_dual, j)), status_or(solution.col_status, j));
+    fmt::print(out, "{} {} {} {}\n", column_name(model, j),
+               exact(value_or(solution.col_value, j)), exact(value_or(solution.col_dual, j)),
+               status_or(solution.col_status, j));
   }
   fmt::print(out, "end columns\n");
 
   fmt::print(out, "\n# name activity dual basis_status\n");
   fmt::print(out, "begin rows {}\n", m);
   for (Index i = 0; i < m; ++i) {
-    fmt::print(out, "{} {} {} {}\n", row_name(model, i), exact(value_or(solution.row_activity, i)),
-               exact(value_or(solution.row_dual, i)), status_or(solution.row_status, i));
+    fmt::print(out, "{} {} {} {}\n", row_name(model, i),
+               exact(value_or(solution.row_activity, i)), exact(value_or(solution.row_dual, i)),
+               status_or(solution.row_status, i));
   }
   fmt::print(out, "end rows\n");
 

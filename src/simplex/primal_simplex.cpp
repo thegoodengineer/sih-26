@@ -556,10 +556,10 @@ Solution PrimalSimplex::run() {
       if (phase_one) {
         // Phase 1 is bounded below by zero, so a stall with residual infeasibility is a
         // proof that no feasible point exists, not an inconclusive stop.
-        return finish(SolveStatus::kInfeasible,
-                      fmt::format("phase 1 terminated with total infeasibility {:.3e}",
-                                  infeasibility),
-                      iterations, timer.elapsed_seconds());
+        return finish(
+            SolveStatus::kInfeasible,
+            fmt::format("phase 1 terminated with total infeasibility {:.3e}", infeasibility),
+            iterations, timer.elapsed_seconds());
       }
       return finish(SolveStatus::kOptimal, {}, iterations, timer.elapsed_seconds());
     }
@@ -592,7 +592,8 @@ Solution PrimalSimplex::run() {
         compute_reduced_costs(false);
         return finish(SolveStatus::kNumericalError,
                       fmt::format("stalled: {} consecutive degenerate iterations under "
-                                  "Bland's rule", degenerate_run),
+                                  "Bland's rule",
+                                  degenerate_run),
                       iterations, timer.elapsed_seconds());
       }
     } else {

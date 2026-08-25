@@ -27,8 +27,9 @@ struct Dense {
   Index m = 0;
   std::vector<double> a;
 
-  explicit Dense(Index dimension) : m(dimension), a(static_cast<std::size_t>(dimension) *
-                                                    static_cast<std::size_t>(dimension), 0.0) {}
+  explicit Dense(Index dimension)
+      : m(dimension),
+        a(static_cast<std::size_t>(dimension) * static_cast<std::size_t>(dimension), 0.0) {}
 
   double& operator()(Index row, Index col) {
     return a[static_cast<std::size_t>(col) * static_cast<std::size_t>(m) +
@@ -60,7 +61,8 @@ struct Dense {
   }
 };
 
-[[nodiscard]] double max_difference(const std::vector<double>& a, const std::vector<double>& b) {
+[[nodiscard]] double max_difference(const std::vector<double>& a,
+                                    const std::vector<double>& b) {
   double worst = 0.0;
   for (std::size_t i = 0; i < a.size(); ++i) worst = std::max(worst, std::fabs(a[i] - b[i]));
   return worst;
@@ -68,8 +70,10 @@ struct Dense {
 
 TEST(DenseLu, SolvesATwoByTwoSystem) {
   Dense a(2);
-  a(0, 0) = 4.0;  a(0, 1) = 3.0;
-  a(1, 0) = 6.0;  a(1, 1) = 3.0;
+  a(0, 0) = 4.0;
+  a(0, 1) = 3.0;
+  a(1, 0) = 6.0;
+  a(1, 1) = 3.0;
 
   DenseLu lu;
   ASSERT_TRUE(lu.factorize(a.a, 2, tol::kPivotTolerance));
@@ -86,8 +90,10 @@ TEST(DenseLu, RequiresPivotingWhenTheLeadingEntryIsZero) {
   // configuration is not exotic: the simplex reaches it whenever a logical column with a
   // structural zero on the diagonal enters the basis.
   Dense a(2);
-  a(0, 0) = 0.0;  a(0, 1) = 1.0;
-  a(1, 0) = 1.0;  a(1, 1) = 0.0;
+  a(0, 0) = 0.0;
+  a(0, 1) = 1.0;
+  a(1, 0) = 1.0;
+  a(1, 1) = 0.0;
 
   DenseLu lu;
   ASSERT_TRUE(lu.factorize(a.a, 2, tol::kPivotTolerance));
@@ -99,9 +105,15 @@ TEST(DenseLu, RequiresPivotingWhenTheLeadingEntryIsZero) {
 
 TEST(DenseLu, ReportsASingularMatrix) {
   Dense a(3);
-  a(0, 0) = 1.0;  a(0, 1) = 2.0;  a(0, 2) = 3.0;
-  a(1, 0) = 2.0;  a(1, 1) = 4.0;  a(1, 2) = 6.0;  // exactly twice row 0
-  a(2, 0) = 1.0;  a(2, 1) = 1.0;  a(2, 2) = 1.0;
+  a(0, 0) = 1.0;
+  a(0, 1) = 2.0;
+  a(0, 2) = 3.0;
+  a(1, 0) = 2.0;
+  a(1, 1) = 4.0;
+  a(1, 2) = 6.0;  // exactly twice row 0
+  a(2, 0) = 1.0;
+  a(2, 1) = 1.0;
+  a(2, 2) = 1.0;
 
   DenseLu lu;
   EXPECT_FALSE(lu.factorize(a.a, 3, tol::kPivotTolerance));

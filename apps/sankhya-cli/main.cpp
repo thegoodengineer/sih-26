@@ -78,9 +78,9 @@ bool load_model(const std::string& path, const sankhya::Options& options,
     return false;
   }
 
-  const sankhya::io::ReadResult result =
-      looks_like_lp(path) ? sankhya::io::read_lp(path, model)
-                          : sankhya::io::read_mps(path, model, format);
+  const sankhya::io::ReadResult result = looks_like_lp(path)
+                                             ? sankhya::io::read_lp(path, model)
+                                             : sankhya::io::read_mps(path, model, format);
   if (!result.ok) {
     fmt::print(stderr, "error: {}\n", result.error);
     return false;

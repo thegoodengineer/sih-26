@@ -116,6 +116,14 @@ tools/verify_solution.py consumes the written .sol file only. It never links our
 ## Workflow
 
 Branch per task, PR into main, squash merge. No file over ~600 lines.
+
+CI gates formatting with clang-format **22.1.8** from pip, and clang-format's output changes
+between major versions, so a distro clang-format will "fix" the tree into a state CI then
+rejects. Run the pinned one before pushing - it provisions itself on first use:
+
+    scripts/format.sh            # rewrite in place
+    scripts/format.sh --check    # exactly what CI runs
+
 The CPU build must work with zero CUDA installed — all GPU code behind
 `#ifdef SANKHYA_ENABLE_CUDA` plus a runtime `--gpu` flag with silent CPU fallback.
 

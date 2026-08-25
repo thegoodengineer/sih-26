@@ -70,8 +70,7 @@ Solution run(const Model& model) {
 
 /// Independent optimality certificate. Nothing here reads a quantity the simplex computed
 /// except the primal values and the row duals; everything else is rebuilt from the model.
-void expect_kkt_optimal(const Model& model, const Solution& solution,
-                        double tolerance = 1e-7) {
+void expect_kkt_optimal(const Model& model, const Solution& solution, double tolerance = 1e-7) {
   ASSERT_EQ(solution.status, SolveStatus::kOptimal) << solution.message;
 
   const Index n = model.num_cols();
@@ -244,8 +243,8 @@ TEST(PrimalSimplex, RespectsFiniteUpperBoundsOnColumns) {
 
 TEST(PrimalSimplex, HandlesNegativeLowerBounds) {
   //   min x  s.t.  x >= -7,  -10 <= x <= 10   ->  x = -7
-  const Model model = make_model(ObjSense::kMinimize, {1.0}, {-10.0}, {10.0}, {{1.0}}, {-7.0},
-                                 {kInf});
+  const Model model =
+      make_model(ObjSense::kMinimize, {1.0}, {-10.0}, {10.0}, {{1.0}}, {-7.0}, {kInf});
   const Solution solution = run(model);
   ASSERT_EQ(solution.status, SolveStatus::kOptimal) << solution.message;
   EXPECT_NEAR(solution.col_value[0], -7.0, 1e-9);
@@ -308,15 +307,15 @@ TEST(PrimalSimplex, SolvesASmallTransportationProblem) {
   // Two plants, three depots. Supplies 20 and 30; demands 10, 25, 15. Costs chosen so the
   // optimum is unique: plant 1 serves depot 1 and 2, plant 2 serves the rest.
   //   variables x11 x12 x13 x21 x22 x23
-  const Model model = make_model(
-      ObjSense::kMinimize, {4.0, 6.0, 9.0, 5.0, 3.0, 8.0},
-      {0.0, 0.0, 0.0, 0.0, 0.0, 0.0}, {kInf, kInf, kInf, kInf, kInf, kInf},
-      {{1.0, 1.0, 1.0, 0.0, 0.0, 0.0},   // supply 1
-       {0.0, 0.0, 0.0, 1.0, 1.0, 1.0},   // supply 2
-       {1.0, 0.0, 0.0, 1.0, 0.0, 0.0},   // demand 1
-       {0.0, 1.0, 0.0, 0.0, 1.0, 0.0},   // demand 2
-       {0.0, 0.0, 1.0, 0.0, 0.0, 1.0}},  // demand 3
-      {-kInf, -kInf, 10.0, 25.0, 15.0}, {20.0, 30.0, 10.0, 25.0, 15.0});
+  const Model model =
+      make_model(ObjSense::kMinimize, {4.0, 6.0, 9.0, 5.0, 3.0, 8.0},
+                 {0.0, 0.0, 0.0, 0.0, 0.0, 0.0}, {kInf, kInf, kInf, kInf, kInf, kInf},
+                 {{1.0, 1.0, 1.0, 0.0, 0.0, 0.0},   // supply 1
+                  {0.0, 0.0, 0.0, 1.0, 1.0, 1.0},   // supply 2
+                  {1.0, 0.0, 0.0, 1.0, 0.0, 0.0},   // demand 1
+                  {0.0, 1.0, 0.0, 0.0, 1.0, 0.0},   // demand 2
+                  {0.0, 0.0, 1.0, 0.0, 0.0, 1.0}},  // demand 3
+                 {-kInf, -kInf, 10.0, 25.0, 15.0}, {20.0, 30.0, 10.0, 25.0, 15.0});
 
   const Solution solution = run(model);
   ASSERT_EQ(solution.status, SolveStatus::kOptimal) << solution.message;
@@ -334,8 +333,8 @@ TEST(PrimalSimplex, SolvesASmallTransportationProblem) {
 
 TEST(PrimalSimplex, DetectsAnInfeasibleModel) {
   //   x >= 5 and x <= 2 simultaneously.
-  const Model model = make_model(ObjSense::kMinimize, {1.0}, {0.0}, {kInf},
-                                 {{1.0}, {1.0}}, {5.0, -kInf}, {kInf, 2.0});
+  const Model model = make_model(ObjSense::kMinimize, {1.0}, {0.0}, {kInf}, {{1.0}, {1.0}},
+                                 {5.0, -kInf}, {kInf, 2.0});
   const Solution solution = run(model);
   EXPECT_EQ(solution.status, SolveStatus::kInfeasible) << solution.message;
 }
@@ -359,8 +358,8 @@ TEST(PrimalSimplex, DetectsAnUnboundedModel) {
 TEST(PrimalSimplex, AnEmptyFeasibleRegionIsInfeasibleNotUnbounded) {
   // Unboundedness is only meaningful over a nonempty region. Phase 1 must run first and
   // report infeasibility even though the objective direction is unbounded.
-  const Model model = make_model(ObjSense::kMinimize, {-1.0}, {0.0}, {kInf},
-                                 {{1.0}, {1.0}}, {5.0, -kInf}, {kInf, 2.0});
+  const Model model = make_model(ObjSense::kMinimize, {-1.0}, {0.0}, {kInf}, {{1.0}, {1.0}},
+                                 {5.0, -kInf}, {kInf, 2.0});
   const Solution solution = run(model);
   EXPECT_EQ(solution.status, SolveStatus::kInfeasible) << solution.message;
 }
@@ -403,9 +402,9 @@ TEST(PrimalSimplex, StopsAtTheIterationLimit) {
 TEST(PrimalSimplex, SolvesADegenerateVertex) {
   // Three rows meet at (0, 0) in two variables, so the optimal vertex is degenerate and the
   // simplex must pass through zero-length steps without cycling.
-  const Model model = make_model(ObjSense::kMinimize, {1.0, 1.0}, {0.0, 0.0}, {kInf, kInf},
-                                 {{1.0, 1.0}, {1.0, 2.0}, {2.0, 1.0}},
-                                 {-kInf, -kInf, -kInf}, {0.0, 0.0, 0.0});
+  const Model model =
+      make_model(ObjSense::kMinimize, {1.0, 1.0}, {0.0, 0.0}, {kInf, kInf},
+                 {{1.0, 1.0}, {1.0, 2.0}, {2.0, 1.0}}, {-kInf, -kInf, -kInf}, {0.0, 0.0, 0.0});
   const Solution solution = run(model);
   ASSERT_EQ(solution.status, SolveStatus::kOptimal) << solution.message;
   EXPECT_NEAR(solution.objective, 0.0, 1e-9);
@@ -532,7 +531,7 @@ TEST(PrimalSimplex, FuzzAgainstTheKktCertificate) {
       const double slack_above = 0.5 + 3.0 * unit(rng);
       const double roll = unit(rng);
       if (roll < 0.25) {
-        row_lower[u] = activity;   // equality, tight on x0
+        row_lower[u] = activity;  // equality, tight on x0
         row_upper[u] = activity;
       } else if (roll < 0.5) {
         row_lower[u] = -kInf;
@@ -546,9 +545,8 @@ TEST(PrimalSimplex, FuzzAgainstTheKktCertificate) {
       }
     }
 
-    const Model model =
-        make_model(unit(rng) < 0.5 ? ObjSense::kMinimize : ObjSense::kMaximize, cost,
-                   col_lower, col_upper, rows, row_lower, row_upper);
+    const Model model = make_model(unit(rng) < 0.5 ? ObjSense::kMinimize : ObjSense::kMaximize,
+                                   cost, col_lower, col_upper, rows, row_lower, row_upper);
 
     // Sanity-check the generator itself before trusting its verdict on the solver.
     ASSERT_TRUE(model.validate().empty());
@@ -560,9 +558,7 @@ TEST(PrimalSimplex, FuzzAgainstTheKktCertificate) {
         ++optimal;
         expect_kkt_optimal(model, solution, 1e-6);
         break;
-      case SolveStatus::kUnbounded:
-        ++unbounded;
-        break;
+      case SolveStatus::kUnbounded: ++unbounded; break;
       case SolveStatus::kInfeasible:
         ++wrongly_infeasible;
         ADD_FAILURE() << "trial " << trial
@@ -572,8 +568,8 @@ TEST(PrimalSimplex, FuzzAgainstTheKktCertificate) {
         break;
       default:
         ++other;
-        ADD_FAILURE() << "trial " << trial << " ended in " << to_string(solution.status)
-                      << ": " << solution.message;
+        ADD_FAILURE() << "trial " << trial << " ended in " << to_string(solution.status) << ": "
+                      << solution.message;
         break;
     }
   }

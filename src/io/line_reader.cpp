@@ -27,7 +27,9 @@ constexpr std::size_t kChunkBytes = 64 * 1024;
 
 }  // namespace
 
-LineReader::~LineReader() { close(); }
+LineReader::~LineReader() {
+  close();
+}
 
 bool LineReader::open(const std::string& path, std::string* error) {
   close();
@@ -49,8 +51,8 @@ bool LineReader::open(const std::string& path, std::string* error) {
 #else
   if (has_gz_suffix(path)) {
     if (error != nullptr) {
-      *error = fmt::format("{}: gzip input needs a build with zlib (-DSANKHYA_WITH_ZLIB=ON)",
-                           path);
+      *error =
+          fmt::format("{}: gzip input needs a build with zlib (-DSANKHYA_WITH_ZLIB=ON)", path);
     }
     return false;
   }
@@ -83,8 +85,8 @@ std::size_t LineReader::fill() {
   if (eof_) return 0;
 
 #ifdef SANKHYA_WITH_ZLIB
-  const int got = gzread(static_cast<gzFile>(gz_), buffer_.data(),
-                         static_cast<unsigned>(buffer_.size()));
+  const int got =
+      gzread(static_cast<gzFile>(gz_), buffer_.data(), static_cast<unsigned>(buffer_.size()));
   if (got <= 0) {
     eof_ = true;
     return 0;

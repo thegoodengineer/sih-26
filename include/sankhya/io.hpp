@@ -26,7 +26,9 @@ struct ReadResult {
   [[nodiscard]] explicit operator bool() const noexcept { return ok; }
 
   static ReadResult success() { return ReadResult{true, {}}; }
-  static ReadResult failure(std::string message) { return ReadResult{false, std::move(message)}; }
+  static ReadResult failure(std::string message) {
+    return ReadResult{false, std::move(message)};
+  }
 };
 
 /// Which MPS dialect to parse. `kAuto` reads the file with the whitespace tokenizer and

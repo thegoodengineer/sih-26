@@ -39,8 +39,8 @@ enum class TokKind { kIdent, kNumber, kOp, kEof };
 
 struct Tok {
   TokKind kind = TokKind::kEof;
-  std::string text;      ///< identifier spelling, or the operator
-  double value = 0.0;    ///< numeric value when kind == kNumber
+  std::string text;    ///< identifier spelling, or the operator
+  double value = 0.0;  ///< numeric value when kind == kNumber
   Count line = 0;
   bool first_on_line = false;
 };
@@ -51,10 +51,9 @@ struct Tok {
 }
 
 [[nodiscard]] bool ident_start(char c) {
-  return std::isalpha(static_cast<unsigned char>(c)) != 0 || c == '_' || c == '!' ||
-         c == '"' || c == '#' || c == '$' || c == '%' || c == '&' || c == '(' || c == ')' ||
-         c == ',' || c == ';' || c == '?' || c == '@' || c == '\'' || c == '`' || c == '|' ||
-         c == '~';
+  return std::isalpha(static_cast<unsigned char>(c)) != 0 || c == '_' || c == '!' || c == '"' ||
+         c == '#' || c == '$' || c == '%' || c == '&' || c == '(' || c == ')' || c == ',' ||
+         c == ';' || c == '?' || c == '@' || c == '\'' || c == '`' || c == '|' || c == '~';
 }
 
 [[nodiscard]] bool ident_body(char c) {
@@ -83,14 +82,15 @@ class LpParser {
   [[nodiscard]] bool parse_objective(const SectionSpan& span, std::string* error);
   [[nodiscard]] bool parse_constraints(const SectionSpan& span, std::string* error);
   [[nodiscard]] bool parse_bounds(const SectionSpan& span, std::string* error);
-  [[nodiscard]] bool parse_integrality(const SectionSpan& span, bool binary, std::string* error);
+  [[nodiscard]] bool parse_integrality(const SectionSpan& span, bool binary,
+                                       std::string* error);
 
   /// Parse a signed linear expression starting at `i`, stopping before the first token that
   /// cannot continue it. Coefficients accumulate into `terms` keyed by column, and any bare
   /// number accumulates into `constant`.
   [[nodiscard]] bool parse_expression(std::size_t* i, std::size_t end,
-                                      std::unordered_map<Index, double>* terms, double* constant,
-                                      std::string* error);
+                                      std::unordered_map<Index, double>* terms,
+                                      double* constant, std::string* error);
 
   [[nodiscard]] Index intern_column(const std::string& name);
   [[nodiscard]] std::string at(std::size_t i, const std::string& message) const;
@@ -117,8 +117,8 @@ class LpParser {
 };
 
 std::string LpParser::at(std::size_t i, const std::string& message) const {
-  const Count line = i < tokens_.size() ? tokens_[i].line
-                                        : (tokens_.empty() ? 0 : tokens_.back().line);
+  const Count line =
+      i < tokens_.size() ? tokens_[i].line : (tokens_.empty() ? 0 : tokens_.back().line);
   return fmt::format("{}:{}: {}", path_, line, message);
 }
 
@@ -146,7 +146,10 @@ bool LpParser::lex(const std::string& path, std::string* error) {
     std::size_t i = 0;
     while (i < line.size()) {
       const char c = line[i];
-      if (is_space(c)) { ++i; continue; }
+      if (is_space(c)) {
+        ++i;
+        continue;
+      }
       if (c == '\\') break;  // comment to end of line
 
       Tok tok;
@@ -187,9 +190,11 @@ bool LpParser::lex(const std::string& path, std::string* error) {
           }
           i += 2;
         } else if (c == '<') {
-          tok.text = "<="; ++i;
+          tok.text = "<=";
+          ++i;
         } else if (c == '>') {
-          tok.text = ">="; ++i;
+          tok.text = ">=";
+          ++i;
         } else {
           tok.text = std::string(1, c);
           ++i;

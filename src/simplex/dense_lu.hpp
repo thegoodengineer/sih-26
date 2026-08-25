@@ -49,11 +49,11 @@ class DenseLu {
  private:
   [[nodiscard]] double& at(Index row, Index col) noexcept {
     return lu_[static_cast<std::size_t>(col) * static_cast<std::size_t>(m_) +
-                static_cast<std::size_t>(row)];
+               static_cast<std::size_t>(row)];
   }
   [[nodiscard]] double at(Index row, Index col) const noexcept {
     return lu_[static_cast<std::size_t>(col) * static_cast<std::size_t>(m_) +
-                static_cast<std::size_t>(row)];
+               static_cast<std::size_t>(row)];
   }
 
   Index m_ = 0;

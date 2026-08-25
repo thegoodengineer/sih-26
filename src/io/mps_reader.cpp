@@ -69,14 +69,38 @@ constexpr FixedField kFixedFields[6] = {{1, 2}, {4, 8}, {14, 8}, {24, 12}, {39, 
 
 [[nodiscard]] bool section_from_keyword(std::string_view keyword, Section* out) {
   const std::string k = to_upper(keyword);
-  if (k == "NAME") { *out = Section::kName; return true; }
-  if (k == "OBJSENSE" || k == "OBJSENS") { *out = Section::kObjsense; return true; }
-  if (k == "ROWS") { *out = Section::kRows; return true; }
-  if (k == "COLUMNS") { *out = Section::kColumns; return true; }
-  if (k == "RHS") { *out = Section::kRhs; return true; }
-  if (k == "RANGES") { *out = Section::kRanges; return true; }
-  if (k == "BOUNDS") { *out = Section::kBounds; return true; }
-  if (k == "ENDATA") { *out = Section::kEnd; return true; }
+  if (k == "NAME") {
+    *out = Section::kName;
+    return true;
+  }
+  if (k == "OBJSENSE" || k == "OBJSENS") {
+    *out = Section::kObjsense;
+    return true;
+  }
+  if (k == "ROWS") {
+    *out = Section::kRows;
+    return true;
+  }
+  if (k == "COLUMNS") {
+    *out = Section::kColumns;
+    return true;
+  }
+  if (k == "RHS") {
+    *out = Section::kRhs;
+    return true;
+  }
+  if (k == "RANGES") {
+    *out = Section::kRanges;
+    return true;
+  }
+  if (k == "BOUNDS") {
+    *out = Section::kBounds;
+    return true;
+  }
+  if (k == "ENDATA") {
+    *out = Section::kEnd;
+    return true;
+  }
   return false;
 }
 
@@ -112,7 +136,7 @@ class MpsParser {
 
   // Rows. row_index_ maps a name to a constraint index, or to the sentinels above.
   std::unordered_map<std::string, Index> row_index_;
-  std::vector<char> row_type_;    // 'L', 'G', 'E'
+  std::vector<char> row_type_;  // 'L', 'G', 'E'
   std::vector<double> row_rhs_;
   std::vector<double> row_range_;
   std::vector<char> row_has_range_;
@@ -193,9 +217,8 @@ bool MpsParser::record_entry(Index row, Index col, double value, std::string* er
 
   if (row == kObjectiveRow) {
     if (!seen_objective_.insert(col).second) {
-      *error = reader_.error_at(
-          fmt::format("duplicate objective coefficient for column '{}'",
-                      col_names_[static_cast<std::size_t>(col)]));
+      *error = reader_.error_at(fmt::format("duplicate objective coefficient for column '{}'",
+                                            col_names_[static_cast<std::size_t>(col)]));
       return false;
     }
     col_cost_[static_cast<std::size_t>(col)] = value;
@@ -229,14 +252,14 @@ bool MpsParser::do_rows(std::string* error) {
   // reader that shrugs and takes the first two silently creates a row called "MY" instead
   // of failing and letting read_mps() retry in fixed columns.
   if (tok_.size() != 2) {
-    *error = reader_.error_at(
-        fmt::format("ROWS entry has {} fields, expected exactly 2 (type and name)",
-                    tok_.size()));
+    *error = reader_.error_at(fmt::format(
+        "ROWS entry has {} fields, expected exactly 2 (type and name)", tok_.size()));
     return false;
   }
   const std::string type = to_upper(tok_[0]);
   if (type.size() != 1 || (type != "N" && type != "L" && type != "G" && type != "E")) {
-    *error = reader_.error_at(fmt::format("unknown row type '{}', expected N, L, G or E", tok_[0]));
+    *error =
+        reader_.error_at(fmt::format("unknown row type '{}', expected N, L, G or E", tok_[0]));
     return false;
   }
   const std::string name(tok_[1]);
@@ -308,7 +331,7 @@ bool MpsParser::do_columns(std::string* error) {
     col_index_.emplace(name, col);
     col_names_.push_back(name);
     col_cost_.push_back(0.0);
-    col_lower_.push_back(0.0);            // the MPS default is [0, +inf)
+    col_lower_.push_back(0.0);  // the MPS default is [0, +inf)
     col_upper_.push_back(kInfinity);
     col_type_.push_back(integer_marker_active_ ? VarType::kInteger : VarType::kContinuous);
     col_lower_explicit_.push_back(0);
@@ -347,8 +370,10 @@ bool MpsParser::do_rhs(std::string* error) {
     if (rhs_vector_.empty()) rhs_vector_ = name;
     if (name != rhs_vector_) {
       if (!warned_extra_vector_) {
-        default_logger().warning("{}", reader_.error_at(fmt::format(
-            "ignoring RHS vector '{}'; using the first vector '{}'", name, rhs_vector_)));
+        default_logger().warning(
+            "{}",
+            reader_.error_at(fmt::format(
+                "ignoring RHS vector '{}'; using the first vector '{}'", name, rhs_vector_)));
         warned_extra_vector_ = true;
       }
       return true;
@@ -433,8 +458,8 @@ bool MpsParser::do_bounds(std::string* error) {
                             type == "UI" || type == "SC");
   const bool valueless = (type == "FR" || type == "MI" || type == "PL" || type == "BV");
   if (!takes_value && !valueless) {
-    *error = reader_.error_at(fmt::format(
-        "unknown bound type '{}'; expected UP LO FX FR MI PL BV LI UI", tok_[0]));
+    *error = reader_.error_at(
+        fmt::format("unknown bound type '{}'; expected UP LO FX FR MI PL BV LI UI", tok_[0]));
     return false;
   }
 
@@ -556,7 +581,10 @@ bool MpsParser::finish_rows(std::string* error) {
       switch (type) {
         case 'L': hi = b; break;
         case 'G': lo = b; break;
-        case 'E': lo = b; hi = b; break;
+        case 'E':
+          lo = b;
+          hi = b;
+          break;
         default: break;
       }
     } else {
@@ -669,7 +697,7 @@ ReadResult MpsParser::parse(const std::string& path) {
           if (tok_.size() >= 2) {
             const std::string value = to_upper(tok_[1]);
             model_->sense = (value == "MAX" || value == "MAXIMIZE") ? ObjSense::kMaximize
-                                                                   : ObjSense::kMinimize;
+                                                                    : ObjSense::kMinimize;
             section = Section::kNone;
           } else {
             section = Section::kObjsenseValue;
@@ -741,9 +769,18 @@ ReadResult MpsParser::parse(const std::string& path) {
 
 bool parse_mps_format(const std::string& text, MpsFormat* out) noexcept {
   const std::string t = to_upper(text);
-  if (t == "AUTO") { *out = MpsFormat::kAuto; return true; }
-  if (t == "FREE") { *out = MpsFormat::kFree; return true; }
-  if (t == "FIXED") { *out = MpsFormat::kFixed; return true; }
+  if (t == "AUTO") {
+    *out = MpsFormat::kAuto;
+    return true;
+  }
+  if (t == "FREE") {
+    *out = MpsFormat::kFree;
+    return true;
+  }
+  if (t == "FIXED") {
+    *out = MpsFormat::kFixed;
+    return true;
+  }
   return false;
 }
 
@@ -773,8 +810,8 @@ ReadResult read_mps(const std::string& path, Model* model, MpsFormat format,
     return fixed_result;
   }
 
-  return ReadResult::failure(fmt::format(
-      "{} (the fixed-format reader also failed: {})", free_result.error, fixed_result.error));
+  return ReadResult::failure(fmt::format("{} (the fixed-format reader also failed: {})",
+                                         free_result.error, fixed_result.error));
 }
 
 }  // namespace sankhya::io

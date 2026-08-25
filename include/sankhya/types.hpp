@@ -52,6 +52,8 @@ inline constexpr double kMpsInfinity = 1e30;
 /// solver treats it as such, but it PRINTS as "-0", and a judge reading "reduced_cost -0"
 /// in a solution file has no way to know that is not a real negative quantity rounded to
 /// nothing. Applied wherever a number crosses into user-visible output.
-[[nodiscard]] inline double normalize_zero(double v) noexcept { return v == 0.0 ? 0.0 : v; }
+[[nodiscard]] inline double normalize_zero(double v) noexcept {
+  return v == 0.0 ? 0.0 : v;
+}
 
 }  // namespace sankhya
