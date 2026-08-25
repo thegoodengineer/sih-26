@@ -18,6 +18,7 @@
 #include "sankhya/logging.hpp"
 #include "sankhya/model.hpp"
 #include "sankhya/options.hpp"
+#include "sankhya/pdhg.hpp"
 #include "sankhya/timer.hpp"
 
 #include "../simplex/primal_simplex.hpp"
@@ -74,18 +75,31 @@ Solution solve(const Model& model, const Options& options) {
 
   if (problem_class == ProblemClass::kLp) {
     const std::string requested = options.get_string("algorithm");
-    if (requested != "auto" && requested != "simplex") {
+
+    // "auto" means the simplex. PDHG is a first-order method: it converges to a tolerance
+    // rather than to a vertex, produces no basis, and on the small instances we benchmark
+    // today the simplex is both faster and exact. It is selected explicitly, and it becomes
+    // the automatic choice only once there is evidence for a crossover point to switch on.
+    const bool want_pdhg = requested == "pdhg";
+    if (requested != "auto" && requested != "simplex" && !want_pdhg) {
       solution.status = SolveStatus::kNotSolved;
       solution.algorithm = "none";
       solution.message = fmt::format(
-          "algorithm '{}' is not implemented yet; only the primal simplex is available",
-          requested);
+          "algorithm '{}' is not implemented yet; simplex and pdhg are available", requested);
       logger.warning("{}", solution.message);
       solution.solve_seconds = timer.elapsed_seconds();
       return solution;
     }
 
-    solution = solve_primal_simplex(model, options, logger);
+    if (options.get_bool("gpu")) {
+      // Honest fallback, per CLAUDE.md: the CPU build must work with zero CUDA installed,
+      // and --gpu must never crash. No CUDA backend is compiled in yet, so say so once.
+      logger.warning(
+          "--gpu requested but this build has no CUDA backend compiled in; running on CPU");
+    }
+
+    solution = want_pdhg ? pdhg::solve_pdhg(model, options, logger)
+                         : solve_primal_simplex(model, options, logger);
     logger.info("Result: {}  objective {:.10g}  {} iterations  {:.3f}s",
                 to_string(solution.status), solution.objective, solution.iterations,
                 solution.solve_seconds);

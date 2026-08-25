@@ -185,6 +185,8 @@ set(SANKHYA_CORE_SOURCES
   src/io/writer.cpp
   src/la/sparse.cpp
   src/simplex/dense_lu.cpp
+  src/pdhg/pdhg.cpp
+  src/pdhg/scaling.cpp
   src/simplex/primal_simplex.cpp
   src/util/logging.cpp
   src/util/options.cpp

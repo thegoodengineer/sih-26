@@ -19,7 +19,7 @@ Petrochemicals Limited.
 | 1 | Foundations: model, options, sparse linear algebra, CI | **done** |
 | 2 | MPS/LP readers, revised primal simplex, CLI | **done** |
 | 3 | Verification spine: rational oracle, independent checker, Netlib harness | **done** |
-| 4 | Restarted PDHG on CPU and CUDA | |
+| 4 | Restarted PDHG — **CPU done**, CUDA backend not started (no GPU available) | partial |
 | 5 | Branch & bound → MILP | |
 | 6–10 | Performance, branch & cut, IPM/QP, robustness, packaging | |
 

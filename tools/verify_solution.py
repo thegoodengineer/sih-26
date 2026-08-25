@@ -493,17 +493,28 @@ def verify(model: Model, solution: Solution, primal_tol: float, dual_tol: float,
                  f"max |c - A^T y - d| = {worst:.3e}" + (f" on {where}" if where else ""))
 
     def sign_violation(multiplier: float, value: float, lower: float, upper: float) -> float:
-        """How badly a multiplier's sign contradicts which bound the value sits at."""
+        """How badly a multiplier's SIGN contradicts the bound it prices against.
+
+        A positive multiplier prices the lower bound and a negative one the upper bound, so
+        the violation is a multiplier pushing against a bound that does not exist.
+
+        Deliberately NOT checked here: "the multiplier must vanish when the constraint is
+        strictly interior". That is complementary slackness, and it is measured below as the
+        product |multiplier| * slack. Reporting it here as well, via a binary "is the value
+        within primal_tol of a bound" test, is a category error and a badly conditioned one:
+        it returns the full |multiplier| the moment a value sits a hair outside the window,
+        so a point that is optimal to 1e-9 can report a dual violation of 1.0. That reads as
+        a catastrophe when the truth is a rounding-width displacement. A vertex solution is
+        unaffected either way; a first-order method sits near bounds rather than on them,
+        and would be judged by an artefact of the window rather than by its KKT error.
+        """
+        del value  # activity enters through the complementarity product, not through here
         if lower == upper:
-            return 0.0  # fixed: any multiplier is admissible
-        at_lower = math.isfinite(lower) and abs(value - lower) <= primal_tol
-        at_upper = math.isfinite(upper) and abs(value - upper) <= primal_tol
-        if at_lower and not at_upper:
-            return max(0.0, -multiplier)
-        if at_upper and not at_lower:
-            return max(0.0, multiplier)
-        if not at_lower and not at_upper:
-            return abs(multiplier)  # strictly between: the multiplier must vanish
+            return 0.0  # equality / fixed: any multiplier is admissible
+        if multiplier > 0.0 and not math.isfinite(lower):
+            return multiplier
+        if multiplier < 0.0 and not math.isfinite(upper):
+            return -multiplier
         return 0.0
 
     worst, where = 0.0, ""

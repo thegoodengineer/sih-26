@@ -1,0 +1,203 @@
+// SPDX-License-Identifier: Apache-2.0
+// SANKHYA - restarted PDHG tests.
+//
+// The controlling test in this file is AgreesWithTheSimplexOnGeneratedInstances. Two engines
+// with nothing in common beyond the Model - one pivoting on exact ratios, one taking
+// projected gradient steps - landing on the same objective is much stronger evidence than
+// either matching a hand-written expectation. It is also the only cheap way to test PDHG at
+// all: a first-order method has no basis to inspect and no pivot sequence to reason about.
+//
+// Note what is NOT asserted here: that PDHG is fast. On instances this small it is
+// enormously slower than the simplex, by design and by construction. Its value is at a scale
+// where a dense factorization cannot go, and on hardware this suite does not run on.
+
+#include <cmath>
+#include <random>
+#include <string>
+#include <vector>
+
+#include <gtest/gtest.h>
+
+#include "sankhya/model.hpp"
+#include "sankhya/options.hpp"
+
+#include "oracles/lp_generator.hpp"
+#include "oracles/rational_simplex.hpp"
+
+namespace sankhya {
+namespace {
+
+Options pdhg_options(double tolerance) {
+  Options options;
+  options.set_bool("log_to_console", false);
+  options.set_string("algorithm", "pdhg");
+  options.set_double("pdhg_tolerance", tolerance);
+  options.set_int("iteration_limit", 200000);
+  return options;
+}
+
+Options simplex_options() {
+  Options options;
+  options.set_bool("log_to_console", false);
+  options.set_string("algorithm", "simplex");
+  return options;
+}
+
+/// A tiny LP built directly, so the expected optimum is arithmetic in the comment.
+Model make_lp(const std::vector<std::vector<double>>& rows, const std::vector<double>& lower,
+              const std::vector<double>& upper, const std::vector<double>& cost,
+              const std::vector<double>& col_upper = {}) {
+  Model model;
+  const auto cols = static_cast<Index>(cost.size());
+  const auto num_rows = static_cast<Index>(rows.size());
+  model.col_cost = cost;
+  model.col_lower.assign(static_cast<std::size_t>(cols), 0.0);
+  model.col_upper.assign(static_cast<std::size_t>(cols), kInfinity);
+  if (!col_upper.empty()) model.col_upper = col_upper;
+  model.col_type.assign(static_cast<std::size_t>(cols), VarType::kContinuous);
+  model.row_lower = lower;
+  model.row_upper = upper;
+  model.matrix.reset(num_rows, cols);
+  for (Index i = 0; i < num_rows; ++i) {
+    for (Index j = 0; j < cols; ++j) {
+      const double v = rows[static_cast<std::size_t>(i)][static_cast<std::size_t>(j)];
+      if (v != 0.0) model.matrix.add_entry(i, j, v);
+    }
+  }
+  model.matrix.finalize();
+  return model;
+}
+
+// =========================================================================================
+
+TEST(Pdhg, MinimisesASum) {
+  // min x + y  s.t.  x + y >= 2,  x, y >= 0.  Optimum 2.
+  const Model model = make_lp({{1.0, 1.0}}, {2.0}, {kInfinity}, {1.0, 1.0});
+  const Solution s = solve(model, pdhg_options(1e-8));
+  EXPECT_EQ(s.status, SolveStatus::kOptimal);
+  EXPECT_NEAR(s.objective, 2.0, 1e-6);
+}
+
+TEST(Pdhg, HonoursAnEqualityRow) {
+  // min x + 2y  s.t.  x + y = 4,  x, y >= 0.  Optimum 4 at (4, 0).
+  const Model model = make_lp({{1.0, 1.0}}, {4.0}, {4.0}, {1.0, 2.0});
+  const Solution s = solve(model, pdhg_options(1e-8));
+  EXPECT_EQ(s.status, SolveStatus::kOptimal);
+  EXPECT_NEAR(s.objective, 4.0, 1e-6);
+}
+
+TEST(Pdhg, HonoursARangeRow) {
+  // 2 <= x <= 6 written as a range row; minimising x gives 2. The Moreau projection has to
+  // handle a two-sided row without the caller splitting it into two inequalities.
+  const Model model = make_lp({{1.0}}, {2.0}, {6.0}, {1.0});
+  const Solution s = solve(model, pdhg_options(1e-8));
+  EXPECT_EQ(s.status, SolveStatus::kOptimal);
+  EXPECT_NEAR(s.objective, 2.0, 1e-6);
+}
+
+TEST(Pdhg, HonoursAColumnUpperBound) {
+  // max x  (as min -x)  with x <= 7 by bound and a slack row. Optimum -7.
+  const Model model = make_lp({{1.0}}, {-kInfinity}, {100.0}, {-1.0}, {7.0});
+  const Solution s = solve(model, pdhg_options(1e-8));
+  EXPECT_EQ(s.status, SolveStatus::kOptimal);
+  EXPECT_NEAR(s.objective, -7.0, 1e-6);
+}
+
+TEST(Pdhg, ReportsTheObjectiveInTheOriginalSense) {
+  // max 3x + 5y  s.t. x <= 4, 2y <= 12, 3x + 2y <= 18.  Optimum 36 at (2, 6).
+  Model model = make_lp({{1.0, 0.0}, {0.0, 2.0}, {3.0, 2.0}},
+                        {-kInfinity, -kInfinity, -kInfinity}, {4.0, 12.0, 18.0}, {3.0, 5.0});
+  model.sense = ObjSense::kMaximize;
+  const Solution s = solve(model, pdhg_options(1e-8));
+  EXPECT_EQ(s.status, SolveStatus::kOptimal);
+  EXPECT_NEAR(s.objective, 36.0, 1e-5);
+  EXPECT_NEAR(s.col_value[0], 2.0, 1e-4);
+  EXPECT_NEAR(s.col_value[1], 6.0, 1e-4);
+}
+
+TEST(Pdhg, CarriesTheObjectiveOffset) {
+  Model model = make_lp({{1.0}}, {3.0}, {kInfinity}, {1.0});
+  model.objective_offset = 10.0;
+  const Solution s = solve(model, pdhg_options(1e-8));
+  EXPECT_EQ(s.status, SolveStatus::kOptimal);
+  EXPECT_NEAR(s.objective, 13.0, 1e-6);
+}
+
+TEST(Pdhg, StopsAtTheIterationLimitWithoutClaimingOptimality) {
+  Model model = make_lp({{1.0, 1.0}}, {2.0}, {kInfinity}, {1.0, 1.0});
+  Options options = pdhg_options(1e-12);
+  options.set_int("iteration_limit", 20);
+  const Solution s = solve(model, options);
+  EXPECT_NE(s.status, SolveStatus::kOptimal);
+  // An unfinished first-order run must not present its incumbent as a proven bound.
+  EXPECT_TRUE(std::isinf(s.dual_bound));
+  EXPECT_NE(s.message, "");
+}
+
+TEST(Pdhg, IsSelectedOnlyWhenAskedFor) {
+  const Model model = make_lp({{1.0, 1.0}}, {2.0}, {kInfinity}, {1.0, 1.0});
+  const Solution automatic = solve(model, simplex_options());
+  EXPECT_EQ(automatic.algorithm, "simplex-primal");
+  const Solution requested = solve(model, pdhg_options(1e-8));
+  EXPECT_EQ(requested.algorithm, "pdhg-cpu");
+}
+
+TEST(Pdhg, GpuFlagFallsBackToCpuWithoutCrashing) {
+  // CLAUDE.md: the CPU build must work with zero CUDA installed, and --gpu must degrade
+  // silently rather than fail.
+  const Model model = make_lp({{1.0, 1.0}}, {2.0}, {kInfinity}, {1.0, 1.0});
+  Options options = pdhg_options(1e-8);
+  options.set_bool("gpu", true);
+  const Solution s = solve(model, options);
+  EXPECT_EQ(s.status, SolveStatus::kOptimal);
+  EXPECT_NEAR(s.objective, 2.0, 1e-6);
+}
+
+TEST(Pdhg, AgreesWithTheSimplexOnGeneratedInstances) {
+  // Two engines sharing nothing but the Model. Instances come from the Phase 3 generator so
+  // that neither engine's author chose them.
+  std::mt19937_64 rng(20260904);
+  oracle::GeneratorConfig config;
+  config.max_rows = 6;
+  config.max_cols = 6;
+
+  int compared = 0;
+  int disagreed = 0;
+  double worst = 0.0;
+  std::vector<std::string> failures;
+
+  for (int trial = 0; trial < 120; ++trial) {
+    const oracle::KktInstance instance = oracle::kkt_lp(rng, config);
+    const Model model = oracle::to_model(instance.lp);
+
+    const Solution simplex = solve(model, simplex_options());
+    if (simplex.status != SolveStatus::kOptimal) continue;
+
+    const Solution first_order = solve(model, pdhg_options(1e-9));
+    if (first_order.status != SolveStatus::kOptimal) continue;  // counted below, not here
+
+    ++compared;
+    const double scale = std::max(1.0, std::fabs(simplex.objective));
+    const double relative = std::fabs(first_order.objective - simplex.objective) / scale;
+    worst = std::max(worst, relative);
+    if (relative > 1e-6) {
+      ++disagreed;
+      if (failures.size() < 3) {
+        failures.push_back("simplex " + std::to_string(simplex.objective) + " vs pdhg " +
+                           std::to_string(first_order.objective) + "\n" +
+                           instance.lp.to_text());
+      }
+    }
+  }
+
+  std::cout << "PDHG vs simplex: " << compared << " compared, worst relative difference "
+            << worst << "\n";
+  for (const std::string& failure : failures) {
+    std::cout << "\n--- disagreement ---\n" << failure << "\n";
+  }
+  EXPECT_EQ(disagreed, 0);
+  EXPECT_GT(compared, 60) << "too few instances converged for this to mean anything";
+}
+
+}  // namespace
+}  // namespace sankhya
