@@ -62,6 +62,20 @@ CSV_COLUMNS = [
 ]
 
 
+def as_number(value) -> float | None:
+    """Coerce a JSON numeric field to float.
+
+    JSON has no literal for infinity, so the writer emits non-finite values as the strings
+    "inf", "-inf" and "nan" rather than letting them collapse to null. Python's float()
+    accepts all three, so this is the only special case a consumer needs."""
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def git_commit() -> str:
     try:
         r = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=REPO_ROOT,
@@ -102,7 +116,7 @@ def run_sankhya(binary: Path, mps: Path, time_limit: float) -> dict:
         blob = json.loads(stats.read_text())
         return {
             "status": blob.get("result", {}).get("status", "unknown"),
-            "objective": blob.get("result", {}).get("objective"),
+            "objective": as_number(blob.get("result", {}).get("objective")),
             "seconds": wall,
             "iterations": blob.get("effort", {}).get("iterations", ""),
         }
