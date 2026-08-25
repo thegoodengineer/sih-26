@@ -303,20 +303,25 @@ TEST(Solve, DispatchesAnLpToTheSimplex) {
   EXPECT_LE(solution.primal_infeasibility, tol::kPrimalFeasibility);
 }
 
-TEST(Solve, RefusesAMilpRatherThanReportingItsRelaxation) {
-  // The single most damaging thing the dispatcher could do is hand a MILP to the simplex
-  // and report the fractional relaxation as optimal. Branch and cut lands in Phase 5; until
-  // then this path must refuse. The relaxation is a valid bound, not a solution, and
-  // nothing downstream is allowed to confuse the two.
+TEST(Solve, RoutesAMilpToBranchAndBoundAndNeverToTheRelaxation) {
+  // The single most damaging thing the dispatcher could do is hand a MILP to the simplex and
+  // report the fractional relaxation as optimal. Before Phase 5 this path refused outright;
+  // now it must route to branch and bound instead. What must NOT change either way is that
+  // a fractional point is never returned wearing the word "optimal".
   Model model = make_small_lp();
   model.col_type[0] = VarType::kInteger;
   Options options;
   options.set_bool("log_to_console", false);
   const Solution solution = solve(model, options);
-  EXPECT_EQ(solution.status, SolveStatus::kNotSolved);
-  EXPECT_EQ(solution.algorithm, "none");
-  EXPECT_NE(solution.message.find("MILP"), std::string::npos);
-  EXPECT_FALSE(solution.has_primal_values());
+
+  EXPECT_EQ(solution.algorithm, "branch-and-bound");
+  EXPECT_NE(solution.status, SolveStatus::kNotSolved);
+  if (solution.status == SolveStatus::kOptimal) {
+    // Integrality is the whole point of the detour: an answer that is not integral is the
+    // relaxation wearing the wrong label.
+    EXPECT_LE(solution.integrality_violation, tol::kIntegrality);
+    EXPECT_LE(solution.primal_infeasibility, tol::kPrimalFeasibility);
+  }
 }
 
 // =========================================================================================

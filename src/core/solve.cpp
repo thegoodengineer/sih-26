@@ -16,6 +16,7 @@
 #include <fmt/format.h>
 
 #include "sankhya/logging.hpp"
+#include "sankhya/mip.hpp"
 #include "sankhya/model.hpp"
 #include "sankhya/options.hpp"
 #include "sankhya/pdhg.hpp"
@@ -108,11 +109,21 @@ Solution solve(const Model& model, const Options& options) {
     return solution;
   }
 
+  if (problem_class == ProblemClass::kMilp) {
+    solution = mip::solve_branch_and_bound(model, options, logger);
+    logger.info("Result: {}  objective {:.10g}  bound {:.10g}  {} nodes  {:.3f}s",
+                to_string(solution.status), solution.objective, solution.dual_bound,
+                solution.nodes, solution.solve_seconds);
+    logger.info("Measured integrality violation {:.3e}, primal infeasibility {:.3e}",
+                solution.integrality_violation, solution.primal_infeasibility);
+    return solution;
+  }
+
   solution.status = SolveStatus::kNotSolved;
   solution.algorithm = "none";
   solution.message = fmt::format(
-      "no engine is implemented for {} yet; branch and cut lands in Phase 5 and the QP "
-      "engine in Phase 8. The LP relaxation is deliberately NOT reported as a solution",
+      "no engine is implemented for {} yet; the QP and MIQP engines land in Phase 8. The "
+      "relaxation is deliberately NOT reported as a solution",
       class_name(problem_class));
   logger.warning("{}", solution.message);
 

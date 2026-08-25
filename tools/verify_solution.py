@@ -470,9 +470,37 @@ def verify(model: Model, solution: Solution, primal_tol: float, dual_tol: float,
         return report
 
     if integer_columns:
-        # LP duality does not apply to a MILP: the reported duals belong to some node
-        # relaxation, not to the integer problem.
+        # LP duality does not apply to a MILP: any reported duals belong to some node
+        # relaxation, not to the integer problem. What CAN be checked is the claim the
+        # search makes about itself.
         report.note("duality", "skipped: LP duality does not apply to a MILP")
+
+        bound = solution.header_float("dual_bound")
+        if bound is None or not math.isfinite(bound):
+            report.note("optimality proof",
+                        "no finite dual bound reported"
+                        + ("" if solution.status != "optimal"
+                           else " - but the status claims optimal"))
+            if solution.status == "optimal":
+                report.check(False, "optimality proof",
+                             "status is optimal but no finite bound backs the claim")
+            return report
+
+        scale = max(1.0, abs(objective))
+        if solution.status == "optimal":
+            # "Optimal" on a MILP is a claim that the search CLOSED: the incumbent and the
+            # final bound have met. If they have not, the solver is calling an incumbent a
+            # proof, which is the most consequential thing a branch and bound can get wrong
+            # and the least visible - the point is integral and feasible either way.
+            report.check(abs(objective - bound) <= 1e-6 * scale, "optimality proof",
+                         f"objective {objective:.12e} vs dual bound {bound:.12e}, "
+                         f"gap {abs(objective - bound):.3e}")
+        else:
+            # Not closed. The bound must still BE a bound: never worse than the incumbent.
+            slack = (objective - bound) if not model.maximize else (bound - objective)
+            report.check(slack >= -1e-6 * scale, "dual bound is a bound",
+                         f"incumbent {objective:.12e}, bound {bound:.12e}, "
+                         f"remaining gap {abs(objective - bound):.3e}")
         return report
 
     # ---- Dual feasibility ----------------------------------------------------------------

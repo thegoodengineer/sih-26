@@ -185,6 +185,7 @@ set(SANKHYA_CORE_SOURCES
   src/io/writer.cpp
   src/la/sparse.cpp
   src/simplex/dense_lu.cpp
+  src/mip/branch_and_bound.cpp
   src/pdhg/pdhg.cpp
   src/pdhg/scaling.cpp
   src/simplex/primal_simplex.cpp
@@ -196,6 +197,12 @@ add_library(sankhya_objects OBJECT ${SANKHYA_CORE_SOURCES})
 
 target_include_directories(sankhya_objects PUBLIC
   "$<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>")
+
+# src/ is PRIVATE: it lets one module include another module's implementation header
+# (src/mip needs src/simplex, and later phases need more of these) without a chain of
+# ../ paths. It is deliberately not PUBLIC - nothing outside the library may depend on
+# a header that is not in include/sankhya.
+target_include_directories(sankhya_objects PRIVATE "${PROJECT_SOURCE_DIR}/src")
 
 target_link_libraries(sankhya_objects
   PUBLIC  fmt::fmt

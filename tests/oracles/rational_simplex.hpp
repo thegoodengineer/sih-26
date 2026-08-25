@@ -39,6 +39,11 @@ struct GeneratedLp {
   std::vector<std::vector<std::int64_t>> a;
   /// Row lower bounds: A x >= b.
   std::vector<std::int64_t> b;
+  /// Per-column lower bound. Empty means all zero, which is what the generators produce;
+  /// the exact branch and bound fills it in as it tightens.
+  std::vector<std::int64_t> lower;
+  /// Per-column integrality. Empty means every column is continuous.
+  std::vector<char> integral;
   /// Objective coefficients, minimized.
   std::vector<std::int64_t> c;
   /// Per-column upper bound, or kNoUpperBound.
@@ -74,5 +79,16 @@ struct OracleResult {
 
 /// Solve exactly. Never throws: RationalOverflow becomes kOverflow.
 [[nodiscard]] OracleResult solve_exact(const GeneratedLp& lp);
+
+/// Solve the MIXED-INTEGER problem exactly, by branch and bound over solve_exact().
+///
+/// Every bound is an integer and every LP is solved in exact arithmetic, so there is no
+/// tolerance anywhere and no possibility of a node being fathomed on a rounding error. This
+/// is the standard the floating-point branch and bound is judged against, in the same way
+/// solve_exact() is the standard for the simplex.
+///
+/// `node_limit` caps the search; hitting it yields kIterationLimit rather than a wrong
+/// answer, and the fuzz harness counts those separately.
+[[nodiscard]] OracleResult solve_exact_milp(const GeneratedLp& lp, std::int64_t node_limit);
 
 }  // namespace sankhya::oracle

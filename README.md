@@ -20,7 +20,7 @@ Petrochemicals Limited.
 | 2 | MPS/LP readers, revised primal simplex, CLI | **done** |
 | 3 | Verification spine: rational oracle, independent checker, Netlib harness | **done** |
 | 4 | Restarted PDHG — **CPU done**, CUDA backend not started (no GPU available) | partial |
-| 5 | Branch & bound → MILP | |
+| 5 | Branch & bound → MILP | **done** (cuts and MIPLIB deferred, see issues) |
 | 6–10 | Performance, branch & cut, IPM/QP, robustness, packaging | |
 
 LP is solved by a bounded-variable revised primal simplex. MILP and QP are **refused**, not

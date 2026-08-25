@@ -102,17 +102,15 @@ jobs:
           # strong duality. A reader bug shows up here as a disagreement.
           python3 tools/verify_solution.py demo/crude_blend.mps blend.sol
 
-          echo '--- a MILP must be REFUSED, never answered with its relaxation ---'
-          set +e
-          ./build/sankhya solve demo/blend_milp.mps > milp.log 2>&1
-          milp_status=$?
-          set -e
-          cat milp.log
-          # Exit 5 is "not solved". A 0 here would mean the LP relaxation was reported as
-          # an optimal MILP solution, which is the worst failure this project can have.
-          test "$milp_status" -eq 5
-          grep -q 'not_solved' milp.log
-          echo 'MILP correctly refused'
+          echo '--- a MILP must be SOLVED, and never answered with its relaxation ---'
+          # Before Phase 5 this step asserted the MILP was refused. Branch and bound now
+          # solves it, so the assertion moves to what actually matters and always did: the
+          # answer must be INTEGRAL. A fractional point reported as optimal is the failure
+          # this check exists to catch, whichever engine produced it.
+          ./build/sankhya solve demo/blend_milp.mps --write-sol milp.sol --stats milp.json
+          grep -q 'branch-and-bound' milp.json
+          python3 tools/verify_solution.py demo/blend_milp.mps milp.sol
+          echo 'MILP solved and independently verified'
 
   benchmarks:
     name: netlib benchmark

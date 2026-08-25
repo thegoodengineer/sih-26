@@ -4,7 +4,7 @@ This document exists so that the claim "built from mathematical foundations, not
 around an existing solver" can be **checked** rather than believed. It is maintained
 continuously, not written at the end.
 
-Last updated: **Phase 4** (the first-order engine, CPU). Every number and every command output below was
+Last updated: **Phase 5** (branch and bound). Every number and every command output below was
 produced by running the command shown, on the machine described, at the commit recorded.
 
 ---
@@ -69,10 +69,14 @@ mathematics, not transcribed from anyone's implementation.
 | Ruiz equilibration | Ruiz, *A scaling algorithm to equilibrate both rows and columns norms in matrices*, RAL-TR-2001-034 | `src/pdhg/scaling.cpp` |
 | Diagonal preconditioning, alpha = 1 | Pock & Chambolle, *Diagonal preconditioning for first order primal-dual algorithms*, ICCV 2011, section 4 | `src/pdhg/scaling.cpp` |
 | Moreau decomposition for the support-function prox | Rockafellar, *Convex Analysis*, theorem 31.5 | `src/pdhg/pdhg.cpp` |
+| Branch and bound | Land & Doig, *An automatic method of solving discrete programming problems*, Econometrica 28(3), 1960; Wolsey, *Integer Programming*, ch. 7 | `src/mip/branch_and_bound.cpp` |
+| Node propagation from row activities | Savelsbergh, *Preprocessing and probing for MIP*, ORSA J. Computing 6(4), 1994 | `src/mip/branch_and_bound.cpp` |
+| Search shape: propagation at nodes, incumbent as cutoff | Achterberg, *Constraint Integer Programming* (thesis, 2007), ch. 5–6 | `src/mip/branch_and_bound.cpp` |
+| Exact rational branch and bound (test oracle) | as above, in exact arithmetic | `tests/oracles/rational_simplex.cpp` |
 | Shifted geometric mean benchmark reporting | Mittelmann, plato.asu.edu benchmark methodology | `bench/runners/make_benchmarks_doc.py` |
 | LP duality checks (feasibility, complementary slackness, strong duality) | Chvátal, *Linear Programming*, ch. 5 | `tools/verify_solution.py` |
 
-Phases 5 onwards add: dual revised simplex (Maros; Huangfu & Hall), Forrest–Tomlin
+Phases 6 onwards add: dual revised simplex (Maros; Huangfu & Hall), Forrest–Tomlin
 update (Forrest & Tomlin 1972), Devex pricing (Forrest & Goldfarb 1992), Harris two-pass
 ratio test (Harris 1973), restarted PDHG (Applegate et al.; Lu & Yang, arXiv:2311.12180;
 arXiv:2507.14051), Mehrotra predictor–corrector (Nocedal & Wright; Gondzio), Gomory MIR and
