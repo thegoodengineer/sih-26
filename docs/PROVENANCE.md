@@ -133,6 +133,21 @@ Three archives: our own core, fmt, and zlib. CLI11 and nlohmann/json are header-
 appear as includes rather than archives — they are listed in the dependency table above and
 are visible in `CMakeLists.txt`.
 
+The Linux link line, asked of Ninja directly in CI (run 32846138507) so it cannot drift from
+what was really executed:
+
+```
+$ ninja -C build -t commands sankhya | tail -1
+/usr/bin/c++ -O3 -DNDEBUG -Wl,--dependency-file=CMakeFiles/sankhya-cli.dir/link.d \
+    CMakeFiles/sankhya-cli.dir/apps/sankhya-cli/main.cpp.o \
+    -o sankhya \
+    libsankhya_core.a \
+    _deps/fmt-build/libfmt.a \
+    /usr/lib/x86_64-linux-gnu/libz.so
+```
+
+Our own core, fmt, and the system zlib. That is the entire list.
+
 ### 4.3 SBOM
 
 An SPDX SBOM is generated in CI by the `provenance` job and attached as a build artifact
