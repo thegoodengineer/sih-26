@@ -343,8 +343,15 @@ TEST(SolveStatusGuard, TheSimplexIsUnaffected) {
 
   const Solution solution = solve(model, options);
   EXPECT_EQ(solution.status, SolveStatus::kOptimal) << solution.message;
-  EXPECT_DOUBLE_EQ(solution.primal_infeasibility, 0.0);
-  EXPECT_DOUBLE_EQ(solution.dual_infeasibility, 0.0);
+  // Within tolerance, NOT exactly zero. The guard's contract is that a measured violation
+  // stays under the documented tolerance; the simplex never promised a bit-exact zero and
+  // does not deliver one. Recomputing row activities from a model whose coefficients span
+  // 0.22 to 20 leaves accumulation at machine-epsilon scale - this assertion first read
+  // EXPECT_DOUBLE_EQ(..., 0.0), which passed on Windows/Release and failed on Linux/Debug
+  // at 3.55e-15. That is twelve orders of magnitude inside the tolerance being tested, so
+  // the assertion was wrong rather than the code.
+  EXPECT_LE(solution.primal_infeasibility, options.get_double("primal_feasibility_tolerance"));
+  EXPECT_LE(solution.dual_infeasibility, options.get_double("dual_feasibility_tolerance"));
   EXPECT_NEAR(solution.objective, 214.14594594594595, 1e-9);
 }
 
