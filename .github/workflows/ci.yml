@@ -89,8 +89,9 @@ jobs:
       - name: Record the link line and shared library dependencies
         run: |
           echo "=== full link line ==="
-          # The link line CMake actually used, straight out of the build database.
-          grep -h 'sankhya' build/CMakeFiles/sankhya-cli.dir/link.txt || true
+          # The link command the build system actually ran. Asked of Ninja directly rather
+          # than read out of a file, so it cannot drift from what was really executed.
+          ninja -C build -t commands sankhya | tail -1
           echo
           echo "=== ldd build/sankhya ==="
           ldd build/sankhya
