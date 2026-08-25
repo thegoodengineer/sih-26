@@ -49,6 +49,62 @@ const char* class_name(ProblemClass c) {
   return "unknown";
 }
 
+/// Force the reported status to agree with the measured quality of the point.
+///
+/// Every engine calls Solution::recompute_quality() before returning, so primal_infeasibility
+/// and dual_infeasibility are MEASURED from the returned vectors rather than asserted by the
+/// engine about itself. Nothing was checking that the status agreed with them, and the two
+/// drifted apart: PDHG terminates on a RELATIVE KKT criterion at pdhg_tolerance (1e-4 by
+/// default), and that was being translated straight into kOptimal. A relative KKT residual of
+/// 1e-4 is not the same claim as "primal feasible to 1e-7", and on all eight Netlib instances
+/// the gap between those two statements was three to five orders of magnitude. sc50b, whose
+/// published optimum is exactly -70, was returned as -70.0139 and labelled optimal - a value
+/// better than the optimum, which is only reachable from outside the feasible region.
+///
+/// The check lives here, in the dispatcher, rather than inside any one engine. It is a
+/// property of the Solution contract, not of an algorithm, so the interior-point and QP
+/// engines inherit it in Phase 8 instead of having to re-derive it. An engine remains free to
+/// report kFeasible, kIterationLimit or anything else; what it cannot do is claim a proof
+/// whose evidence is on the same object and disagrees.
+///
+/// Statuses that make no claim about the point are left alone.
+void reconcile_status_with_measurement(Solution* solution, const Options& options,
+                                       Logger& logger) {
+  const bool claims_a_point =
+      solution->status == SolveStatus::kOptimal || solution->status == SolveStatus::kFeasible;
+  if (!claims_a_point) return;
+
+  const double primal_tolerance = options.get_double("primal_feasibility_tolerance");
+  const double dual_tolerance = options.get_double("dual_feasibility_tolerance");
+
+  // A point that violates its own constraints is not feasible, so neither kOptimal nor
+  // kFeasible is available. The engine stopped believing it had converged, so this is a
+  // numerical failure and is reported as one, with the number that contradicts it.
+  if (solution->primal_infeasibility > primal_tolerance) {
+    const std::string detail = fmt::format(
+        "engine reported {} but the returned point violates primal feasibility by {:.3e}, "
+        "above the {:.1e} tolerance; it is not a feasible point",
+        to_string(solution->status), solution->primal_infeasibility, primal_tolerance);
+    solution->status = SolveStatus::kNumericalError;
+    solution->message = solution->message.empty() ? detail : solution->message + "; " + detail;
+    logger.warning("{}", detail);
+    return;
+  }
+
+  // Primal feasible but dual infeasible: the point is usable, the optimality claim is not
+  // supported. kFeasible says exactly that and already exists for the purpose.
+  if (solution->status == SolveStatus::kOptimal &&
+      solution->dual_infeasibility > dual_tolerance) {
+    const std::string detail = fmt::format(
+        "engine reported optimal but the reduced costs violate dual feasibility by {:.3e}, "
+        "above the {:.1e} tolerance; reporting a feasible point rather than a proof",
+        solution->dual_infeasibility, dual_tolerance);
+    solution->status = SolveStatus::kFeasible;
+    solution->message = solution->message.empty() ? detail : solution->message + "; " + detail;
+    logger.warning("{}", detail);
+  }
+}
+
 }  // namespace
 
 Solution solve(const Model& model, const Options& options) {
@@ -101,6 +157,7 @@ Solution solve(const Model& model, const Options& options) {
 
     solution = want_pdhg ? pdhg::solve_pdhg(model, options, logger)
                          : solve_primal_simplex(model, options, logger);
+    reconcile_status_with_measurement(&solution, options, logger);
     logger.info("Result: {}  objective {:.10g}  {} iterations  {:.3f}s",
                 to_string(solution.status), solution.objective, solution.iterations,
                 solution.solve_seconds);
