@@ -83,6 +83,25 @@ FetchContent_Declare(nlohmann_json
 
 FetchContent_MakeAvailable(fmt cli11 nlohmann_json)
 
+# Dependency headers are pulled into our translation units, so our -Werror set is applied to
+# their code as well as ours - fmt 10.2.1's ranges.h trips -Wtautological-compare on GCC 16,
+# for instance. Re-export each dependency's include directories as SYSTEM so the compiler
+# suppresses diagnostics originating inside them while still policing every line we write.
+function(sankhya_mark_include_dirs_system)
+  foreach(dep IN LISTS ARGN)
+    if(NOT TARGET ${dep})
+      continue()
+    endif()
+    get_target_property(dep_includes ${dep} INTERFACE_INCLUDE_DIRECTORIES)
+    if(dep_includes)
+      set_target_properties(${dep} PROPERTIES
+        INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${dep_includes}")
+    endif()
+  endforeach()
+endfunction()
+
+sankhya_mark_include_dirs_system(fmt CLI11 nlohmann_json)
+
 if(SANKHYA_WITH_ZLIB)
   # Prefer a system zlib; only fetch and build one when the platform has none.
   find_package(ZLIB QUIET)
@@ -160,7 +179,13 @@ endif()
 set(SANKHYA_CORE_SOURCES
   src/core/model.cpp
   src/core/solve.cpp
+  src/io/line_reader.cpp
+  src/io/lp_reader.cpp
+  src/io/mps_reader.cpp
+  src/io/writer.cpp
   src/la/sparse.cpp
+  src/simplex/dense_lu.cpp
+  src/simplex/primal_simplex.cpp
   src/util/logging.cpp
   src/util/options.cpp
   src/util/version.cpp)
@@ -172,7 +197,9 @@ target_include_directories(sankhya_objects PUBLIC
 
 target_link_libraries(sankhya_objects
   PUBLIC  fmt::fmt
-  PRIVATE sankhya_flags)
+  # nlohmann_json is used only by src/io/writer.cpp to emit the benchmark stats blob. It is
+  # header-only, so PRIVATE keeps it out of every consumer's include path.
+  PRIVATE nlohmann_json::nlohmann_json sankhya_flags)
 
 target_compile_definitions(sankhya_objects PRIVATE
   SANKHYA_VERSION="${PROJECT_VERSION}"

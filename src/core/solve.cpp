@@ -2,13 +2,14 @@
 // SANKHYA - the solve() dispatcher.
 //
 // THIS FILE IS THE SEAM. Every engine registers here and nowhere else:
-//   Phase 2  primal revised simplex  -> LP
+//   Phase 2  primal revised simplex  -> LP            [registered]
 //   Phase 4  restarted PDHG          -> LP, large and sparse
 //   Phase 5  branch and cut          -> MILP
 //   Phase 8  Mehrotra IPM, convex QP -> LP and QP
-// Phase 1 has no engine yet, so the dispatcher classifies the model, reports what it would
-// have dispatched to, and returns kNotSolved. That is deliberately not a stub that lies:
-// per CLAUDE.md an unimplemented path reports the truth rather than a plausible zero.
+// A class with no engine returns kNotSolved and says so. Per CLAUDE.md an unimplemented
+// path reports the truth rather than a plausible zero - and in particular a MILP is NOT
+// quietly handed to the simplex and its fractional relaxation reported as optimal, which
+// is the single most damaging thing this dispatcher could do.
 
 #include <string>
 
@@ -16,7 +17,10 @@
 
 #include "sankhya/logging.hpp"
 #include "sankhya/model.hpp"
+#include "sankhya/options.hpp"
 #include "sankhya/timer.hpp"
+
+#include "../simplex/primal_simplex.hpp"
 
 namespace sankhya {
 namespace {
@@ -68,12 +72,33 @@ Solution solve(const Model& model, const Options& options) {
               model.num_cols(), model.num_nonzeros(), model.num_integer_columns());
   logger.info("Problem class: {}", class_name(problem_class));
 
-  // No engine is registered yet. Phase 2 replaces this block with the simplex call.
+  if (problem_class == ProblemClass::kLp) {
+    const std::string requested = options.get_string("algorithm");
+    if (requested != "auto" && requested != "simplex") {
+      solution.status = SolveStatus::kNotSolved;
+      solution.algorithm = "none";
+      solution.message = fmt::format(
+          "algorithm '{}' is not implemented yet; only the primal simplex is available",
+          requested);
+      logger.warning("{}", solution.message);
+      solution.solve_seconds = timer.elapsed_seconds();
+      return solution;
+    }
+
+    solution = solve_primal_simplex(model, options, logger);
+    logger.info("Result: {}  objective {:.10g}  {} iterations  {:.3f}s",
+                to_string(solution.status), solution.objective, solution.iterations,
+                solution.solve_seconds);
+    logger.info("Measured primal infeasibility {:.3e}, dual infeasibility {:.3e}",
+                solution.primal_infeasibility, solution.dual_infeasibility);
+    return solution;
+  }
+
   solution.status = SolveStatus::kNotSolved;
   solution.algorithm = "none";
   solution.message = fmt::format(
-      "no engine is implemented for {} yet (Phase 1 provides the model, the "
-      "option table and the linear algebra only)",
+      "no engine is implemented for {} yet; branch and cut lands in Phase 5 and the QP "
+      "engine in Phase 8. The LP relaxation is deliberately NOT reported as a solution",
       class_name(problem_class));
   logger.warning("{}", solution.message);
 

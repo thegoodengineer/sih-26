@@ -116,15 +116,34 @@ tools/verify_solution.py consumes the written .sol file only. It never links our
 ## Workflow
 
 Branch per task, PR into main, squash merge. No file over ~600 lines.
+
+CI gates formatting with clang-format **22.1.8** from pip, and clang-format's output changes
+between major versions, so a distro clang-format will "fix" the tree into a state CI then
+rejects. Run the pinned one before pushing - it provisions itself on first use:
+
+    scripts/format.sh            # rewrite in place
+    scripts/format.sh --check    # exactly what CI runs
+
 The CPU build must work with zero CUDA installed — all GPU code behind
 `#ifdef SANKHYA_ENABLE_CUDA` plus a runtime `--gpu` flag with silent CPU fallback.
 
-## Local toolchain note (this machine)
+## Local toolchain note (Windows dev boxes)
 
-The default `g++` on PATH is MinGW 6.3.0 and is **too old for C++20**. Use the
-Strawberry-bundled MinGW-W64 GCC 13.2.0 instead:
+Do not trust PATH order for the compiler. Boxes seen so far:
 
-    CC=/c/Strawberry/c/bin/gcc CXX=/c/Strawberry/c/bin/g++ cmake -G Ninja -B build
+- MSYS2 UCRT64, `C:\msys64\ucrt64\bin\g++.exe` (GCC 16.1.0) - current primary
+- Strawberry Perl MinGW-W64, `C:\Strawberry\c\bin\g++.exe` (GCC 13.2.0)
+- a stale MinGW 6.3.0 that predates C++20 entirely and must never be selected
 
-scripts/configure.sh does this for you. CI is ubuntu-latest and is the authority on
-`-Werror` cleanliness; Windows is the convenience build.
+`scripts/configure.sh` probes these in order, checks `-dumpversion >= 10`, and prepends the
+chosen toolchain's bin directory to PATH so the cmake/ninja shipped beside the compiler win
+over any unrelated one. Always configure through it:
+
+    scripts/configure.sh build Release
+
+If cmake or ninja are missing on an MSYS2 box:
+
+    pacman -S --needed mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja
+
+CI is ubuntu-latest and is the authority on `-Werror` cleanliness; Windows is the
+convenience build.
