@@ -110,6 +110,14 @@ const std::vector<OptionSpec>& Options::registry() {
                  0.0,
                  0.0,
                  {"auto", "simplex", "dual-simplex", "pdhg", "ipm"}});
+    s.push_back({"mps_format",
+                 OptionType::String,
+                 std::string("auto"),
+                 "MPS dialect: auto, free, fixed. auto reads with the whitespace tokenizer "
+                 "and retries in fixed columns only if that fails.",
+                 0.0,
+                 0.0,
+                 {"auto", "free", "fixed"}});
     s.push_back({"presolve",
                  OptionType::Bool,
                  true,

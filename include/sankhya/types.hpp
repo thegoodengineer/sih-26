@@ -44,4 +44,14 @@ inline constexpr double kMpsInfinity = 1e30;
   return v > 0.0 ? kInfinity : -kInfinity;
 }
 
+/// Collapse negative zero onto positive zero.
+///
+/// IEEE-754 keeps -0.0 distinct from 0.0, and it appears the moment a maximization model
+/// multiplies a zero reduced cost by the sense multiplier, or a reader negates a zero
+/// objective constant. The value is numerically identical and every comparison in the
+/// solver treats it as such, but it PRINTS as "-0", and a judge reading "reduced_cost -0"
+/// in a solution file has no way to know that is not a real negative quantity rounded to
+/// nothing. Applied wherever a number crosses into user-visible output.
+[[nodiscard]] inline double normalize_zero(double v) noexcept { return v == 0.0 ? 0.0 : v; }
+
 }  // namespace sankhya

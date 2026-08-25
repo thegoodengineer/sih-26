@@ -4,7 +4,7 @@ This document exists so that the claim "built from mathematical foundations, not
 around an existing solver" can be **checked** rather than believed. It is maintained
 continuously, not written at the end.
 
-Last updated: **Phase 1** (foundations). Every number and every command output below was
+Last updated: **Phase 2** (I/O and the primal simplex). Every number and every command output below was
 produced by running the command shown, on the machine described, at the commit recorded.
 
 ---
@@ -55,10 +55,15 @@ mathematics, not transcribed from anyone's implementation.
 |---|---|---|
 | Compressed-column storage, counting-sort transpose | Davis, *Direct Methods for Sparse Linear Systems* (SIAM, 2006), ch. 2 | `src/la/sparse.cpp` |
 | Dense-accumulator sparse vector (FTRAN/BTRAN result pattern) | Davis, ibid.; Hall & McKinnon on hyper-sparsity | `include/sankhya/sparse.hpp`, `src/la/sparse.cpp` |
-| Bland's anti-cycling rule (tolerance constant only, so far) | Chvátal, *Linear Programming*, ch. 3 | `include/sankhya/tolerances.hpp` |
 | Markowitz threshold pivoting (constant only, so far) | Suhl & Suhl, *Computing sparse LU factorizations for large-scale linear programming bases* | `include/sankhya/tolerances.hpp` |
+| MPS format: sections, RANGES and BOUNDS semantics | IBM MPS specification; Maros, *Computational Techniques of the Simplex Method* (Kluwer, 2003), appendix A | `src/io/mps_reader.cpp` |
+| CPLEX LP format | Public CPLEX and Gurobi reference manuals (documentation only) | `src/io/lp_reader.cpp` |
+| Dense LU with partial pivoting; transposed triangular solves | Golub & Van Loan, *Matrix Computations* (4th ed.), sections 3.2 and 3.4 | `src/simplex/dense_lu.cpp` |
+| Bounded-variable revised primal simplex | Dantzig, *Linear Programming and Extensions* (1963); Chvátal, *Linear Programming* (1983), ch. 3 and 8 | `src/simplex/primal_simplex.cpp` |
+| Piecewise-linear (composite) phase 1, no artificial variables | Maros, *Computational Techniques of the Simplex Method*, ch. 9 | `src/simplex/primal_simplex.cpp` |
+| Bland's anti-cycling rule | Chvátal, *Linear Programming*, ch. 3 | `src/simplex/primal_simplex.cpp` |
 
-Phases 2 onwards add: revised primal and dual simplex (Maros; Chvátal), Forrest–Tomlin
+Phases 4 onwards add: dual revised simplex (Maros; Huangfu & Hall), Forrest–Tomlin
 update (Forrest & Tomlin 1972), Devex pricing (Forrest & Goldfarb 1992), Harris two-pass
 ratio test (Harris 1973), restarted PDHG (Applegate et al.; Lu & Yang, arXiv:2311.12180;
 arXiv:2507.14051), Mehrotra predictor–corrector (Nocedal & Wright; Gondzio), Gomory MIR and
@@ -166,6 +171,8 @@ recorded rather than silently made.
 | 2 | Does a string-keyed option table with typed values imitate a solver's API? | Allowed | Explicitly permitted by `CLAUDE.md` item 5 (API shape). The shape is create/set/solve/query with string options; the registry, parser and storage are our own. |
 | 3 | System zlib is picked up in preference to a fetched copy. Does that weaken the provenance claim? | Acceptable, and recorded | zlib is a compression library under a permissive licence, present on essentially every system. The exact resolved path appears in the link line above, so which copy was used is always visible. |
 | 4 | The Windows build links libstdc++ and libgcc **statically** (`-static`). | Deliberate | It removes a start-up failure caused by an older MinGW earlier on PATH, and it makes the dependency list above shorter and easier to audit, not longer. It has no effect on the Linux build, which CI treats as authoritative. |
+| 5 | The MPS reader imitates the *file format* of CPLEX/Xpress inputs, and the LP reader imitates the CPLEX LP format. | Allowed | A file format is an interface, not an implementation. `CLAUDE.md` item 5 covers API shape for the same reason, and reading a format everyone's solver reads is what makes us drop-in adoptable. Both readers were written from the published format specification and from the textbook reference above; **no solver's reader source was consulted**, which `CLAUDE.md` calls out by name as forbidden. |
+| 6 | **OPEN — needs a decision before Phase 3.** Netlib distributes its LP test set in a packed `emps` format, not as plain MPS. Expanding it requires the `emps.f` / `emps.c` expander that Netlib ships alongside the data (`https://www.netlib.org/lp/data/readme` directs users to it as the only way to obtain the instances). Does fetching that expander, or writing our own decoder from its format description, cross the red line? | **Not yet decided — flagged, not acted on** | The argument for *allowed*: `emps` is a data-format expander distributed with the benchmark dataset itself, it appears nowhere in the red line's enumerated list of solvers, and `CLAUDE.md` item 6 explicitly permits "benchmark instances and published reference optima: MIPLIB, Netlib, QPLIB, Mittelmann" — of which this is the delivery mechanism. The argument for *caution*: it is still third-party code associated with the LP ecosystem, and reverse-engineering the packed format blind risks a decoder that produces a well-formed MPS for the **wrong problem**, which is the exact silent-failure mode this project is built to avoid. Nothing has been downloaded or written. **Phase 2 therefore does not claim a Netlib result.** |
 
 ---
 
@@ -178,3 +185,13 @@ ctest --test-dir build --output-on-failure
 ```
 
 On Linux, `ldd build/sankhya`. On Windows, `objdump -p build/sankhya.exe | grep "DLL Name"`.
+
+To reproduce the Phase 2 end-to-end result:
+
+```bash
+build/sankhya info demo/crude_blend.mps
+build/sankhya solve demo/crude_blend.mps --write-sol blend.sol --stats blend.json
+build/sankhya solve demo/crude_blend.lp
+```
+
+The MPS and LP files describe the same model; the two solutions must be identical.

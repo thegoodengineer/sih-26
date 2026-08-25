@@ -179,7 +179,13 @@ endif()
 set(SANKHYA_CORE_SOURCES
   src/core/model.cpp
   src/core/solve.cpp
+  src/io/line_reader.cpp
+  src/io/lp_reader.cpp
+  src/io/mps_reader.cpp
+  src/io/writer.cpp
   src/la/sparse.cpp
+  src/simplex/dense_lu.cpp
+  src/simplex/primal_simplex.cpp
   src/util/logging.cpp
   src/util/options.cpp
   src/util/version.cpp)
@@ -191,7 +197,9 @@ target_include_directories(sankhya_objects PUBLIC
 
 target_link_libraries(sankhya_objects
   PUBLIC  fmt::fmt
-  PRIVATE sankhya_flags)
+  # nlohmann_json is used only by src/io/writer.cpp to emit the benchmark stats blob. It is
+  # header-only, so PRIVATE keeps it out of every consumer's include path.
+  PRIVATE nlohmann_json::nlohmann_json sankhya_flags)
 
 target_compile_definitions(sankhya_objects PRIVATE
   SANKHYA_VERSION="${PROJECT_VERSION}"
