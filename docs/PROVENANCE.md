@@ -4,7 +4,7 @@ This document exists so that the claim "built from mathematical foundations, not
 around an existing solver" can be **checked** rather than believed. It is maintained
 continuously, not written at the end.
 
-Last updated: **Phase 3** (the verification spine). Every number and every command output below was
+Last updated: **Phase 4** (the first-order engine, CPU). Every number and every command output below was
 produced by running the command shown, on the machine described, at the commit recorded.
 
 ---
@@ -63,10 +63,16 @@ mathematics, not transcribed from anyone's implementation.
 | Piecewise-linear (composite) phase 1, no artificial variables | Maros, *Computational Techniques of the Simplex Method*, ch. 9 | `src/simplex/primal_simplex.cpp` |
 | Bland's anti-cycling rule | Chvátal, *Linear Programming*, ch. 3 | `src/simplex/primal_simplex.cpp` |
 | Exact rational tableau simplex (test oracle) | Chvátal, *Linear Programming*, ch. 2–3 | `tests/oracles/rational_simplex.cpp` |
+| Primal-dual hybrid gradient (the base iteration) | Chambolle & Pock, *A first-order primal-dual algorithm for convex problems with applications to imaging*, JMIV 40(1), 2011, Algorithm 1 | `src/pdhg/pdhg.cpp` |
+| Adaptive step size, primal weight, restarts | Applegate et al., *Practical Large-Scale Linear Programming using Primal-Dual Hybrid Gradient* (PDLP), NeurIPS 2021, sections 3.1, 3.2, 4.3 | `src/pdhg/pdhg.cpp` |
+| GPU-oriented restarted PDHG (design reference) | Lu & Yang, *cuPDLP.jl*, arXiv:2311.12180 | `src/pdhg/pdhg.cpp` |
+| Ruiz equilibration | Ruiz, *A scaling algorithm to equilibrate both rows and columns norms in matrices*, RAL-TR-2001-034 | `src/pdhg/scaling.cpp` |
+| Diagonal preconditioning, alpha = 1 | Pock & Chambolle, *Diagonal preconditioning for first order primal-dual algorithms*, ICCV 2011, section 4 | `src/pdhg/scaling.cpp` |
+| Moreau decomposition for the support-function prox | Rockafellar, *Convex Analysis*, theorem 31.5 | `src/pdhg/pdhg.cpp` |
 | Shifted geometric mean benchmark reporting | Mittelmann, plato.asu.edu benchmark methodology | `bench/runners/make_benchmarks_doc.py` |
 | LP duality checks (feasibility, complementary slackness, strong duality) | Chvátal, *Linear Programming*, ch. 5 | `tools/verify_solution.py` |
 
-Phases 4 onwards add: dual revised simplex (Maros; Huangfu & Hall), Forrest–Tomlin
+Phases 5 onwards add: dual revised simplex (Maros; Huangfu & Hall), Forrest–Tomlin
 update (Forrest & Tomlin 1972), Devex pricing (Forrest & Goldfarb 1992), Harris two-pass
 ratio test (Harris 1973), restarted PDHG (Applegate et al.; Lu & Yang, arXiv:2311.12180;
 arXiv:2507.14051), Mehrotra predictor–corrector (Nocedal & Wright; Gondzio), Gomory MIR and

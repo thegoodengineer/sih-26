@@ -190,6 +190,13 @@ const std::vector<OptionSpec>& Options::registry() {
                  0.0,
                  kNoLimit,
                  {}});
+    s.push_back({"pdhg_restart",
+                 OptionType::Bool,
+                 true,
+                 "Restart PDHG on the KKT-error criterion; off is for evidence runs.",
+                 0.0,
+                 0.0,
+                 {}});
     s.push_back({"pdhg_tolerance",
                  OptionType::Double,
                  tol::kPdhgLoose,
