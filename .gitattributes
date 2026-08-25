@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: Apache-2.0
+# Normalise line endings so that the clang-format CI check sees the same bytes on Linux
+# that a Windows developer formatted locally.
+* text=auto eol=lf
+*.png binary
+*.gz  binary
+*.mps text eol=lf

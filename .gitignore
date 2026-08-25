@@ -1,0 +1,11 @@
+build/
+build-*/
+.cache/
+*.o
+data/netlib/
+data/miplib/
+data/qplib/
+__pycache__/
+.venv/
+compile_commands.json
+.vscode/

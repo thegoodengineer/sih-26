@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: Apache-2.0
+# SANKHYA - Google style with a 96-column limit.
+# 96 rather than 80: the numerical core has long expressions and long identifiers, and
+# wrapping them at 80 hurts readability more than the extra width costs.
+---
+Language: Cpp
+BasedOnStyle: Google
+ColumnLimit: 96
+DerivePointerAlignment: false
+PointerAlignment: Left
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: WithoutElse
+AllowShortCaseLabelsOnASingleLine: true
+IncludeBlocks: Preserve
+SortIncludes: CaseSensitive

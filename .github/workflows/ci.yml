@@ -1,0 +1,125 @@
+# SPDX-License-Identifier: Apache-2.0
+# SANKHYA - continuous integration.
+#
+# ubuntu-latest is the authority on -Werror cleanliness and on the sanitizer runs; the
+# Windows build is a developer convenience and is not gated here.
+#
+# The `provenance` job is not decoration. CLAUDE.md commits us to proving that nothing from
+# an optimization solver is linked in, and the cheapest proof is a machine-generated link
+# line plus `ldd` on every pull request, so the claim cannot silently rot.
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Release
+            build_type: Release
+            sanitize: OFF
+          - name: Debug+ASan+UBSan
+            build_type: Debug
+            sanitize: ON
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build zlib1g-dev
+
+      - name: Report compiler version
+        run: g++ --version
+
+      - name: Configure
+        run: |
+          cmake -G Ninja -B build \
+            -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
+            -DSANKHYA_SANITIZE=${{ matrix.sanitize }} \
+            -DSANKHYA_BUILD_TESTS=ON
+
+      - name: Build
+        run: cmake --build build -j
+
+      - name: Test
+        env:
+          # halt_on_error keeps a sanitizer report from being buried under later output.
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: ctest --test-dir build --output-on-failure
+
+      - name: CLI smoke test
+        run: |
+          ./build/sankhya version
+          ./build/sankhya options
+
+  provenance:
+    name: provenance
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build zlib1g-dev
+
+      - name: Configure and build
+        run: |
+          cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Release -DSANKHYA_BUILD_TESTS=OFF
+          cmake --build build -j
+
+      - name: Record the link line and shared library dependencies
+        run: |
+          echo "=== full link line ==="
+          # The link line CMake actually used, straight out of the build database.
+          grep -h 'sankhya' build/CMakeFiles/sankhya-cli.dir/link.txt || true
+          echo
+          echo "=== ldd build/sankhya ==="
+          ldd build/sankhya
+          echo
+          echo "=== nothing below may name a solver ==="
+          if ldd build/sankhya | grep -Ei 'cbc|clp|highs|scip|soplex|glpk|lpsolve|osqp|ortools|gurobi|cplex|xpress'; then
+            echo "FAIL: a solver library is linked into the binary"
+            exit 1
+          fi
+          echo "OK: no solver library is linked"
+
+      - name: Generate SPDX SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          path: .
+          format: spdx-json
+          artifact-name: sankhya-sbom.spdx.json
+
+  format:
+    name: clang-format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Pinned via pip rather than apt: clang-format's output changes between major versions,
+      # so an unpinned formatter turns a green tree red on an unrelated runner image bump.
+      # This is the exact version the tree was normalised with.
+      - name: Check formatting
+        run: |
+          pip install clang-format==22.1.8
+          clang-format --version
+          find include src apps tests -type f \( -name '*.hpp' -o -name '*.cpp' -o -name '*.h' \) \
+            -print0 | xargs -0 clang-format --dry-run --Werror
