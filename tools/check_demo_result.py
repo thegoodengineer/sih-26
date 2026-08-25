@@ -39,14 +39,20 @@ def main(argv: list[str]) -> int:
     with open(argv[1], encoding="utf-8") as handle:
         blob = json.load(handle)
 
+    # float() rather than direct use: non-finite values are written as the strings "inf",
+    # "-inf" and "nan", because JSON has no literal for them. float() accepts all three.
     status = blob["result"]["status"]
-    objective = blob["result"]["objective"]
-    primal = blob["quality"]["primal_infeasibility"]
-    dual = blob["quality"]["dual_infeasibility"]
+    objective = float(blob["result"]["objective"])
+    dual_bound = float(blob["result"]["dual_bound"])
+    absolute_gap = float(blob["result"]["absolute_gap"])
+    relative_gap = float(blob["result"]["relative_gap"])
+    primal = float(blob["quality"]["primal_infeasibility"])
+    dual = float(blob["quality"]["dual_infeasibility"])
     iterations = blob["effort"]["iterations"]
 
     print(
-        f"status={status} objective={objective!r} "
+        f"status={status} objective={objective!r} dual_bound={dual_bound!r} "
+        f"abs_gap={absolute_gap!r} rel_gap={relative_gap!r} "
         f"primal_inf={primal} dual_inf={dual} iterations={iterations}"
     )
 
@@ -63,6 +69,22 @@ def main(argv: list[str]) -> int:
         problems.append(f"primal infeasibility {primal:.3e} exceeds {QUALITY_TOLERANCE:.0e}")
     if dual > QUALITY_TOLERANCE:
         problems.append(f"dual infeasibility {dual:.3e} exceeds {QUALITY_TOLERANCE:.0e}")
+
+    # The gaps were the blind spot that let a real defect through review: dual_bound was
+    # being assigned AFTER recompute_quality() derived the gaps from it, so every proven
+    # optimal LP reported relative_gap = 1 while its objective was perfectly correct. The
+    # status, the objective and both infeasibilities were all clean, so nothing here fired.
+    # An optimal basis is its own certificate: the bound IS the objective and both gaps are
+    # exactly zero, not merely small.
+    if dual_bound != objective:
+        problems.append(
+            f"dual_bound {dual_bound!r} does not equal the objective {objective!r}; "
+            "an optimal basis proves its own bound"
+        )
+    if absolute_gap != 0.0:
+        problems.append(f"absolute_gap is {absolute_gap!r}, expected exactly 0.0")
+    if relative_gap != 0.0:
+        problems.append(f"relative_gap is {relative_gap!r}, expected exactly 0.0")
 
     if problems:
         for problem in problems:

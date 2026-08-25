@@ -333,6 +333,60 @@ TEST(StatsWriter, ObjectiveSurvivesTheJsonRoundTrip) {
   EXPECT_DOUBLE_EQ(blob["result"]["dual_bound"].get<double>(), solution.dual_bound);
 }
 
+TEST(StatsWriter, NonFiniteNumbersStayRecoverable) {
+  // JSON has no literal for infinity, and nlohmann's answer is to emit `null` - silently,
+  // with no error, producing valid JSON. An interrupted solve sets its dual bound to an
+  // infinity ON PURPOSE, to say that nothing has been proven. Serialised as null that
+  // meaning is destroyed and a runner calling float() on the field raises TypeError.
+  //
+  // This is not an edge case from Phase 5 onward: stopping on a time limit is the NORMAL
+  // outcome for a hard MILP, so it would hit exactly the runs whose remaining gap is the
+  // number we most need to publish.
+  const Model model = make_model();
+  Options options;
+  options.set_bool("log_to_console", false);
+  options.set_int("iteration_limit", 1);
+  const Solution solution = solve(model, options);
+  ASSERT_EQ(solution.status, SolveStatus::kIterationLimit) << solution.message;
+  ASSERT_TRUE(std::isinf(solution.dual_bound)) << "precondition: the bound should be infinite";
+
+  const TempFile file("", ".json");
+  std::string error;
+  ASSERT_TRUE(io::write_stats_json(file.path(), model, solution, &error)) << error;
+
+  const nlohmann::json blob = nlohmann::json::parse(slurp(file.path()));
+  for (const char* key : {"dual_bound", "absolute_gap", "relative_gap"}) {
+    EXPECT_FALSE(blob["result"][key].is_null())
+        << key << " was serialised as null, losing the fact that it is infinite";
+  }
+  // Written the way the .sol file already writes them, so float() recovers the value.
+  EXPECT_EQ(blob["result"]["dual_bound"].get<std::string>(), "inf");
+  EXPECT_EQ(blob["result"]["absolute_gap"].get<std::string>(), "inf");
+}
+
+TEST(StatsWriter, FiniteNumbersAreStillPlainJsonNumbers) {
+  // The infinity handling must not turn ordinary values into strings; a runner reading a
+  // solved instance should see numbers, and every optimal LP must report a zero gap.
+  const Model model = make_model();
+  const Solution solution = solve_it(model);
+  ASSERT_EQ(solution.status, SolveStatus::kOptimal) << solution.message;
+
+  const TempFile file("", ".json");
+  std::string error;
+  ASSERT_TRUE(io::write_stats_json(file.path(), model, solution, &error)) << error;
+
+  const nlohmann::json blob = nlohmann::json::parse(slurp(file.path()));
+  EXPECT_TRUE(blob["result"]["objective"].is_number());
+  EXPECT_TRUE(blob["result"]["dual_bound"].is_number());
+  EXPECT_TRUE(blob["result"]["absolute_gap"].is_number());
+  EXPECT_TRUE(blob["result"]["relative_gap"].is_number());
+
+  // An optimal basis is its own certificate. Reported as exactly zero, not merely small.
+  EXPECT_DOUBLE_EQ(blob["result"]["absolute_gap"].get<double>(), 0.0);
+  EXPECT_DOUBLE_EQ(blob["result"]["relative_gap"].get<double>(), 0.0);
+  EXPECT_DOUBLE_EQ(blob["result"]["dual_bound"].get<double>(), solution.objective);
+}
+
 TEST(StatsWriter, ReportsAnUnwritablePath) {
   const Model model = make_model();
   const Solution solution = solve_it(model);
