@@ -119,12 +119,23 @@ Branch per task, PR into main, squash merge. No file over ~600 lines.
 The CPU build must work with zero CUDA installed — all GPU code behind
 `#ifdef SANKHYA_ENABLE_CUDA` plus a runtime `--gpu` flag with silent CPU fallback.
 
-## Local toolchain note (this machine)
+## Local toolchain note (Windows dev boxes)
 
-The default `g++` on PATH is MinGW 6.3.0 and is **too old for C++20**. Use the
-Strawberry-bundled MinGW-W64 GCC 13.2.0 instead:
+Do not trust PATH order for the compiler. Boxes seen so far:
 
-    CC=/c/Strawberry/c/bin/gcc CXX=/c/Strawberry/c/bin/g++ cmake -G Ninja -B build
+- MSYS2 UCRT64, `C:\msys64\ucrt64\bin\g++.exe` (GCC 16.1.0) - current primary
+- Strawberry Perl MinGW-W64, `C:\Strawberry\c\bin\g++.exe` (GCC 13.2.0)
+- a stale MinGW 6.3.0 that predates C++20 entirely and must never be selected
 
-scripts/configure.sh does this for you. CI is ubuntu-latest and is the authority on
-`-Werror` cleanliness; Windows is the convenience build.
+`scripts/configure.sh` probes these in order, checks `-dumpversion >= 10`, and prepends the
+chosen toolchain's bin directory to PATH so the cmake/ninja shipped beside the compiler win
+over any unrelated one. Always configure through it:
+
+    scripts/configure.sh build Release
+
+If cmake or ninja are missing on an MSYS2 box:
+
+    pacman -S --needed mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja
+
+CI is ubuntu-latest and is the authority on `-Werror` cleanliness; Windows is the
+convenience build.

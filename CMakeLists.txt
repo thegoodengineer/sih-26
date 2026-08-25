@@ -83,6 +83,25 @@ FetchContent_Declare(nlohmann_json
 
 FetchContent_MakeAvailable(fmt cli11 nlohmann_json)
 
+# Dependency headers are pulled into our translation units, so our -Werror set is applied to
+# their code as well as ours - fmt 10.2.1's ranges.h trips -Wtautological-compare on GCC 16,
+# for instance. Re-export each dependency's include directories as SYSTEM so the compiler
+# suppresses diagnostics originating inside them while still policing every line we write.
+function(sankhya_mark_include_dirs_system)
+  foreach(dep IN LISTS ARGN)
+    if(NOT TARGET ${dep})
+      continue()
+    endif()
+    get_target_property(dep_includes ${dep} INTERFACE_INCLUDE_DIRECTORIES)
+    if(dep_includes)
+      set_target_properties(${dep} PROPERTIES
+        INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${dep_includes}")
+    endif()
+  endforeach()
+endfunction()
+
+sankhya_mark_include_dirs_system(fmt CLI11 nlohmann_json)
+
 if(SANKHYA_WITH_ZLIB)
   # Prefer a system zlib; only fetch and build one when the platform has none.
   find_package(ZLIB QUIET)

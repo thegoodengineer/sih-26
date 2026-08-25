@@ -54,9 +54,22 @@ const std::unordered_map<std::string, std::size_t>& name_index() {
   return index;
 }
 
+/// A typed accessor naming an option that is not in the registry is a programming error in
+/// our own code, not bad user input. Fail loudly and identically in Release and Debug: an
+/// `assert` alone vanishes under NDEBUG and leaves a genuine out-of-range dereference in the
+/// shipped binary, which is exactly the silent-wrong-answer failure mode CLAUDE.md warns
+/// about. Marking the failure path [[noreturn]] also tells the optimizer the iterator is
+/// dereferenceable, which is what clears -Wnull-dereference on GCC 16.
+[[noreturn]] void unknown_option_name(const std::string& name) {
+  fmt::print(stderr, "sankhya: internal error - unknown option name '{}' in a typed accessor\n",
+             name);
+  std::abort();
+}
+
 std::size_t require_index(const std::string& name) {
-  const auto it = name_index().find(name);
-  assert(it != name_index().end() && "unknown option name in a typed accessor");
+  const std::unordered_map<std::string, std::size_t>& index = name_index();
+  const auto it = index.find(name);
+  if (it == index.end()) unknown_option_name(name);
   return it->second;
 }
 
