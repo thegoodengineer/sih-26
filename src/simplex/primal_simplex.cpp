@@ -41,6 +41,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iterator>
 #include <limits>
 #include <string>
 #include <vector>
@@ -50,7 +51,7 @@
 #include "sankhya/timer.hpp"
 #include "sankhya/tolerances.hpp"
 
-#include "dense_lu.hpp"
+#include "../la/lu.hpp"
 
 namespace sankhya {
 namespace {
@@ -141,7 +142,17 @@ class PrimalSimplex {
   std::vector<BasisStatus> status_;
   std::vector<double> nonbasic_value_;
 
-  DenseLu lu_;
+  SparseLu lu_;
+
+  /// Reused across refactorizations so the hot path allocates nothing. Structural columns
+  /// point straight into the model's CSC arrays - no copy at all - while logical columns are
+  /// the single entry -1 in their own row, served from the two buffers below.
+  std::vector<LuColumn> basis_columns_;
+  std::vector<Index> logical_rows_;
+  std::vector<double> logical_values_;
+
+  /// Reported once per solve, not once per refactorization.
+  bool warned_about_threshold_ = false;
   std::vector<double> x_basic_;
   std::vector<double> cost_basic_;
   std::vector<double> y_;
@@ -219,15 +230,58 @@ void PrimalSimplex::set_initial_basis() {
 }
 
 bool PrimalSimplex::refactorize() {
-  std::vector<double> columns(static_cast<std::size_t>(m_) * static_cast<std::size_t>(m_), 0.0);
+  // Phase 2 materialised a dense m x m array here and threw it away again on every pivot:
+  // O(m^2) of memory traffic and O(m^3) of arithmetic to factorize a matrix that is better
+  // than 99% structural zeros at any realistic size. Nothing is materialised now. A
+  // structural column is handed to the factorization as a pointer into the model's own CSC
+  // storage, and a logical column is the single entry -1.
+  if (logical_rows_.empty() && m_ > 0) {
+    logical_rows_.resize(static_cast<std::size_t>(m_));
+    logical_values_.assign(static_cast<std::size_t>(m_), -1.0);
+    for (Index i = 0; i < m_; ++i) logical_rows_[static_cast<std::size_t>(i)] = i;
+  }
+
+  basis_columns_.assign(static_cast<std::size_t>(m_), LuColumn{});
   for (Index slot = 0; slot < m_; ++slot) {
     const Index k = basis_[static_cast<std::size_t>(slot)];
-    const std::size_t base = static_cast<std::size_t>(slot) * static_cast<std::size_t>(m_);
-    for_each_entry(k, [&](Index row, double value) {
-      columns[base + static_cast<std::size_t>(row)] += value;
-    });
+    LuColumn& target = basis_columns_[static_cast<std::size_t>(slot)];
+    if (k < n_) {
+      const ColumnView column = model_.matrix.column(k);
+      target.rows = column.rows;
+      target.values = column.values;
+      target.size = column.size;
+    } else {
+      const auto row = static_cast<std::size_t>(k - n_);
+      target.rows = logical_rows_.data() + row;
+      target.values = logical_values_.data() + row;
+      target.size = 1;
+    }
   }
-  return lu_.factorize(std::move(columns), m_, tol::kPivotTolerance);
+  // Markowitz trades stability for fill: at tau = 0.01 a pivot may be a hundred times
+  // smaller than the largest entry in its column, and on a badly scaled basis that choice
+  // can leave a later step with nothing above the pivot tolerance at all. The dense
+  // factorization never had this failure mode because partial pivoting always takes the
+  // largest entry, i.e. it is this same algorithm at tau = 1.
+  //
+  // Netlib `blend` is a real instance that fails at 0.01 and succeeds at a stricter
+  // threshold. So a failure is not reported as a singular basis until the ordering has been
+  // retried with progressively more stability, ending at full partial pivoting - more fill,
+  // slower, and still enormously better than a dense refactorization. Only a basis that is
+  // singular under partial pivoting is genuinely singular.
+  static constexpr double kThresholdLadder[] = {tol::kMarkowitzThreshold, 0.1, 0.5, 1.0};
+  for (std::size_t attempt = 0; attempt < std::size(kThresholdLadder); ++attempt) {
+    if (lu_.factorize(basis_columns_, m_, tol::kPivotTolerance, kThresholdLadder[attempt])) {
+      if (attempt > 0 && !warned_about_threshold_) {
+        warned_about_threshold_ = true;
+        logger_.warning(
+            "basis factorization needed a Markowitz threshold of {:g} rather than {:g}; "
+            "the basis is poorly scaled and the factors will carry more fill",
+            kThresholdLadder[attempt], tol::kMarkowitzThreshold);
+      }
+      return true;
+    }
+  }
+  return false;
 }
 
 void PrimalSimplex::compute_basic_values() {
@@ -522,13 +576,6 @@ Solution PrimalSimplex::run() {
 
   build_working_problem();
   set_initial_basis();
-
-  if (m_ > 400) {
-    logger_.warning(
-        "{} rows: this Phase 2 simplex refactorizes a DENSE basis every iteration, which is "
-        "O(m^3) per pivot. Expect it to be slow; the sparse LU lands in Phase 6.",
-        m_);
-  }
 
   if (!refactorize()) {
     return finish(SolveStatus::kNumericalError, "the initial slack basis is singular", 0,

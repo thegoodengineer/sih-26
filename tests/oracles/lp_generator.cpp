@@ -28,8 +28,15 @@ GeneratedLp make_skeleton(std::mt19937_64& rng, const GeneratorConfig& config) {
   GeneratedLp lp;
   lp.num_rows = pick_dimension(rng, config.min_rows, config.max_rows);
   lp.num_cols = pick_dimension(rng, config.min_cols, config.max_cols);
-  lp.a.assign(static_cast<std::size_t>(lp.num_rows),
-              std::vector<std::int64_t>(static_cast<std::size_t>(lp.num_cols), 0));
+  // Constructed rather than assigned. `assign` on a vector of vectors runs libstdc++'s
+  // _M_erase_at_end -> _Destroy path, and GCC 16 cannot prove the (empty) storage pointer is
+  // non-null there, so -Wnull-dereference fires as a false positive attributed to this line
+  // rather than to the header it actually occurs in. `lp` is freshly default-constructed, so
+  // there is nothing to erase and the two forms are equivalent. CI's older GCC does not warn;
+  // this keeps the local GCC 16 build clean without weakening the warning set for real code.
+  lp.a = std::vector<std::vector<std::int64_t>>(
+      static_cast<std::size_t>(lp.num_rows),
+      std::vector<std::int64_t>(static_cast<std::size_t>(lp.num_cols), 0));
   lp.b.assign(static_cast<std::size_t>(lp.num_rows), 0);
   lp.c.assign(static_cast<std::size_t>(lp.num_cols), 0);
   lp.upper.assign(static_cast<std::size_t>(lp.num_cols), kNoUpperBound);
