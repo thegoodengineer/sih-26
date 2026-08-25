@@ -22,26 +22,26 @@ rather than dropped.
 The reference optimum for each instance is parsed by `bench/runners/fetch_data.py` from
 Netlib's own `readme`. None of these values was typed from memory.
 
-Source CSV: `bench/results/netlib-1cb8a87.csv`  
-Commit `1cb8a87` · machine `Windows-AMD64` · generated 2026-08-25T18:07:51+00:00
+Source CSV: `bench/results/netlib-aa68b8a.csv`  
+Commit `aa68b8a` · machine `Windows-AMD64` · generated 2026-08-25T18:20:28+00:00
 
 **8 of 8** instances matched their published optimum to a relative 1e-6 **and** passed independent verification by `tools/verify_solution.py`.
 
 | instance | rows | cols | status | our objective | published optimum | rel. error | iters | time (s) | verified |
 |---|---:|---:|---|---:|---:|---:|---:|---:|:--:|
-| `adlittle` | 56 | 97 | optimal | 2.2549496316e+05 | 2.2549496316e+05 | 1.1e-11 | 140 | 0.056 | yes |
-| `afiro` | 27 | 32 | optimal | -4.6475314286e+02 | -4.6475314286e+02 | 6.1e-12 | 16 | 0.051 | yes |
-| `blend` | 74 | 83 | optimal | -3.0812149846e+01 | -3.0812149846e+01 | 5.6e-12 | 468 | 0.070 | yes |
-| `sc105` | 105 | 103 | optimal | -5.2202061212e+01 | -5.2202061212e+01 | 5.6e-12 | 107 | 0.048 | yes |
-| `sc50a` | 50 | 48 | optimal | -6.4575077059e+01 | -6.4575077059e+01 | 6.7e-12 | 47 | 0.066 | yes |
-| `sc50b` | 50 | 48 | optimal | -7.0000000000e+01 | -7.0000000000e+01 | 2.0e-16 | 50 | 0.068 | yes |
-| `share2b` | 96 | 79 | optimal | -4.1573224074e+02 | -4.1573224074e+02 | 3.4e-12 | 123 | 0.080 | yes |
-| `stocfor1` | 117 | 111 | optimal | -4.1131976219e+04 | -4.1131976219e+04 | 1.1e-11 | 79 | 0.078 | yes |
+| `adlittle` | 56 | 97 | optimal | 2.2549496316e+05 | 2.2549496316e+05 | 1.1e-11 | 140 | 0.061 | yes |
+| `afiro` | 27 | 32 | optimal | -4.6475314286e+02 | -4.6475314286e+02 | 6.1e-12 | 16 | 0.084 | yes |
+| `blend` | 74 | 83 | optimal | -3.0812149846e+01 | -3.0812149846e+01 | 5.6e-12 | 468 | 0.099 | yes |
+| `sc105` | 105 | 103 | optimal | -5.2202061212e+01 | -5.2202061212e+01 | 5.6e-12 | 107 | 0.080 | yes |
+| `sc50a` | 50 | 48 | optimal | -6.4575077059e+01 | -6.4575077059e+01 | 6.7e-12 | 47 | 0.058 | yes |
+| `sc50b` | 50 | 48 | optimal | -7.0000000000e+01 | -7.0000000000e+01 | 2.0e-16 | 50 | 0.081 | yes |
+| `share2b` | 96 | 79 | optimal | -4.1573224074e+02 | -4.1573224074e+02 | 3.4e-12 | 123 | 0.090 | yes |
+| `stocfor1` | 117 | 111 | optimal | -4.1131976219e+04 | -4.1131976219e+04 | 1.1e-11 | 79 | 0.089 | yes |
 
 **Summary**
 
-- shifted geometric mean solve time (shift 1s): **0.065s**
-- slowest solved instance: 0.080s
+- shifted geometric mean solve time (shift 1s): **0.080s**
+- slowest solved instance: 0.099s
 - worst relative error against a published optimum: **1.06e-11**
 - no failures on this set
 

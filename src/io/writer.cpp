@@ -13,6 +13,7 @@
 // Format is deliberately line-oriented and greppable rather than JSON: a judge reads this
 // in a terminal. The JSON blob beside it is for the benchmark runners.
 
+#include <cmath>
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -32,6 +33,26 @@ namespace {
   if (v == kInfinity) return "inf";
   if (v == -kInfinity) return "-inf";
   return fmt::format("{:.17g}", normalize_zero(v));
+}
+
+/// A double as a JSON value, keeping infinities and NaN recoverable.
+///
+/// JSON has no literal for infinity or NaN, and nlohmann's response is to serialise both as
+/// `null` - silently, with no error and no warning, producing perfectly valid JSON. That is
+/// exactly the wrong failure for us. An interrupted solve reports its dual bound as an
+/// infinity on purpose, to say "nothing has been proven"; written as `null` that intent is
+/// destroyed, and a runner doing float(blob["result"]["dual_bound"]) raises a TypeError on
+/// NoneType, or worse treats the field as absent. From Phase 5 onward, stopping on a time
+/// limit is the NORMAL outcome for a hard MILP, so this would hit precisely the runs whose
+/// remaining gap is the number we most need to report.
+///
+/// Non-finite values therefore go out as the strings "inf", "-inf" and "nan", matching what
+/// the .sol writer already emits. Python's float() accepts all three, so a consumer needs
+/// no special case beyond calling float() on the field, which it must do anyway.
+[[nodiscard]] nlohmann::json json_number(double v) {
+  if (std::isfinite(v)) return normalize_zero(v);
+  if (std::isnan(v)) return "nan";
+  return v > 0.0 ? "inf" : "-inf";
 }
 
 [[nodiscard]] std::string column_name(const Model& model, Index j) {
@@ -131,22 +152,23 @@ bool write_stats_json(const std::string& path, const Model& model, const Solutio
                    {"columns", model.num_cols()},
                    {"nonzeros", model.num_nonzeros()},
                    {"integer_columns", model.num_integer_columns()},
-                   {"objective_offset", model.objective_offset}};
+                   {"objective_offset", json_number(model.objective_offset)}};
   blob["result"] = {{"status", to_string(solution.status)},
                     {"algorithm", solution.algorithm},
-                    {"objective", solution.objective},
-                    {"dual_bound", solution.dual_bound},
-                    {"absolute_gap", solution.absolute_gap},
-                    {"relative_gap", solution.relative_gap},
+                    {"objective", json_number(solution.objective)},
+                    {"dual_bound", json_number(solution.dual_bound)},
+                    {"absolute_gap", json_number(solution.absolute_gap)},
+                    {"relative_gap", json_number(solution.relative_gap)},
                     {"message", solution.message}};
-  blob["quality"] = {{"primal_infeasibility", solution.primal_infeasibility},
-                     {"dual_infeasibility", solution.dual_infeasibility},
-                     {"complementarity_violation", solution.complementarity_violation},
-                     {"integrality_violation", solution.integrality_violation}};
+  blob["quality"] = {
+      {"primal_infeasibility", json_number(solution.primal_infeasibility)},
+      {"dual_infeasibility", json_number(solution.dual_infeasibility)},
+      {"complementarity_violation", json_number(solution.complementarity_violation)},
+      {"integrality_violation", json_number(solution.integrality_violation)}};
   blob["effort"] = {{"iterations", solution.iterations},
                     {"nodes", solution.nodes},
                     {"cuts_applied", solution.cuts_applied},
-                    {"solve_seconds", solution.solve_seconds}};
+                    {"solve_seconds", json_number(solution.solve_seconds)}};
 
   std::FILE* out = std::fopen(path.c_str(), "wb");
   if (out == nullptr) {
