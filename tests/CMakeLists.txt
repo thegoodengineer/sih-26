@@ -16,10 +16,14 @@ add_executable(sankhya_tests
   unit/test_mps_reader.cpp
   unit/test_lp_reader.cpp
   unit/test_simplex.cpp
-  unit/test_dense_lu.cpp)
+  unit/test_dense_lu.cpp
+  unit/test_writer.cpp)
 
+# nlohmann_json is PRIVATE to sankhya_objects, so the stats-blob test has to ask for it
+# directly rather than inheriting it.
 target_link_libraries(sankhya_tests
-  PRIVATE sankhya_core GTest::gtest GTest::gtest_main fmt::fmt sankhya_flags)
+  PRIVATE sankhya_core GTest::gtest GTest::gtest_main fmt::fmt
+          nlohmann_json::nlohmann_json sankhya_flags)
 
 # tests/ for the shared helpers, src/ so the unit tests can reach implementation headers
 # such as src/simplex/dense_lu.hpp that are deliberately not part of the public interface.

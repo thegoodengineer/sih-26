@@ -8,10 +8,15 @@
 // conventions are counter-intuitive, is pinned down here by construction rather than by
 // reference to any existing reader.
 
+#include <cstdio>
 #include <string>
 #include <vector>
 
 #include <gtest/gtest.h>
+
+#ifdef SANKHYA_WITH_ZLIB
+#include <zlib.h>
+#endif
 
 #include "sankhya/io.hpp"
 #include "sankhya/model.hpp"
@@ -626,6 +631,103 @@ TEST(MpsReader, CarriageReturnsAreStripped) {
   ASSERT_TRUE(result.ok) << result.error;
   EXPECT_DOUBLE_EQ(model.col_upper[0], 5.0);
 }
+
+// =========================================================================================
+// Compressed input
+// =========================================================================================
+
+#ifdef SANKHYA_WITH_ZLIB
+/// Write `contents` through zlib, producing a real gzip file, and delete it on destruction.
+class TempGzFile {
+ public:
+  explicit TempGzFile(const std::string& contents) {
+    static int counter = 0;
+    path_ = "sankhya_test_gz_" + std::to_string(counter++) + ".mps.gz";
+    gzFile out = gzopen(path_.c_str(), "wb");
+    if (out == nullptr) {
+      ADD_FAILURE() << "cannot create " << path_;
+      return;
+    }
+    gzwrite(out, contents.data(), static_cast<unsigned>(contents.size()));
+    gzclose(out);
+  }
+  ~TempGzFile() {
+    if (!path_.empty()) std::remove(path_.c_str());
+  }
+  TempGzFile(const TempGzFile&) = delete;
+  TempGzFile& operator=(const TempGzFile&) = delete;
+  [[nodiscard]] const std::string& path() const noexcept { return path_; }
+
+ private:
+  std::string path_;
+};
+
+TEST(MpsReader, ReadsGzipCompressedInput) {
+  // MIPLIB and the larger Netlib instances ship compressed, so this path carries real
+  // benchmark input rather than being a convenience. It had only ever been exercised by
+  // hand from the command line before this test.
+  const std::string text =
+      "NAME          GZTEST\n"
+      "ROWS\n"
+      " N  COST\n"
+      " G  R1\n"
+      " E  R2\n"
+      "COLUMNS\n"
+      "    X         COST         1.0   R1           1.0\n"
+      "    X         R2           2.0\n"
+      "    Y         COST         3.0   R1           1.0\n"
+      "RHS\n"
+      "    RHS       R1           5.0   R2           4.0\n"
+      "RANGES\n"
+      "    RNG       R1           3.0\n"
+      "BOUNDS\n"
+      " UP BND       Y            9.0\n"
+      "ENDATA\n";
+
+  const TempGzFile compressed(text);
+  Model from_gz;
+  const io::ReadResult gz_result = io::read_mps(compressed.path(), &from_gz);
+  ASSERT_TRUE(gz_result.ok) << gz_result.error;
+
+  // Identical to the same bytes read uncompressed - decompression must be transparent, not
+  // merely successful.
+  const Model plain = parse_or_fail(text);
+  ASSERT_EQ(from_gz.num_rows(), plain.num_rows());
+  ASSERT_EQ(from_gz.num_cols(), plain.num_cols());
+  ASSERT_EQ(from_gz.num_nonzeros(), plain.num_nonzeros());
+  EXPECT_EQ(from_gz.name, plain.name);
+  for (Index i = 0; i < plain.num_rows(); ++i) {
+    const auto u = static_cast<std::size_t>(i);
+    EXPECT_DOUBLE_EQ(from_gz.row_lower[u], plain.row_lower[u]);
+    EXPECT_DOUBLE_EQ(from_gz.row_upper[u], plain.row_upper[u]);
+  }
+  for (Index j = 0; j < plain.num_cols(); ++j) {
+    const auto u = static_cast<std::size_t>(j);
+    EXPECT_DOUBLE_EQ(from_gz.col_cost[u], plain.col_cost[u]);
+    EXPECT_DOUBLE_EQ(from_gz.col_upper[u], plain.col_upper[u]);
+  }
+  // The RANGES row survived compression: G row with rhs 5 and range 3 is [5, 8].
+  EXPECT_DOUBLE_EQ(from_gz.row_lower[0], 5.0);
+  EXPECT_DOUBLE_EQ(from_gz.row_upper[0], 8.0);
+}
+
+TEST(MpsReader, ReadsAnUncompressedFileThroughTheSameCodePath) {
+  // zlib reads a plain file transparently, which is why there is only one input path. If
+  // that ever stopped being true, every uncompressed instance would fail at once.
+  const Model model = parse_or_fail(
+      "NAME          PLAIN\n"
+      "ROWS\n"
+      " N  COST\n"
+      " L  R1\n"
+      "COLUMNS\n"
+      "    X         COST         1.0   R1           1.0\n"
+      "RHS\n"
+      "    RHS       R1          10.0\n"
+      "ENDATA\n");
+  EXPECT_EQ(model.num_rows(), 1);
+  EXPECT_DOUBLE_EQ(model.row_upper[0], 10.0);
+}
+#endif  // SANKHYA_WITH_ZLIB
 
 }  // namespace
 }  // namespace sankhya

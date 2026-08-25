@@ -266,6 +266,32 @@ void Solution::recompute_quality(const Model& model) {
         complementarity_violation = std::max(complementarity_violation, std::fabs(d));
       }
     }
+
+    // The same conditions on the ROWS. Checking only the columns leaves half the KKT system
+    // unmeasured: an engine could report a row price on a constraint that is not even
+    // active, which is a genuine optimality failure, and this function would still print a
+    // dual infeasibility of zero. Since these numbers are what the log, the .sol file and
+    // the benchmark CSVs all quote, a half-measured self-report is worse than none - it
+    // reads as a clean bill of health.
+    for (Index i = 0; i < m; ++i) {
+      const auto u = static_cast<std::size_t>(i);
+      const double y = sense * row_dual[u];
+      const double a = row_activity[u];
+      const double lo = model.row_lower[u];
+      const double hi = model.row_upper[u];
+      const bool at_lower = is_finite_bound(lo) && std::fabs(a - lo) <= tol::kPrimalFeasibility;
+      const bool at_upper = is_finite_bound(hi) && std::fabs(a - hi) <= tol::kPrimalFeasibility;
+      if (at_lower && at_upper) continue;  // equality row: any multiplier is admissible
+      if (at_lower) {
+        dual_infeasibility = std::max(dual_infeasibility, -y);
+      } else if (at_upper) {
+        dual_infeasibility = std::max(dual_infeasibility, y);
+      } else {
+        // Slack row. Complementary slackness forces its price to zero.
+        dual_infeasibility = std::max(dual_infeasibility, std::fabs(y));
+        complementarity_violation = std::max(complementarity_violation, std::fabs(y));
+      }
+    }
   }
 
   absolute_gap = std::fabs(objective - dual_bound);
