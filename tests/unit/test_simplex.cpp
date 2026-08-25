@@ -583,5 +583,49 @@ TEST(PrimalSimplex, FuzzAgainstTheKktCertificate) {
   EXPECT_EQ(other, 0);
 }
 
+// =========================================================================================
+// The reported bound and gap
+//
+// These pin down a defect that CI, the unit suite and all eight Netlib optima were blind to:
+// the objective was right, and absolute_gap / relative_gap were nonsense. recompute_quality()
+// derives the gaps from dual_bound, so dual_bound has to be set BEFORE it runs. It was being
+// set on the line after, leaving every proven-optimal LP claiming relative_gap = 1.
+// =========================================================================================
+
+TEST(PrimalSimplex, OptimalSolveReportsAZeroGap) {
+  const Model model = make_model(ObjSense::kMaximize, {3.0, 5.0}, {0.0, 0.0}, {kInf, kInf},
+                                 {{1.0, 0.0}, {0.0, 2.0}, {3.0, 2.0}}, {-kInf, -kInf, -kInf},
+                                 {4.0, 12.0, 18.0});
+  Options options;
+  options.set_bool("log_to_console", false);
+  const Solution solution = solve(model, options);
+
+  ASSERT_EQ(solution.status, SolveStatus::kOptimal);
+  EXPECT_NEAR(solution.objective, 36.0, 1e-9);
+  // An optimal basis is its own certificate, so the bound is the objective and the gap is
+  // exactly zero - not merely small.
+  EXPECT_DOUBLE_EQ(solution.dual_bound, solution.objective);
+  EXPECT_DOUBLE_EQ(solution.absolute_gap, 0.0);
+  EXPECT_DOUBLE_EQ(solution.relative_gap, 0.0);
+}
+
+TEST(PrimalSimplex, AnInterruptedSolveClaimsNoBound) {
+  // Stopping on a limit yields an incumbent, not a proof. Reporting the incumbent as a dual
+  // bound would let a Phase 5 branch-and-bound prune against a bound nothing established.
+  const Model model = make_model(ObjSense::kMaximize, {3.0, 5.0}, {0.0, 0.0}, {kInf, kInf},
+                                 {{1.0, 0.0}, {0.0, 2.0}, {3.0, 2.0}}, {-kInf, -kInf, -kInf},
+                                 {4.0, 12.0, 18.0});
+  Options options;
+  options.set_bool("log_to_console", false);
+  options.set_int("iteration_limit", 1);
+  const Solution solution = solve(model, options);
+
+  ASSERT_EQ(solution.status, SolveStatus::kIterationLimit);
+  // Maximizing, so an unknown bound is +inf: nothing has ruled out a better objective.
+  EXPECT_TRUE(std::isinf(solution.dual_bound));
+  EXPECT_GT(solution.dual_bound, 0.0);
+  EXPECT_NE(solution.dual_bound, solution.objective);
+}
+
 }  // namespace
 }  // namespace sankhya

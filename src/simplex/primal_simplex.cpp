@@ -488,8 +488,21 @@ Solution PrimalSimplex::finish(SolveStatus status, const std::string& message, C
         status_[static_cast<std::size_t>(n_ + i)];
   }
 
+  // The dual bound must be stated BEFORE recompute_quality(), because that is what derives
+  // absolute_gap and relative_gap from it. Setting it afterwards left both gaps measured
+  // against a bound of zero, so every proven-optimal LP reported relative_gap = 1.
+  //
+  // And only an OPTIMAL basis proves a bound. On an iteration or time limit the point in
+  // hand is an incumbent, not a proof; claiming the objective as a dual bound there asserts
+  // an optimality that was never established, which a Phase 5 branch-and-bound would then
+  // happily prune against. An unknown bound is the infinity on the unexplored side of the
+  // objective, and yields an infinite gap rather than a fake zero.
+  if (status == SolveStatus::kOptimal) {
+    solution.dual_bound = model_.evaluate_objective(solution.col_value.data());
+  } else {
+    solution.dual_bound = model_.sense == ObjSense::kMaximize ? kInfinity : -kInfinity;
+  }
   solution.recompute_quality(model_);
-  solution.dual_bound = solution.objective;
   return solution;
 }
 
