@@ -65,10 +65,48 @@ jobs:
           UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
         run: ctest --test-dir build --output-on-failure
 
-      - name: CLI smoke test
+      # Every other check in this job is a unit test. Without this step the command line
+      # itself - argument handling, file loading, the writers, the exit codes - is covered
+      # by nothing and could break completely while CI stayed green. This runs the pipeline
+      # the way a judge will: read a file, solve it, write the outputs, and check the number
+      # against a value verified by hand outside the solver.
+      - name: CLI end-to-end smoke test
         run: |
+          set -euo pipefail
           ./build/sankhya version
           ./build/sankhya options
+          ./build/sankhya info demo/crude_blend.mps
+
+          echo '--- solve the MPS form ---'
+          ./build/sankhya solve demo/crude_blend.mps --write-sol blend.sol --stats blend.json
+          test -s blend.sol
+          test -s blend.json
+
+          echo '--- the LP form must give an identical solution ---'
+          ./build/sankhya solve demo/crude_blend.lp --write-sol blend_lp.sol
+          diff <(sed -n '/begin columns/,/end rows/p' blend.sol) \
+               <(sed -n '/begin columns/,/end rows/p' blend_lp.sol)
+
+          echo '--- so must the gzipped MPS ---'
+          gzip -kf demo/crude_blend.mps
+          ./build/sankhya solve demo/crude_blend.mps.gz --write-sol blend_gz.sol
+          diff <(sed -n '/begin columns/,/end rows/p' blend.sol) \
+               <(sed -n '/begin columns/,/end rows/p' blend_gz.sol)
+
+          echo '--- objective must match the hand-verified value ---'
+          python3 tools/check_demo_result.py blend.json
+
+          echo '--- a MILP must be REFUSED, never answered with its relaxation ---'
+          set +e
+          ./build/sankhya solve demo/blend_milp.mps > milp.log 2>&1
+          milp_status=$?
+          set -e
+          cat milp.log
+          # Exit 5 is "not solved". A 0 here would mean the LP relaxation was reported as
+          # an optimal MILP solution, which is the worst failure this project can have.
+          test "$milp_status" -eq 5
+          grep -q 'not_solved' milp.log
+          echo 'MILP correctly refused'
 
   provenance:
     name: provenance
