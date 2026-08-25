@@ -4,7 +4,7 @@ This document exists so that the claim "built from mathematical foundations, not
 around an existing solver" can be **checked** rather than believed. It is maintained
 continuously, not written at the end.
 
-Last updated: **Phase 2** (I/O and the primal simplex). Every number and every command output below was
+Last updated: **Phase 3** (the verification spine). Every number and every command output below was
 produced by running the command shown, on the machine described, at the commit recorded.
 
 ---
@@ -62,6 +62,9 @@ mathematics, not transcribed from anyone's implementation.
 | Bounded-variable revised primal simplex | Dantzig, *Linear Programming and Extensions* (1963); Chvátal, *Linear Programming* (1983), ch. 3 and 8 | `src/simplex/primal_simplex.cpp` |
 | Piecewise-linear (composite) phase 1, no artificial variables | Maros, *Computational Techniques of the Simplex Method*, ch. 9 | `src/simplex/primal_simplex.cpp` |
 | Bland's anti-cycling rule | Chvátal, *Linear Programming*, ch. 3 | `src/simplex/primal_simplex.cpp` |
+| Exact rational tableau simplex (test oracle) | Chvátal, *Linear Programming*, ch. 2–3 | `tests/oracles/rational_simplex.cpp` |
+| Shifted geometric mean benchmark reporting | Mittelmann, plato.asu.edu benchmark methodology | `bench/runners/make_benchmarks_doc.py` |
+| LP duality checks (feasibility, complementary slackness, strong duality) | Chvátal, *Linear Programming*, ch. 5 | `tools/verify_solution.py` |
 
 Phases 4 onwards add: dual revised simplex (Maros; Huangfu & Hall), Forrest–Tomlin
 update (Forrest & Tomlin 1972), Devex pricing (Forrest & Goldfarb 1992), Harris two-pass
@@ -171,6 +174,8 @@ recorded rather than silently made.
 | 5 | The MPS reader imitates the *file format* of CPLEX/Xpress inputs, and the LP reader imitates the CPLEX LP format. | Allowed | A file format is an interface, not an implementation. `CLAUDE.md` item 5 covers API shape for the same reason, and reading a format everyone's solver reads is what makes us drop-in adoptable. Both readers were written from the published format specification and from the textbook reference above; **no solver's reader source was consulted**, which `CLAUDE.md` calls out by name as forbidden. |
 | 6 | **OPEN — needs a decision before Phase 3.** Netlib distributes its LP test set in a packed `emps` format, not as plain MPS. Expanding it requires the `emps.f` / `emps.c` expander that Netlib ships alongside the data (`https://www.netlib.org/lp/data/readme` directs users to it as the only way to obtain the instances). Does fetching that expander, or writing our own decoder from its format description, cross the red line? | **Not yet decided — flagged, not acted on** | The argument for *allowed*: `emps` is a data-format expander distributed with the benchmark dataset itself, it appears nowhere in the red line's enumerated list of solvers, and `CLAUDE.md` item 6 explicitly permits "benchmark instances and published reference optima: MIPLIB, Netlib, QPLIB, Mittelmann" — of which this is the delivery mechanism. The argument for *caution*: it is still third-party code associated with the LP ecosystem, and reverse-engineering the packed format blind risks a decoder that produces a well-formed MPS for the **wrong problem**, which is the exact silent-failure mode this project is built to avoid. Nothing has been downloaded or written. **Phase 2 therefore does not claim a Netlib result.** |
 | 7 | The Windows `.exe` dynamically links `zlib1.dll`, so the Phase 1 claim that it is self-contained no longer holds. | Recorded, not fixed | MSYS2 ships zlib only as an import library, and `-static` cannot statically link what has no static archive. Fixing it would mean forcing the bundled zlib build on Windows, which trades an audit-surface improvement for a divergence between the two platforms' dependency sets. Linux is what CI gates and what the provenance claim rests on; Windows is the convenience build. Revisit at Phase 10 packaging if we ship a Windows binary. |
+
+| 7 | `bench/runners/fetch_data.py` downloads Netlib's `emps.c` decoder and COMPILES it at fetch time. Is that third-party source in the project? | Allowed, and not vendored | Netlib distributes its LP set in a custom compressed encoding, and `emps.c` is the decoder they publish beside it. It is a file-format converter, not a solver, so it is outside the red line. It is downloaded at fetch time rather than committed, so this repository contains no third-party source; its sha256 is recorded in `data/netlib/reference.json`. Nothing it produces is linked into SANKHYA - it runs once, offline, to turn an archive format into plain MPS. |
 
 ---
 

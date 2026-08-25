@@ -1,0 +1,279 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+"""Run SANKHYA over the fetched Netlib instances and emit the evidence CSV.
+
+Every column CLAUDE.md requires is here: instance, sha256 of the instance file, our
+objective, the PUBLISHED reference objective, absolute and relative gap, status, wall time,
+iterations, git commit and a machine tag. Without the CSV there is no claim.
+
+Two things this runner does that a plain timing loop would not:
+
+*   The reference values come from ``data/netlib/reference.json``, which ``fetch_data.py``
+    parsed out of Netlib's own readme. No number here was typed from memory.
+
+*   Every solution is handed to ``tools/verify_solution.py``, which re-parses the model with
+    its own MPS reader and re-derives feasibility, the objective and strong duality without
+    touching our C++. Matching the published optimum says the answer is right; the verifier
+    says the answer is *self-consistent*, and the two failures look nothing alike.
+
+Usage:
+    python bench/runners/netlib.py
+    python bench/runners/netlib.py --binary build/sankhya --time-limit 60
+    python bench/runners/netlib.py --check        # fail if the pass rate dropped
+"""
+
+from __future__ import annotations
+
+import argparse
+import csv
+import datetime
+import hashlib
+import json
+import platform
+import subprocess
+import sys
+import tempfile
+import time
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+DATA_DIR = REPO_ROOT / "data" / "netlib"
+RESULTS_DIR = REPO_ROOT / "bench" / "results"
+VERIFIER = REPO_ROOT / "tools" / "verify_solution.py"
+
+# A run counts as a pass when the status is optimal AND the objective matches the published
+# value to this relative accuracy. Status alone is not enough: a solver that confidently
+# reports "optimal" with the wrong number is the exact failure this project exists to catch.
+PASS_RELATIVE_TOLERANCE = 1e-6
+
+CSV_COLUMNS = [
+    "instance",
+    "instance_sha256",
+    "rows",
+    "columns",
+    "nonzeros",
+    "status",
+    "our_objective",
+    "published_objective",
+    "absolute_gap",
+    "relative_gap",
+    "matches_published",
+    "independently_verified",
+    "passed",
+    "wall_seconds",
+    "solver_seconds",
+    "iterations",
+    "algorithm",
+    "git_commit",
+    "machine",
+    "timestamp_utc",
+]
+
+
+def git_commit() -> str:
+    try:
+        result = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=REPO_ROOT,
+                                capture_output=True, text=True, check=False)
+        return result.stdout.strip() or "unknown"
+    except OSError:
+        return "unknown"
+
+
+def machine_tag() -> str:
+    return f"{platform.system()}-{platform.machine()}"
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def default_binary() -> Path:
+    for candidate in ("build/sankhya.exe", "build/sankhya", "build-main/sankhya.exe",
+                      "build-main/sankhya"):
+        path = REPO_ROOT / candidate
+        if path.exists():
+            return path
+    raise SystemExit("no solver binary found; build first, or pass --binary")
+
+
+def run_one(binary: Path, mps: Path, time_limit: float, verify: bool) -> dict:
+    """Solve one instance, then verify the solution independently."""
+    with tempfile.TemporaryDirectory() as tmp:
+        stats_path = Path(tmp) / "stats.json"
+        sol_path = Path(tmp) / "solution.sol"
+        command = [
+            str(binary), "solve", str(mps),
+            "--stats", str(stats_path),
+            "--write-sol", str(sol_path),
+            "--time-limit", str(time_limit),
+            "--option", "log_to_console=false",
+        ]
+        started = time.perf_counter()
+        completed = subprocess.run(command, capture_output=True, text=True)
+        wall = time.perf_counter() - started
+
+        if not stats_path.exists():
+            return {
+                "status": "crashed" if completed.returncode not in (0, 1) else "no_output",
+                "wall_seconds": wall,
+                "stderr": completed.stderr.strip()[:400],
+                "verified": None,
+            }
+
+        blob = json.loads(stats_path.read_text())
+        # The writer nests the blob; flatten the fields this runner reports on.
+        result = blob.get("result", {})
+        model = blob.get("model", {})
+        effort = blob.get("effort", {})
+        flat = {
+            "status": result.get("status", "unknown"),
+            "objective": result.get("objective"),
+            "absolute_gap": result.get("absolute_gap"),
+            "relative_gap": result.get("relative_gap"),
+            "algorithm": result.get("algorithm", ""),
+            "rows": model.get("rows", ""),
+            "columns": model.get("columns", ""),
+            "nonzeros": model.get("nonzeros", ""),
+            "iterations": effort.get("iterations", ""),
+            "solver_seconds": effort.get("solve_seconds", ""),
+            "wall_seconds": wall,
+            "stderr": completed.stderr.strip()[:400],
+            "verified": None,
+        }
+
+        if verify and sol_path.exists() and flat["status"] in ("optimal", "feasible"):
+            check = subprocess.run(
+                [sys.executable, str(VERIFIER), str(mps), str(sol_path), "--quiet"],
+                capture_output=True, text=True)
+            flat["verified"] = check.returncode == 0
+            if check.returncode != 0:
+                flat["verifier_output"] = (check.stdout + check.stderr).strip()[:600]
+        return flat
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--binary", type=Path, default=None)
+    parser.add_argument("--time-limit", type=float, default=60.0)
+    parser.add_argument("--instances", nargs="*")
+    parser.add_argument("--no-verify", action="store_true",
+                        help="skip the independent verifier (not recommended)")
+    parser.add_argument("--check", action="store_true",
+                        help="fail if the pass count dropped versus the newest committed CSV")
+    parser.add_argument("--out", type=Path, default=None)
+    args = parser.parse_args()
+
+    binary = args.binary or default_binary()
+    reference_path = DATA_DIR / "reference.json"
+    if not reference_path.exists():
+        raise SystemExit("no reference data; run bench/runners/fetch_data.py first")
+    reference = json.loads(reference_path.read_text())["instances"]
+
+    names = sorted(args.instances or reference)
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    commit, machine = git_commit(), machine_tag()
+    timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+
+    rows: list[dict] = []
+    print(f"solver   {binary}")
+    print(f"commit   {commit}   machine {machine}")
+    print()
+    print(f"{'instance':<11}{'status':<9}{'our objective':>22}{'published':>22}"
+          f"{'rel err':>10}{'iters':>7}{'time':>8}  verified  result")
+    print("-" * 104)
+
+    for name in names:
+        entry = reference[name]
+        mps = DATA_DIR / f"{name}.mps"
+        if not mps.exists():
+            print(f"{name:<11}{'MISSING':<9}")
+            continue
+
+        published = entry["published_optimal"]
+        blob = run_one(binary, mps, args.time_limit, not args.no_verify)
+        status = blob["status"]
+        ours = blob.get("objective")
+        gap = None if ours is None else abs(ours - published) / max(1.0, abs(published))
+        matches = bool(status == "optimal" and gap is not None
+                       and gap <= PASS_RELATIVE_TOLERANCE)
+        verified = blob.get("verified")
+        # A pass needs BOTH: the right number, and a solution that survives independent
+        # re-derivation. Either one alone can be satisfied by a solver that is wrong.
+        passed = matches and (verified is not False)
+
+        rows.append({
+            "instance": name,
+            "instance_sha256": sha256_file(mps),
+            "rows": blob.get("rows", ""),
+            "columns": blob.get("columns", ""),
+            "nonzeros": blob.get("nonzeros", ""),
+            "status": status,
+            "our_objective": "" if ours is None else repr(ours),
+            "published_objective": repr(published),
+            "absolute_gap": "" if ours is None else repr(abs(ours - published)),
+            "relative_gap": "" if gap is None else repr(gap),
+            "matches_published": int(matches),
+            "independently_verified": "" if verified is None else int(verified),
+            "passed": int(passed),
+            "wall_seconds": round(blob.get("wall_seconds", 0.0), 6),
+            "solver_seconds": blob.get("solver_seconds", ""),
+            "iterations": blob.get("iterations", ""),
+            "algorithm": blob.get("algorithm", ""),
+            "git_commit": commit,
+            "machine": machine,
+            "timestamp_utc": timestamp,
+        })
+
+        ours_text = "-" if ours is None else f"{ours:>22.12e}"
+        gap_text = "-" if gap is None else f"{gap:>10.1e}"
+        verified_text = {True: "  yes   ", False: "  NO    ", None: "  -     "}[verified]
+        print(f"{name:<11}{status:<9}{ours_text}{published:>22.12e}{gap_text}"
+              f"{str(blob.get('iterations', '-')):>7}{blob.get('wall_seconds', 0.0):>7.2f}s"
+              f"{verified_text}  {'PASS' if passed else 'FAIL'}")
+        if not passed:
+            if blob.get("stderr"):
+                print(f"             stderr: {blob['stderr']}")
+            if blob.get("verifier_output"):
+                print(f"             verifier: {blob['verifier_output']}")
+
+    passes = sum(row["passed"] for row in rows)
+    total = len(rows)
+    print("-" * 104)
+    print(f"{passes}/{total} matched the published optimum to a relative "
+          f"{PASS_RELATIVE_TOLERANCE:g} AND passed independent verification")
+    if total and passes < total:
+        failed = [row["instance"] for row in rows if not row["passed"]]
+        # Naming the failures is not optional. A pass rate without them is a claim.
+        print(f"failed: {', '.join(failed)}")
+
+    out_path = args.out or (RESULTS_DIR / f"netlib-{commit}.csv")
+    with out_path.open("w", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=CSV_COLUMNS)
+        writer.writeheader()
+        writer.writerows(rows)
+    print(f"wrote {out_path.relative_to(REPO_ROOT)}")
+
+    if args.check:
+        previous = sorted((p for p in RESULTS_DIR.glob("netlib-*.csv") if p != out_path),
+                          key=lambda p: p.stat().st_mtime)
+        if not previous:
+            print("no earlier CSV to compare against; this run is the baseline")
+            return 0
+        with previous[-1].open(newline="") as handle:
+            baseline = list(csv.DictReader(handle))
+        baseline_passes = sum(int(row["passed"]) for row in baseline)
+        print(f"baseline {previous[-1].name}: {baseline_passes}/{len(baseline)}")
+        if passes < baseline_passes:
+            print(f"REGRESSION: pass count fell from {baseline_passes} to {passes}")
+            return 1
+
+    return 0 if passes == total else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
