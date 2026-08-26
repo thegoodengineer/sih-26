@@ -28,8 +28,8 @@ Eight instances, committed to the repository so a fresh clone can reproduce this
 network. **This is the set `demo/run_demo.sh` lets a judge pick from, and it is the easy end
 of Netlib.** Its pass rate is not the headline; section 1b is.
 
-Source CSV: `bench/results/netlib-small-5869f3c.csv`  
-Commit `5869f3c` · machine `Windows-AMD64` · generated 2026-08-26T19:34:55+00:00
+Source CSV: `bench/results/netlib-small-a90db47.csv`  
+Commit `a90db47` · machine `Windows-AMD64` · generated 2026-08-26T20:02:58+00:00
 
 **8 of 8 instances in this working set** matched their published optimum to a relative 1e-6 **and** passed independent verification by `tools/verify_solution.py`.
 
@@ -39,26 +39,26 @@ Every instance in this set passed.
 
 | instance | rows | cols | status | our objective | published optimum | rel. error | iters | time (s) | verified |
 |---|---:|---:|---|---:|---:|---:|---:|---:|:--:|
-| `adlittle` | 56 | 97 | optimal | 2.2549496316e+05 | 2.2549496316e+05 | 1.1e-11 | 158 | 0.047 | yes |
-| `afiro` | 27 | 32 | optimal | -4.6475314286e+02 | -4.6475314286e+02 | 6.1e-12 | 16 | 0.040 | yes |
-| `blend` | 74 | 83 | optimal | -3.0812149846e+01 | -3.0812149846e+01 | 5.6e-12 | 337 | 0.049 | yes |
-| `sc105` | 105 | 103 | optimal | -5.2202061212e+01 | -5.2202061212e+01 | 5.6e-12 | 107 | 0.051 | yes |
-| `sc50a` | 50 | 48 | optimal | -6.4575077059e+01 | -6.4575077059e+01 | 6.7e-12 | 46 | 0.037 | yes |
-| `sc50b` | 50 | 48 | optimal | -7.0000000000e+01 | -7.0000000000e+01 | 4.1e-16 | 50 | 0.043 | yes |
-| `share2b` | 96 | 79 | optimal | -4.1573224074e+02 | -4.1573224074e+02 | 3.4e-12 | 114 | 0.033 | yes |
-| `stocfor1` | 117 | 111 | optimal | -4.1131976219e+04 | -4.1131976219e+04 | 1.1e-11 | 68 | 0.041 | yes |
+| `adlittle` | 56 | 97 | optimal | 2.2549496316e+05 | 2.2549496316e+05 | 1.1e-11 | 158 | 0.056 | yes |
+| `afiro` | 27 | 32 | optimal | -4.6475314286e+02 | -4.6475314286e+02 | 6.1e-12 | 16 | 0.037 | yes |
+| `blend` | 74 | 83 | optimal | -3.0812149846e+01 | -3.0812149846e+01 | 5.6e-12 | 337 | 0.053 | yes |
+| `sc105` | 105 | 103 | optimal | -5.2202061212e+01 | -5.2202061212e+01 | 5.6e-12 | 107 | 0.046 | yes |
+| `sc50a` | 50 | 48 | optimal | -6.4575077059e+01 | -6.4575077059e+01 | 6.7e-12 | 46 | 0.051 | yes |
+| `sc50b` | 50 | 48 | optimal | -7.0000000000e+01 | -7.0000000000e+01 | 4.1e-16 | 50 | 0.037 | yes |
+| `share2b` | 96 | 79 | optimal | -4.1573224074e+02 | -4.1573224074e+02 | 3.4e-12 | 114 | 0.049 | yes |
+| `stocfor1` | 117 | 111 | optimal | -4.1131976219e+04 | -4.1131976219e+04 | 1.1e-11 | 68 | 0.038 | yes |
 
 **Summary**
 
-- shifted geometric mean solve time (shift 1s): **0.043s**
-- slowest solved instance: 0.051s
+- shifted geometric mean solve time (shift 1s): **0.046s**
+- slowest solved instance: 0.056s
 - worst relative error against a published optimum: **1.06e-11**
 - no failures on this set
 
 ### 1b. The medium tier — the honest headline
 
-Source CSV: `bench/results/netlib-medium-5869f3c.csv`  
-Commit `5869f3c` · machine `Windows-AMD64` · generated 2026-08-26T19:36:34+00:00
+Source CSV: `bench/results/netlib-medium-a90db47.csv`  
+Commit `a90db47` · machine `Windows-AMD64` · generated 2026-08-26T20:02:23+00:00
 
 **41 of 50 instances in this working set** matched their published optimum to a relative 1e-6 **and** passed independent verification by `tools/verify_solution.py`.
 
@@ -76,61 +76,61 @@ Coverage: this run used **50 of the 89 instances** Netlib publishes an optimal v
 
 | instance | rows | cols | status | our objective | published optimum | rel. error | iters | time (s) | verified |
 |---|---:|---:|---|---:|---:|---:|---:|---:|:--:|
-| `adlittle` | 56 | 97 | optimal | 2.2549496316e+05 | 2.2549496316e+05 | 1.1e-11 | 158 | 0.053 | yes |
-| `afiro` | 27 | 32 | optimal | -4.6475314286e+02 | -4.6475314286e+02 | 6.1e-12 | 16 | 0.032 | yes |
-| `agg` | 488 | 163 | optimal | -3.5991767287e+07 | -3.5991767287e+07 | 1.2e-11 | 141 | 0.069 | yes |
-| `bandm` | 305 | 472 | optimal | -1.5862801845e+02 | -1.5862801845e+02 | 7.6e-13 | 574 | 0.080 | yes |
-| `beaconfd` | 173 | 262 | optimal | 3.3592485807e+04 | 3.3592485807e+04 | 6.0e-12 | 96 | 0.052 | yes |
-| `blend` | 74 | 83 | optimal | -3.0812149846e+01 | -3.0812149846e+01 | 5.6e-12 | 337 | 0.072 | yes |
-| `boeing1` | 351 | 384 | optimal | -3.3521356751e+02 | -3.3521356751e+02 | 8.6e-12 | 760 | 0.067 | yes |
-| `boeing2` | 166 | 143 | optimal | -3.1501872802e+02 | -3.1501872802e+02 | 1.5e-11 | 208 | 0.051 | yes |
-| `bore3d` | 233 | 315 | optimal | 1.3730803942e+03 | 1.3730803942e+03 | 6.2e-12 | 167 | 0.077 | yes |
+| `adlittle` | 56 | 97 | optimal | 2.2549496316e+05 | 2.2549496316e+05 | 1.1e-11 | 158 | 0.057 | yes |
+| `afiro` | 27 | 32 | optimal | -4.6475314286e+02 | -4.6475314286e+02 | 6.1e-12 | 16 | 0.034 | yes |
+| `agg` | 488 | 163 | optimal | -3.5991767287e+07 | -3.5991767287e+07 | 1.2e-11 | 141 | 0.074 | yes |
+| `bandm` | 305 | 472 | optimal | -1.5862801845e+02 | -1.5862801845e+02 | 7.6e-13 | 574 | 0.062 | yes |
+| `beaconfd` | 173 | 262 | optimal | 3.3592485807e+04 | 3.3592485807e+04 | 6.0e-12 | 96 | 0.053 | yes |
+| `blend` | 74 | 83 | optimal | -3.0812149846e+01 | -3.0812149846e+01 | 5.6e-12 | 337 | 0.043 | yes |
+| `boeing1` | 351 | 384 | optimal | -3.3521356751e+02 | -3.3521356751e+02 | 8.6e-12 | 760 | 0.082 | yes |
+| `boeing2` | 166 | 143 | optimal | -3.1501872802e+02 | -3.1501872802e+02 | 1.5e-11 | 208 | 0.037 | yes |
+| `bore3d` | 233 | 315 | optimal | 1.3730803942e+03 | 1.3730803942e+03 | 6.2e-12 | 167 | 0.050 | yes |
 | `brandy` | 220 | 249 | optimal | 1.5185098965e+03 | 1.5185098965e+03 | 7.8e-12 | 323 | 0.068 | yes |
-| `capri` | 271 | 353 | optimal | 2.6900129138e+03 | 2.6900129138e+03 | 1.2e-11 | 458 | 0.069 | yes |
-| `d6cube` | 415 | 6184 | numerical_error | 1.0000000000e+00 | 3.1549166667e+02 | 1.0e+00 | 5230 | 2.336 | - |
-| `degen2` | 444 | 534 | optimal | -1.4351780000e+03 | -1.4351780000e+03 | 0.0e+00 | 1495 | 0.726 | yes |
-| `e226` | 223 | 282 | optimal | -1.1638929066e+01 | -1.8751929066e+01 | 3.8e-01 | 592 | 0.068 | yes |
-| `etamacro` | 400 | 688 | feasible | -7.5571523316e+02 | -7.5571521774e+02 | 2.0e-08 | 661 | 0.083 | yes |
-| `finnis` | 497 | 614 | optimal | 1.7279106560e+05 | 1.7279096547e+05 | 5.8e-07 | 643 | 0.086 | yes |
-| `fit1d` | 24 | 1026 | optimal | -9.1463780924e+03 | -9.1463780924e+03 | 2.3e-12 | 1622 | 0.270 | yes |
-| `fit2d` | 25 | 10500 | optimal | -6.8464293294e+04 | -6.8464293294e+04 | 2.4e-12 | 30210 | 15.064 | yes |
-| `forplan` | 161 | 421 | optimal | -6.6421896127e+02 | -6.6421873953e+02 | 3.3e-07 | 315 | 0.134 | yes |
-| `grow15` | 300 | 645 | numerical_error | 0.0000000000e+00 | -1.0687094129e+08 | 1.0e+00 | 577 | 0.312 | - |
-| `grow22` | 440 | 946 | optimal | -1.6083433648e+08 | -1.6083433648e+08 | 1.6e-11 | 1246 | 0.259 | yes |
-| `grow7` | 140 | 301 | numerical_error | -4.7787811815e+07 | -4.7787811815e+07 | 6.0e-12 | 297 | 0.087 | - |
-| `israel` | 174 | 142 | optimal | -8.9664482186e+05 | -8.9664482186e+05 | 3.4e-12 | 251 | 0.078 | yes |
-| `kb2` | 43 | 41 | optimal | -1.7499001299e+03 | -1.7499001299e+03 | 3.5e-12 | 71 | 0.081 | yes |
-| `lotfi` | 153 | 308 | optimal | -2.5264706062e+01 | -2.5264706062e+01 | 4.7e-12 | 261 | 0.055 | yes |
-| `pilot4` | 410 | 1000 | numerical_error | 0.0000000000e+00 | -2.5811392641e+03 | 1.0e+00 | 998 | 0.183 | - |
-| `recipe` | 91 | 180 | optimal | -2.6661600000e+02 | -2.6661600000e+02 | 1.1e-15 | 49 | 0.056 | yes |
-| `sc105` | 105 | 103 | optimal | -5.2202061212e+01 | -5.2202061212e+01 | 5.6e-12 | 107 | 0.057 | yes |
-| `sc205` | 205 | 203 | optimal | -5.2202061212e+01 | -5.2202061212e+01 | 5.6e-12 | 255 | 0.094 | yes |
-| `sc50a` | 50 | 48 | optimal | -6.4575077059e+01 | -6.4575077059e+01 | 6.7e-12 | 46 | 0.055 | yes |
-| `sc50b` | 50 | 48 | optimal | -7.0000000000e+01 | -7.0000000000e+01 | 4.1e-16 | 50 | 0.051 | yes |
-| `scagr25` | 471 | 500 | optimal | -1.4753433061e+07 | -1.4753433061e+07 | 1.6e-11 | 591 | 0.195 | yes |
-| `scagr7` | 129 | 140 | optimal | -2.3313898243e+06 | -2.3313892548e+06 | 2.4e-07 | 159 | 0.054 | yes |
-| `scfxm1` | 330 | 457 | optimal | 1.8416759028e+04 | 1.8416759028e+04 | 1.9e-11 | 648 | 0.090 | yes |
-| `scorpion` | 388 | 358 | optimal | 1.8781248227e+03 | 1.8781248227e+03 | 2.0e-11 | 323 | 0.074 | yes |
-| `scrs8` | 490 | 1169 | optimal | 9.0429695380e+02 | 9.0429998619e+02 | 3.4e-06 | 645 | 0.109 | yes |
-| `scsd1` | 77 | 760 | optimal | 8.6666666743e+00 | 8.6666666743e+00 | 3.8e-12 | 534 | 0.079 | yes |
-| `scsd6` | 147 | 1350 | optimal | 5.0500000078e+01 | 5.0500000078e+01 | 5.2e-12 | 627 | 0.168 | yes |
-| `scsd8` | 397 | 2750 | optimal | 9.0499999993e+02 | 9.0499999993e+02 | 5.0e-12 | 926 | 0.194 | yes |
-| `sctap1` | 300 | 480 | optimal | 1.4122500000e+03 | 1.4122500000e+03 | 0.0e+00 | 303 | 0.082 | yes |
-| `share1b` | 117 | 225 | optimal | -7.6589318579e+04 | -7.6589318579e+04 | 2.4e-12 | 207 | 0.069 | yes |
-| `share2b` | 96 | 79 | optimal | -4.1573224074e+02 | -4.1573224074e+02 | 3.4e-12 | 114 | 0.058 | yes |
-| `ship04l` | 402 | 2118 | optimal | 1.7933245380e+06 | 1.7933245380e+06 | 1.7e-11 | 511 | 0.192 | yes |
-| `ship04s` | 402 | 1458 | optimal | 1.7987147004e+06 | 1.7987147004e+06 | 2.5e-11 | 385 | 0.083 | yes |
-| `stair` | 356 | 467 | optimal | -2.5126695119e+02 | -2.5126695119e+02 | 1.2e-11 | 978 | 1.437 | yes |
-| `standata` | 359 | 1075 | optimal | 1.2576995000e+03 | 1.2576995000e+03 | 0.0e+00 | 53 | 0.074 | yes |
-| `standmps` | 467 | 1075 | optimal | 1.4060175000e+03 | 1.4060175000e+03 | 0.0e+00 | 193 | 0.068 | yes |
-| `stocfor1` | 117 | 111 | optimal | -4.1131976219e+04 | -4.1131976219e+04 | 1.1e-11 | 68 | 0.051 | yes |
-| `tuff` | 333 | 587 | numerical_error | 0.0000000000e+00 | 2.9214776509e-01 | 2.9e-01 | 1001 | 0.147 | - |
-| `wood1p` | 244 | 2594 | numerical_error | 0.0000000000e+00 | 1.4429024116e+00 | 1.0e+00 | 1000 | 0.626 | - |
+| `capri` | 271 | 353 | optimal | 2.6900129138e+03 | 2.6900129138e+03 | 1.2e-11 | 458 | 0.068 | yes |
+| `d6cube` | 415 | 6184 | numerical_error | 1.0000000000e+00 | 3.1549166667e+02 | 1.0e+00 | 5230 | 2.024 | - |
+| `degen2` | 444 | 534 | optimal | -1.4351780000e+03 | -1.4351780000e+03 | 0.0e+00 | 1495 | 0.740 | yes |
+| `e226` | 223 | 282 | optimal | -1.1638929066e+01 | -1.8751929066e+01 | 3.8e-01 | 592 | 0.073 | yes |
+| `etamacro` | 400 | 688 | feasible | -7.5571523316e+02 | -7.5571521774e+02 | 2.0e-08 | 661 | 0.071 | yes |
+| `finnis` | 497 | 614 | optimal | 1.7279106560e+05 | 1.7279096547e+05 | 5.8e-07 | 643 | 0.100 | yes |
+| `fit1d` | 24 | 1026 | optimal | -9.1463780924e+03 | -9.1463780924e+03 | 2.3e-12 | 1622 | 0.111 | yes |
+| `fit2d` | 25 | 10500 | optimal | -6.8464293294e+04 | -6.8464293294e+04 | 2.4e-12 | 30210 | 12.631 | yes |
+| `forplan` | 161 | 421 | optimal | -6.6421896127e+02 | -6.6421873953e+02 | 3.3e-07 | 315 | 0.102 | yes |
+| `grow15` | 300 | 645 | numerical_error | 0.0000000000e+00 | -1.0687094129e+08 | 1.0e+00 | 577 | 0.204 | - |
+| `grow22` | 440 | 946 | optimal | -1.6083433648e+08 | -1.6083433648e+08 | 1.6e-11 | 1246 | 0.395 | yes |
+| `grow7` | 140 | 301 | numerical_error | -4.7787811815e+07 | -4.7787811815e+07 | 6.0e-12 | 297 | 0.060 | - |
+| `israel` | 174 | 142 | optimal | -8.9664482186e+05 | -8.9664482186e+05 | 3.4e-12 | 251 | 0.072 | yes |
+| `kb2` | 43 | 41 | optimal | -1.7499001299e+03 | -1.7499001299e+03 | 3.5e-12 | 71 | 0.054 | yes |
+| `lotfi` | 153 | 308 | optimal | -2.5264706062e+01 | -2.5264706062e+01 | 4.7e-12 | 261 | 0.084 | yes |
+| `pilot4` | 410 | 1000 | numerical_error | 0.0000000000e+00 | -2.5811392641e+03 | 1.0e+00 | 998 | 0.193 | - |
+| `recipe` | 91 | 180 | optimal | -2.6661600000e+02 | -2.6661600000e+02 | 1.1e-15 | 49 | 0.049 | yes |
+| `sc105` | 105 | 103 | optimal | -5.2202061212e+01 | -5.2202061212e+01 | 5.6e-12 | 107 | 0.046 | yes |
+| `sc205` | 205 | 203 | optimal | -5.2202061212e+01 | -5.2202061212e+01 | 5.6e-12 | 255 | 0.052 | yes |
+| `sc50a` | 50 | 48 | optimal | -6.4575077059e+01 | -6.4575077059e+01 | 6.7e-12 | 46 | 0.069 | yes |
+| `sc50b` | 50 | 48 | optimal | -7.0000000000e+01 | -7.0000000000e+01 | 4.1e-16 | 50 | 0.031 | yes |
+| `scagr25` | 471 | 500 | optimal | -1.4753433061e+07 | -1.4753433061e+07 | 1.6e-11 | 591 | 0.108 | yes |
+| `scagr7` | 129 | 140 | optimal | -2.3313898243e+06 | -2.3313892548e+06 | 2.4e-07 | 159 | 0.045 | yes |
+| `scfxm1` | 330 | 457 | optimal | 1.8416759028e+04 | 1.8416759028e+04 | 1.9e-11 | 648 | 0.110 | yes |
+| `scorpion` | 388 | 358 | optimal | 1.8781248227e+03 | 1.8781248227e+03 | 2.0e-11 | 323 | 0.053 | yes |
+| `scrs8` | 490 | 1169 | optimal | 9.0429695380e+02 | 9.0429998619e+02 | 3.4e-06 | 645 | 0.075 | yes |
+| `scsd1` | 77 | 760 | optimal | 8.6666666743e+00 | 8.6666666743e+00 | 3.8e-12 | 534 | 0.062 | yes |
+| `scsd6` | 147 | 1350 | optimal | 5.0500000078e+01 | 5.0500000078e+01 | 5.2e-12 | 627 | 0.141 | yes |
+| `scsd8` | 397 | 2750 | optimal | 9.0499999993e+02 | 9.0499999993e+02 | 5.0e-12 | 926 | 0.199 | yes |
+| `sctap1` | 300 | 480 | optimal | 1.4122500000e+03 | 1.4122500000e+03 | 0.0e+00 | 303 | 0.060 | yes |
+| `share1b` | 117 | 225 | optimal | -7.6589318579e+04 | -7.6589318579e+04 | 2.4e-12 | 207 | 0.040 | yes |
+| `share2b` | 96 | 79 | optimal | -4.1573224074e+02 | -4.1573224074e+02 | 3.4e-12 | 114 | 0.060 | yes |
+| `ship04l` | 402 | 2118 | optimal | 1.7933245380e+06 | 1.7933245380e+06 | 1.7e-11 | 511 | 0.075 | yes |
+| `ship04s` | 402 | 1458 | optimal | 1.7987147004e+06 | 1.7987147004e+06 | 2.5e-11 | 385 | 0.060 | yes |
+| `stair` | 356 | 467 | optimal | -2.5126695119e+02 | -2.5126695119e+02 | 1.2e-11 | 978 | 1.270 | yes |
+| `standata` | 359 | 1075 | optimal | 1.2576995000e+03 | 1.2576995000e+03 | 0.0e+00 | 53 | 0.059 | yes |
+| `standmps` | 467 | 1075 | optimal | 1.4060175000e+03 | 1.4060175000e+03 | 0.0e+00 | 193 | 0.077 | yes |
+| `stocfor1` | 117 | 111 | optimal | -4.1131976219e+04 | -4.1131976219e+04 | 1.1e-11 | 68 | 0.039 | yes |
+| `tuff` | 333 | 587 | numerical_error | 0.0000000000e+00 | 2.9214776509e-01 | 2.9e-01 | 1001 | 0.213 | - |
+| `wood1p` | 244 | 2594 | numerical_error | 0.0000000000e+00 | 1.4429024116e+00 | 1.0e+00 | 1000 | 0.558 | - |
 
 **Summary**
 
-- shifted geometric mean solve time (shift 1s): **0.201s**
-- slowest solved instance: 15.064s
+- shifted geometric mean solve time (shift 1s): **0.180s**
+- slowest solved instance: 12.631s
 - worst relative error against a published optimum: **5.79e-07**
 - **failed: `d6cube`, `e226`, `etamacro`, `grow15`, `grow7`, `pilot4`, `scrs8`, `tuff`, `wood1p`** — kept in the table on purpose
 
@@ -156,31 +156,84 @@ that, and both run in CI:
 
 ## 3. Comparison against an established solver
 
-Source CSV: `bench/results/compare-highs-5869f3c.csv`  
-Commit `5869f3c` · machine `Windows-AMD64`
+HiGHS is the reference. It runs as a SEPARATE PROCESS over the same MPS files; no HiGHS code
+is linked into, or read by, SANKHYA - see `docs/PROVENANCE.md`. Both sides are timed on
+solver-internal time only.
 
-**8 of 8** instances where the two solvers agree on the objective.
+The comparison below is run on **the same tier as section 1b**, not on the eight-instance
+demo set. Comparing only where we pass would be the easy version of this table and would say
+nothing: the instances we fail are exactly the ones a reader should want to see against a
+mature solver.
+
+Source CSV: `bench/results/compare-highs-medium-a90db47.csv`  
+Commit `a90db47` · machine `Windows-AMD64`
+
+**45 of 50** instances where the two solvers agree on the objective.
 
 Times are **solver-internal on both sides** - HiGHS's own `getRunTime()` against our `effort.solve_seconds` - so process start-up is excluded for both. At this instance size start-up would otherwise dominate and the comparison would measure the wrong thing entirely.
 
 | instance | SANKHYA obj | HiGHS obj | agree | SANKHYA (s) | HiGHS (s) | ratio |
 |---|---:|---:|:--:|---:|---:|---:|
-| `adlittle` | 2.25494963e+05 | 2.25494963e+05 | yes | 0.006 | 0.022 | 0.28x |
-| `afiro` | -4.64753143e+02 | -4.64753143e+02 | yes | 0.001 | 0.002 | 0.43x |
-| `blend` | -3.08121498e+01 | -3.08121498e+01 | yes | 0.017 | 0.005 | 3.62x |
-| `sc105` | -5.22020612e+01 | -5.22020612e+01 | yes | 0.010 | 0.003 | 3.17x |
-| `sc50a` | -6.45750771e+01 | -6.45750771e+01 | yes | 0.002 | 0.001 | 1.64x |
-| `sc50b` | -7.00000000e+01 | -7.00000000e+01 | yes | 0.002 | 0.002 | 1.10x |
-| `share2b` | -4.15732241e+02 | -4.15732241e+02 | yes | 0.005 | 0.009 | 0.54x |
-| `stocfor1` | -4.11319762e+04 | -4.11319762e+04 | yes | 0.003 | 0.005 | 0.50x |
+| `adlittle` | 2.25494963e+05 | 2.25494963e+05 | yes | 0.004 | 0.013 | 0.30x |
+| `afiro` | -4.64753143e+02 | -4.64753143e+02 | yes | 0.001 | 0.003 | 0.29x |
+| `agg` | -3.59917673e+07 | -3.59917673e+07 | yes | 0.034 | 0.014 | 2.53x |
+| `bandm` | -1.58628018e+02 | -1.58628018e+02 | yes | 0.049 | 0.018 | 2.74x |
+| `beaconfd` | 3.35924858e+04 | 3.35924858e+04 | yes | 0.005 | 0.006 | 0.75x |
+| `blend` | -3.08121498e+01 | -3.08121498e+01 | yes | 0.009 | 0.005 | 2.06x |
+| `boeing1` | -3.35213568e+02 | -3.35213568e+02 | yes | 0.029 | 0.028 | 1.02x |
+| `boeing2` | -3.15018728e+02 | -3.15018728e+02 | yes | 0.005 | 0.007 | 0.74x |
+| `bore3d` | 1.37308039e+03 | 1.37308039e+03 | yes | 0.008 | 0.005 | 1.44x |
+| `brandy` | 1.51850990e+03 | 1.51850990e+03 | yes | 0.015 | 0.013 | 1.17x |
+| `capri` | 2.69001291e+03 | 2.69001291e+03 | yes | 0.020 | 0.008 | 2.64x |
+| `d6cube` | 1.00000000e+00 | 3.15491667e+02 | **NO** | 1.831 | 0.463 | 3.95x |
+| `degen2` | -1.43517800e+03 | -1.43517800e+03 | yes | 0.640 | 0.053 | 12.16x |
+| `e226` | -1.16389291e+01 | -1.16389291e+01 | yes | 0.028 | 0.029 | 0.99x |
+| `etamacro` | -7.55715233e+02 | -7.55715233e+02 | yes | 0.037 | 0.039 | 0.96x |
+| `finnis` | 1.72791066e+05 | 1.72791066e+05 | yes | 0.039 | 0.021 | 1.86x |
+| `fit1d` | -9.14637809e+03 | -9.14637809e+03 | yes | 0.079 | 0.044 | 1.82x |
+| `fit2d` | -6.84642933e+04 | -6.84642933e+04 | yes | 27.962 | 0.715 | 39.09x |
+| `forplan` | -6.64218961e+02 | -6.64218961e+02 | yes | 0.174 | 0.052 | 3.31x |
+| `grow15` | 0.00000000e+00 | -1.06870941e+08 | **NO** | 0.221 | 0.176 | 1.25x |
+| `grow22` | -1.60834336e+08 | -1.60834336e+08 | yes | 0.396 | 0.395 | 1.00x |
+| `grow7` | -4.77878118e+07 | -4.77878118e+07 | yes | 0.034 | 0.046 | 0.74x |
+| `israel` | -8.96644822e+05 | -8.96644822e+05 | yes | 0.045 | 0.016 | 2.86x |
+| `kb2` | -1.74990013e+03 | -1.74990013e+03 | yes | 0.003 | 0.003 | 0.87x |
+| `lotfi` | -2.52647061e+01 | -2.52647061e+01 | yes | 0.018 | 0.012 | 1.51x |
+| `pilot4` | 0.00000000e+00 | -2.58113926e+03 | **NO** | 0.271 | 0.154 | 1.76x |
+| `recipe` | -2.66616000e+02 | -2.66616000e+02 | yes | 0.003 | 0.006 | 0.46x |
+| `sc105` | -5.22020612e+01 | -5.22020612e+01 | yes | 0.011 | 0.006 | 1.77x |
+| `sc205` | -5.22020612e+01 | -5.22020612e+01 | yes | 0.027 | 0.009 | 2.98x |
+| `sc50a` | -6.45750771e+01 | -6.45750771e+01 | yes | 0.002 | 0.003 | 0.82x |
+| `sc50b` | -7.00000000e+01 | -7.00000000e+01 | yes | 0.003 | 0.004 | 0.70x |
+| `scagr25` | -1.47534331e+07 | -1.47534331e+07 | yes | 0.136 | 0.028 | 4.86x |
+| `scagr7` | -2.33138982e+06 | -2.33138982e+06 | yes | 0.005 | 0.015 | 0.35x |
+| `scfxm1` | 1.84167590e+04 | 1.84167590e+04 | yes | 0.065 | 0.034 | 1.87x |
+| `scorpion` | 1.87812482e+03 | 1.87812482e+03 | yes | 0.015 | 0.013 | 1.20x |
+| `scrs8` | 9.04296954e+02 | 9.04296954e+02 | yes | 0.071 | 0.043 | 1.65x |
+| `scsd1` | 8.66666667e+00 | 8.66666667e+00 | yes | 0.026 | 0.012 | 2.15x |
+| `scsd6` | 5.05000001e+01 | 5.05000001e+01 | yes | 0.074 | 0.030 | 2.45x |
+| `scsd8` | 9.05000000e+02 | 9.05000000e+02 | yes | 0.137 | 0.172 | 0.80x |
+| `sctap1` | 1.41225000e+03 | 1.41225000e+03 | yes | 0.025 | 0.024 | 1.02x |
+| `share1b` | -7.65893186e+04 | -7.65893186e+04 | yes | 0.005 | 0.014 | 0.33x |
+| `share2b` | -4.15732241e+02 | -4.15732241e+02 | yes | 0.005 | 0.009 | 0.49x |
+| `ship04l` | 1.79332454e+06 | 1.79332454e+06 | yes | 0.062 | 0.034 | 1.81x |
+| `ship04s` | 1.79871470e+06 | 1.79871470e+06 | yes | 0.035 | 0.026 | 1.35x |
+| `stair` | -2.51266951e+02 | -2.51266951e+02 | yes | 1.623 | 0.059 | 27.42x |
+| `standata` | 1.25769950e+03 | 1.25769950e+03 | yes | 0.011 | 0.022 | 0.50x |
+| `standmps` | 1.40601750e+03 | 1.40601750e+03 | yes | 0.018 | 0.024 | 0.78x |
+| `stocfor1` | -4.11319762e+04 | -4.11319762e+04 | yes | 0.005 | 0.007 | 0.68x |
+| `tuff` | 0.00000000e+00 | 2.92147765e-01 | **NO** | 0.192 | 0.035 | 5.45x |
+| `wood1p` | 0.00000000e+00 | 1.44290241e+00 | **NO** | 0.795 | 0.276 | 2.88x |
 
 **Summary**
 
-- SANKHYA shifted geometric mean: **0.006s**
-- HiGHS shifted geometric mean: **0.006s**
-- SANKHYA is **0.9x** the HiGHS time by that measure
+- SANKHYA shifted geometric mean: **0.191s**
+- HiGHS shifted geometric mean: **0.058s**
+- SANKHYA is **3.3x** the HiGHS time by that measure
 
-The two are **within noise of each other** here, at 0.93x. A narrow claim: eight small instances settle nothing about large models. HiGHS is a decade of specialist work with presolve, a dual simplex and a mature pricing scheme, and this solver still has neither of the first two. The part that has to be right first is that **the answers agree** - the problem statement asks us to compare, not to win.
+- per-instance ratio: median **1.40x**, worst **39.09x**, faster than HiGHS on **18 of 50** instances
+
+We are **3.27x slower** than HiGHS by this measure, and publish that rather than bury it. HiGHS is a decade of specialist work with presolve, a dual simplex and a mature pricing scheme, and this solver still has neither of the first two. The part that has to be right first is that **the answers agree** - the problem statement asks us to compare, not to win.
 
 ---
 
