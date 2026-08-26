@@ -73,6 +73,14 @@ constexpr int kStallLimit = 20 * tol::kBlandSwitchIterations;
 /// and both have published optima.
 constexpr double kInfeasibilityProofFactor = 1e3;
 
+/// How often the updated factorization is checked against the basis it claims to represent,
+/// and how much relative residual is tolerated before it is rebuilt.
+///
+/// The check costs one sparse mat-vec over the basis columns, which is the same order as the
+/// FTRAN it verifies, so it is amortised over an interval rather than run every pivot.
+constexpr Count kAccuracyCheckInterval = 16;
+constexpr double kUpdateAccuracyTolerance = 1e-9;
+
 /// How a basic variable sits relative to its own bounds. Phase 1 exists to empty the two
 /// outer categories.
 enum class Position { kBelowLower, kFeasible, kAboveUpper };
@@ -122,6 +130,14 @@ class PrimalSimplex {
   [[nodiscard]] Index price(bool bland, int* direction) const;
 
   void ftran_entering_column(Index entering);
+
+  /// Relative residual of the claimed FTRAN result: || B alpha - a ||_inf / || a ||_inf,
+  /// with B taken from the CURRENT basis columns and alpha from the updated factors.
+  ///
+  /// This is the direct measurement of the thing that actually matters - whether the factors
+  /// plus their eta file still represent the basis - and it replaces inferring conditioning
+  /// from whether the Markowitz ladder happened to fire.
+  [[nodiscard]] double ftran_residual(Index entering) const;
   [[nodiscard]] RatioResult ratio_test(Index entering, int direction, bool phase_one) const;
 
   /// Iterate over the entries of column k of [A | -I].
@@ -174,14 +190,14 @@ class PrimalSimplex {
   /// Reported once per solve, not once per refactorization.
   bool warned_about_threshold_ = false;
 
-  /// Set by refactorize() when the Markowitz ladder had to climb past its default. Used to
-  /// switch the basis update off for the rest of the solve; see the pivot loop.
+  /// Latched by refactorize() when the Markowitz ladder climbed past its default.
   bool basis_needed_stricter_threshold_ = false;
 
   /// Effort counters for the solve log. rejected_updates_ is the interesting one: a basis
   /// that keeps producing unsafe pivots is badly conditioned, and that is worth seeing.
   Count refactorizations_ = 0;
   Count rejected_updates_ = 0;
+  Count accuracy_refactorizations_ = 0;
   std::vector<double> x_basic_;
   std::vector<double> cost_basic_;
   std::vector<double> y_;
@@ -300,11 +316,8 @@ bool PrimalSimplex::refactorize() {
   static constexpr double kThresholdLadder[] = {tol::kMarkowitzThreshold, 0.1, 0.5, 1.0};
   for (std::size_t attempt = 0; attempt < std::size(kThresholdLadder); ++attempt) {
     if (lu_.factorize(basis_columns_, m_, tol::kPivotTolerance, kThresholdLadder[attempt])) {
-      // A basis that needed a stricter threshold than the default is poorly conditioned, and
-      // that is the signal used below to stop trusting the product-form update on this model.
-      // It LATCHES: a model that has produced one ill-conditioned basis will produce more,
-      // and assignment rather than latching would clear the flag on the very next basis that
-      // happened to factorize cleanly - leaving the update switched on for most of the solve.
+      // Latches: a model that produced one ill-conditioned basis will produce more, and
+      // assignment would clear this on the next basis that happened to factorize cleanly.
       if (attempt > 0) basis_needed_stricter_threshold_ = true;
       if (attempt > 0 && !warned_about_threshold_) {
         warned_about_threshold_ = true;
@@ -444,6 +457,30 @@ void PrimalSimplex::ftran_entering_column(Index entering) {
   lu_.solve(alpha_.data());
 }
 
+double PrimalSimplex::ftran_residual(Index entering) const {
+  // B alpha, accumulated straight from the basis columns.
+  std::vector<double> product(static_cast<std::size_t>(m_), 0.0);
+  for (Index slot = 0; slot < m_; ++slot) {
+    const double weight = alpha_[static_cast<std::size_t>(slot)];
+    if (weight == 0.0) continue;
+    for_each_entry(basis_[static_cast<std::size_t>(slot)], [&](Index row, double value) {
+      product[static_cast<std::size_t>(row)] += value * weight;
+    });
+  }
+
+  // ... which must reproduce the entering column.
+  double worst = 0.0;
+  double scale = 1.0;
+  for_each_entry(entering, [&](Index row, double value) {
+    product[static_cast<std::size_t>(row)] -= value;
+    scale = std::max(scale, std::fabs(value));
+  });
+  for (Index i = 0; i < m_; ++i) {
+    worst = std::max(worst, std::fabs(product[static_cast<std::size_t>(i)]));
+  }
+  return worst / scale;
+}
+
 // -----------------------------------------------------------------------------------------
 // Ratio test
 // -----------------------------------------------------------------------------------------
@@ -547,8 +584,10 @@ Solution PrimalSimplex::finish(SolveStatus status, const std::string& message, C
   // The ratio of refactorizations to iterations is the cheapest available read on how well
   // the basis update is holding up: a run that refactorizes on most pivots has gained
   // nothing, and a high rejection count means the bases being produced are ill conditioned.
-  logger_.info("Basis: {} refactorizations over {} iterations, {} update(s) declined as unsafe",
-               refactorizations_, iterations, rejected_updates_);
+  logger_.info(
+      "Basis: {} refactorizations over {} iterations, {} declined as unsafe, {} forced "
+      "by the accuracy check",
+      refactorizations_, iterations, rejected_updates_, accuracy_refactorizations_);
 
   Solution solution;
   solution.allocate_for(model_);
@@ -687,6 +726,26 @@ Solution PrimalSimplex::run() {
     }
 
     ftran_entering_column(entering);
+
+    // Periodically ask whether the updated factors still represent the basis, and rebuild
+    // them when they do not. This measures the property that matters rather than guessing at
+    // it: an earlier version inferred trouble from the Markowitz threshold ladder having
+    // fired, which is a proxy for conditioning and not for accuracy, and it left d6cube 1.8x
+    // slower than never updating at all.
+    if (lu_.eta_count() > 0 && iterations % kAccuracyCheckInterval == 0) {
+      const double residual = ftran_residual(entering);
+      if (residual > kUpdateAccuracyTolerance) {
+        ++accuracy_refactorizations_;
+        if (!refactorize()) {
+          return finish(SolveStatus::kNumericalError,
+                        fmt::format("basis became singular at iteration {}", iterations),
+                        iterations, timer.elapsed_seconds());
+        }
+        ++refactorizations_;
+        ftran_entering_column(entering);
+      }
+    }
+
     const RatioResult ratio = ratio_test(entering, direction, phase_one);
 
     if (ratio.unbounded) {
@@ -762,17 +821,25 @@ Solution PrimalSimplex::run() {
       // eta file has grown enough that it costs more per solve than fresh factors would.
       // Both paths matter: refactorizing every iteration was slow but had no accumulated
       // update error, and that property is only preserved by taking the trigger seriously.
-      // The update is NOT used once the factorization has told us the basis is poorly
-      // conditioned. Netlib d6cube is why. It needed a stricter Markowitz threshold, and
-      // carrying an eta file on top of such a basis degraded the pivot path badly: phase 1
-      // went from 1947 iterations to 38634, a twentyfold increase, for the same final status.
-      // The cost is not per-iteration arithmetic, it is that slightly drifted reduced costs
-      // pick different entering columns and the simplex wanders.
+      // Two independent controls, and they answer different questions.
       //
-      // Refactorizing every pivot is exactly the behaviour that had no accumulated update
-      // error, so falling back to it on an ill-conditioned model is the conservative choice
-      // rather than a special case: the update is an optimization, and it is switched off
-      // where the evidence says it does not pay.
+      // The accuracy check above asks whether the factors still represent the basis. On
+      // d6cube it fires essentially never - the product form stays accurate to better than
+      // 1e-9 relative residual for thousands of pivots - so drift is NOT what goes wrong
+      // there.
+      //
+      // What goes wrong is the pivot path. Even with faithful factors, alpha computed
+      // through base-plus-etas differs from alpha computed through fresh factors in the last
+      // bits, and on a massively degenerate model those bits decide which row wins the ratio
+      // test. d6cube then takes 38634 pivots to reach the same singular basis it reaches in
+      // 1947 without the update. Neither run produces an answer; one just wastes twenty times
+      // as long failing.
+      //
+      // That is not fixable by controlling accuracy, because accuracy is not the problem -
+      // the real remedy is anti-degeneracy machinery (Harris ratio test, perturbation, #67).
+      // Until then the update is switched off on a basis the factorization has already
+      // flagged as poorly conditioned, which is where its benefit is least reliable and where
+      // this behaviour shows up. It is containment, not a fix, and is described as such.
       const bool trust_update = !basis_needed_stricter_threshold_;
       const bool updated = trust_update && lu_.update(ratio.leaving_position, alpha_.data());
       if (trust_update && !updated) ++rejected_updates_;
