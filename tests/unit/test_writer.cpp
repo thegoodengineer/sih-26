@@ -263,6 +263,35 @@ TEST(SolutionWriter, InfiniteBoundsArePrintedAsWords) {
   EXPECT_EQ(header_fields(slurp(file.path())).at("objective_offset"), "inf");
 }
 
+TEST(SolutionWriter, NamesContainingSpacesAreQuoted) {
+  // #86: fixed-format MPS permits a name containing a space ("DEDO3 11"), and the columns/
+  // rows tables are one whitespace-delimited record per line - free-format tokenisation
+  // cannot tell whether that is one field or two. The writer double-quotes such a name, with
+  // '\' and '"' backslash-escaped inside the quotes. tools/verify_solution.py's parse_sol
+  // undoes exactly this; that reader-side half of the round trip is
+  // tools/test_verify_solution.py, since it is Python, not C++.
+  Model model = make_model();
+  model.col_names = {"DEDO3 11", "PLAIN", "HAS\"QUOTE"};
+  model.row_names = {"DEDO3 1R", "OTHERROW", "THIRDROW"};
+  const Solution solution = solve_it(model);
+  ASSERT_EQ(solution.status, SolveStatus::kOptimal) << solution.message;
+
+  const TempFile file("", ".sol");
+  std::string error;
+  ASSERT_TRUE(io::write_solution(file.path(), model, solution, &error)) << error;
+  const std::string text = slurp(file.path());
+
+  // A name containing a space is wrapped in double quotes.
+  EXPECT_NE(text.find("\"DEDO3 11\" "), std::string::npos) << text;
+  EXPECT_NE(text.find("\"DEDO3 1R\" "), std::string::npos) << text;
+  // A name with no whitespace or quote is written bare, unchanged - no gratuitous format
+  // churn for the common case, which is every name in the eight committed Netlib instances.
+  EXPECT_NE(text.find("\nPLAIN "), std::string::npos) << text;
+  // A literal quote character inside a name is backslash-escaped, so the closing quote of
+  // the field is never ambiguous with a quote that is part of the name itself.
+  EXPECT_NE(text.find("\"HAS\\\"QUOTE\" "), std::string::npos) << text;
+}
+
 TEST(SolutionWriter, ReportsAnUnwritablePath) {
   const Model model = make_model();
   const Solution solution = solve_it(model);

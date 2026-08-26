@@ -90,6 +90,71 @@ def test_fixed_format_row_name_with_space() -> None:
                       "row coefficient", f"entries={entries}")
 
 
+# =============================================================================================
+# Issue #86: a fixed-format MPS name may legally contain a space ("DEDO3 11"), and the .sol
+# columns/rows tables are one whitespace-delimited record per line. src/io/writer.cpp
+# double-quotes such a name - with '\' and '"' backslash-escaped inside the quotes - and
+# parse_sol()'s _split_name_field() must undo exactly that, or the recovered name will not
+# match the one the independent MPS reader parsed from the .mps file, and the column/row
+# will show up as structurally missing rather than merely misnamed.
+# =============================================================================================
+
+SOL_FILE_WITH_QUOTED_NAMES = """\
+# SANKHYA solution file
+model QUOTETEST
+source in-memory
+sense minimize
+status optimal
+algorithm simplex-primal
+objective 8
+dual_bound 8
+objective_offset 0
+rows 2
+columns 2
+iterations 1
+nodes 0
+solve_seconds 0.001
+
+# name value reduced_cost basis_status
+begin columns 2
+"DEDO3 11" 5 0 basic
+PLAIN 3 0 basic
+end columns
+
+# name activity dual basis_status
+begin rows 2
+"DEDO3 1R" 4 0.5 at_upper
+"HAS\\"QUOTE" 1 0 basic
+end rows
+"""
+
+
+def test_sol_reader_recovers_quoted_names() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "quoted.sol"
+        path.write_text(SOL_FILE_WITH_QUOTED_NAMES)
+        solution = vs.parse_sol(path)
+
+        check("DEDO3 11" in solution.col_value, "quoted column name with a space recovered",
+              f"col_value keys={list(solution.col_value)}")
+        check("DEDO3 1R" in solution.row_activity, "quoted row name with a space recovered",
+              f"row_activity keys={list(solution.row_activity)}")
+        check('HAS"QUOTE' in solution.row_activity,
+              "backslash-escaped quote inside a name recovered",
+              f"row_activity keys={list(solution.row_activity)}")
+        check("PLAIN" in solution.col_value, "an unquoted name is unaffected",
+              f"col_value keys={list(solution.col_value)}")
+
+        if "DEDO3 11" in solution.col_value:
+            check(solution.col_value["DEDO3 11"] == 5.0, "value for the quoted column",
+                  f"got {solution.col_value.get('DEDO3 11')}")
+            check(solution.col_status["DEDO3 11"] == "basic", "status for the quoted column",
+                  f"got {solution.col_status.get('DEDO3 11')}")
+        if "DEDO3 1R" in solution.row_activity:
+            check(solution.row_dual["DEDO3 1R"] == 0.5, "dual for the quoted row",
+                  f"got {solution.row_dual.get('DEDO3 1R')}")
+
+
 def test_known_bad_solution_is_rejected() -> None:
     """A sanity check on the pass/fail contract itself: a solution violating a bound must
     fail verification, not pass it."""
@@ -119,6 +184,8 @@ def main() -> int:
     test_fixed_format_row_name_with_space()
     print("test_known_bad_solution_is_rejected")
     test_known_bad_solution_is_rejected()
+    print("test_sol_reader_recovers_quoted_names")
+    test_sol_reader_recovers_quoted_names()
     print()
     if FAILURES == 0:
         print("ALL TESTS PASSED")

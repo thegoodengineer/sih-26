@@ -67,6 +67,24 @@ namespace {
   return fmt::format("R{}", i);
 }
 
+// Issue #86: the columns/rows tables are one whitespace-delimited record per line, and a
+// fixed-format MPS name may legally contain a space ("DEDO3 11") - free-format tokenisation
+// then cannot tell whether that is one field or two. Quoting is the fix option chosen there:
+// a name containing whitespace or a literal '"' is wrapped in double quotes, with '\' and
+// '"' backslash-escaped inside them. tools/verify_solution.py's parse_sol undoes exactly
+// this, so both sides of this interface must be read as changing together - see CLAUDE.md's
+// "Frozen interfaces" for why that pairing matters here.
+[[nodiscard]] std::string quote_name_if_needed(const std::string& name) {
+  if (name.find_first_of(" \t\"") == std::string::npos) return name;
+  std::string out = "\"";
+  for (const char c : name) {
+    if (c == '\\' || c == '"') out.push_back('\\');
+    out.push_back(c);
+  }
+  out.push_back('"');
+  return out;
+}
+
 [[nodiscard]] double value_or(const std::vector<double>& v, Index i) {
   const auto u = static_cast<std::size_t>(i);
   return u < v.size() ? v[u] : 0.0;
@@ -115,7 +133,7 @@ bool write_solution(const std::string& path, const Model& model, const Solution&
   fmt::print(out, "\n# name value reduced_cost basis_status\n");
   fmt::print(out, "begin columns {}\n", n);
   for (Index j = 0; j < n; ++j) {
-    fmt::print(out, "{} {} {} {}\n", column_name(model, j),
+    fmt::print(out, "{} {} {} {}\n", quote_name_if_needed(column_name(model, j)),
                exact(value_or(solution.col_value, j)), exact(value_or(solution.col_dual, j)),
                status_or(solution.col_status, j));
   }
@@ -124,7 +142,7 @@ bool write_solution(const std::string& path, const Model& model, const Solution&
   fmt::print(out, "\n# name activity dual basis_status\n");
   fmt::print(out, "begin rows {}\n", m);
   for (Index i = 0; i < m; ++i) {
-    fmt::print(out, "{} {} {} {}\n", row_name(model, i),
+    fmt::print(out, "{} {} {} {}\n", quote_name_if_needed(row_name(model, i)),
                exact(value_or(solution.row_activity, i)), exact(value_or(solution.row_dual, i)),
                status_or(solution.row_status, i));
   }

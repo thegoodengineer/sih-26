@@ -371,6 +371,34 @@ class Solution:
             return None
 
 
+def _split_name_field(line: str) -> tuple[str, list[str]]:
+    """Split a `begin columns`/`begin rows` data line into (name, remaining fields).
+
+    Issue #86: a fixed-format MPS name may legally contain a space ("DEDO3 11"), which
+    src/io/writer.cpp double-quotes - with `\\` and `"` backslash-escaped inside the quotes -
+    to keep this whitespace-delimited format decidable. Everything AFTER the name (value,
+    reduced cost, basis status) is never quoted and never contains whitespace itself, so only
+    the leading name field needs quote-aware handling; the rest is plain line.split().
+    """
+    if not line.startswith('"'):
+        fields = line.split()
+        return fields[0], fields[1:]
+    chars: list[str] = []
+    i = 1
+    while i < len(line):
+        c = line[i]
+        if c == "\\" and i + 1 < len(line):
+            chars.append(line[i + 1])
+            i += 2
+            continue
+        if c == '"':
+            i += 1
+            break
+        chars.append(c)
+        i += 1
+    return "".join(chars), line[i:].split()
+
+
 def parse_sol(path: Path) -> Solution:
     solution = Solution()
     block = ""
@@ -379,22 +407,25 @@ def parse_sol(path: Path) -> Solution:
             line = raw.strip()
             if not line or line.startswith("#"):
                 continue
+            if block and line.split(maxsplit=1)[0] == "end":
+                block = ""
+                continue
+            if block in ("columns", "rows"):
+                name, rest = _split_name_field(line)
+                if block == "columns" and len(rest) >= 2:
+                    solution.col_value[name] = float(rest[0])
+                    solution.col_dual[name] = float(rest[1])
+                    solution.col_status[name] = rest[2] if len(rest) > 2 else "unknown"
+                elif block == "rows" and len(rest) >= 2:
+                    solution.row_activity[name] = float(rest[0])
+                    solution.row_dual[name] = float(rest[1])
+                    solution.row_status[name] = rest[2] if len(rest) > 2 else "unknown"
+                continue
             fields = line.split()
             if fields[0] == "begin":
                 block = fields[1]
                 continue
-            if fields[0] == "end":
-                block = ""
-                continue
-            if block == "columns" and len(fields) >= 3:
-                solution.col_value[fields[0]] = float(fields[1])
-                solution.col_dual[fields[0]] = float(fields[2])
-                solution.col_status[fields[0]] = fields[3] if len(fields) > 3 else "unknown"
-            elif block == "rows" and len(fields) >= 3:
-                solution.row_activity[fields[0]] = float(fields[1])
-                solution.row_dual[fields[0]] = float(fields[2])
-                solution.row_status[fields[0]] = fields[3] if len(fields) > 3 else "unknown"
-            elif not block and len(fields) >= 2:
+            if len(fields) >= 2:
                 solution.header[fields[0]] = " ".join(fields[1:])
     return solution
 
