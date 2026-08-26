@@ -355,6 +355,29 @@ TEST(SolveStatusGuard, TheSimplexIsUnaffected) {
   EXPECT_NEAR(solution.objective, 214.14594594594595, 1e-9);
 }
 
+TEST(SolveStatusGuard, TheMilpPathIsReconciledWithoutFalsePositives) {
+  // Branch and bound goes through the same gate, but with the dual test DISABLED. An
+  // incumbent comes from a node LP whose bounds were tightened by branching, so its reduced
+  // costs are dual feasible for that node and generally are not for the original model.
+  // Optimality of a MILP is proved by the bound closing against the incumbent, not by the
+  // last LP's reduced costs, so applying the dual test here would reject correct answers.
+  //
+  // Integrality replaces it: an engine reporting optimal while holding a fractional integer
+  // column has reported the relaxation, which is the failure CLAUDE.md singles out.
+  Model model = make_blend_lp();
+  model.col_type[0] = VarType::kInteger;
+
+  Options options;
+  options.set_bool("log_to_console", false);
+  const Solution solution = solve(model, options);
+
+  ASSERT_EQ(solution.status, SolveStatus::kOptimal) << solution.message;
+  EXPECT_LE(solution.integrality_violation, options.get_double("integrality_tolerance"));
+  EXPECT_LE(solution.primal_infeasibility, options.get_double("primal_feasibility_tolerance"));
+  // The integer column really is integral, so the claim is not vacuous.
+  EXPECT_NEAR(solution.col_value[0], std::round(solution.col_value[0]), 1e-6);
+}
+
 TEST(SolveStatusGuard, ANonClaimingStatusIsLeftAlone) {
   // kIterationLimit makes no assertion about optimality, so the guard has no business
   // rewriting it - the caller needs to know the run was cut short, not that it was

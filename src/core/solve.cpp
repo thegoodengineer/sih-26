@@ -68,14 +68,22 @@ const char* class_name(ProblemClass c) {
 /// whose evidence is on the same object and disagrees.
 ///
 /// Statuses that make no claim about the point are left alone.
+///
+/// `check_dual` is false for a MILP. A branch-and-bound incumbent is produced by a NODE LP
+/// whose bounds were tightened by branching, so its reduced costs are dual feasible for that
+/// node and generally are not for the original model. Optimality of a MILP is proved by the
+/// bound closing against the incumbent, not by the reduced costs of the last LP solved, so
+/// applying the dual test there would reject correct answers. Integrality is checked instead:
+/// it is the condition that actually distinguishes a MILP solution from its relaxation.
 void reconcile_status_with_measurement(Solution* solution, const Options& options,
-                                       Logger& logger) {
+                                       Logger& logger, bool check_dual) {
   const bool claims_a_point =
       solution->status == SolveStatus::kOptimal || solution->status == SolveStatus::kFeasible;
   if (!claims_a_point) return;
 
   const double primal_tolerance = options.get_double("primal_feasibility_tolerance");
   const double dual_tolerance = options.get_double("dual_feasibility_tolerance");
+  const double integrality_tolerance = options.get_double("integrality_tolerance");
 
   // A point that violates its own constraints is not feasible, so neither kOptimal nor
   // kFeasible is available. The engine stopped believing it had converged, so this is a
@@ -91,9 +99,23 @@ void reconcile_status_with_measurement(Solution* solution, const Options& option
     return;
   }
 
+  // Integrality, for the same reason and with the same force. A branch-and-bound run that
+  // reports optimal while holding a fractional integer variable has reported the relaxation,
+  // which CLAUDE.md names as the single most damaging thing this dispatcher could do.
+  if (solution->integrality_violation > integrality_tolerance) {
+    const std::string detail = fmt::format(
+        "engine reported {} but an integer column is fractional by {:.3e}, above the {:.1e} "
+        "tolerance; this is a relaxation, not an integer solution",
+        to_string(solution->status), solution->integrality_violation, integrality_tolerance);
+    solution->status = SolveStatus::kNumericalError;
+    solution->message = solution->message.empty() ? detail : solution->message + "; " + detail;
+    logger.warning("{}", detail);
+    return;
+  }
+
   // Primal feasible but dual infeasible: the point is usable, the optimality claim is not
   // supported. kFeasible says exactly that and already exists for the purpose.
-  if (solution->status == SolveStatus::kOptimal &&
+  if (check_dual && solution->status == SolveStatus::kOptimal &&
       solution->dual_infeasibility > dual_tolerance) {
     const std::string detail = fmt::format(
         "engine reported optimal but the reduced costs violate dual feasibility by {:.3e}, "
@@ -157,7 +179,7 @@ Solution solve(const Model& model, const Options& options) {
 
     solution = want_pdhg ? pdhg::solve_pdhg(model, options, logger)
                          : solve_primal_simplex(model, options, logger);
-    reconcile_status_with_measurement(&solution, options, logger);
+    reconcile_status_with_measurement(&solution, options, logger, /*check_dual=*/true);
     logger.info("Result: {}  objective {:.10g}  {} iterations  {:.3f}s",
                 to_string(solution.status), solution.objective, solution.iterations,
                 solution.solve_seconds);
@@ -168,6 +190,7 @@ Solution solve(const Model& model, const Options& options) {
 
   if (problem_class == ProblemClass::kMilp) {
     solution = mip::solve_branch_and_bound(model, options, logger);
+    reconcile_status_with_measurement(&solution, options, logger, /*check_dual=*/false);
     logger.info("Result: {}  objective {:.10g}  bound {:.10g}  {} nodes  {:.3f}s",
                 to_string(solution.status), solution.objective, solution.dual_bound,
                 solution.nodes, solution.solve_seconds);
