@@ -105,8 +105,52 @@ class Model:
         return j
 
 
+# Byte offsets and widths of the six fixed-format fields, per the IBM specification.
+# Columns are quoted 1-based in the spec: 2-3, 5-12, 15-22, 25-36, 40-47, 50-61. Matched by
+# behaviour against src/io/mps_reader.cpp's kFixedFields, not by sharing code with it - an
+# independent verifier that read the spec the same wrong way as the solver would confirm a
+# bug instead of catching it.
+FIXED_FIELDS = [(1, 2), (4, 8), (14, 8), (24, 12), (39, 8), (49, 12)]
+
+
+def _tokenize(line: str, fixed: bool) -> list[str]:
+    """Split one data line into fields.
+
+    Section headers (NAME, ROWS, COLUMNS, ...) are never field-formatted in either dialect -
+    they start in column 1 and are read as plain words by the caller before this is reached.
+    This only ever sees an indented data line, so `fixed` alone decides the tokenisation."""
+    if not fixed:
+        return line.split()
+    tokens: list[str] = []
+    for offset, width in FIXED_FIELDS:
+        if offset >= len(line):
+            break
+        field = line[offset:offset + width].strip()
+        if field:
+            tokens.append(field)
+    return tokens
+
+
 def parse_mps(path: Path) -> Model:
-    """Read an MPS file per the IBM specification. Free-format tokenisation."""
+    """Read an MPS file per the IBM specification.
+
+    Tries free-format tokenisation first, since that is what almost every instance in the
+    wild is. Free-format breaks on a name containing a space - "DEDO3 11" tokenises as two
+    fields, "DEDO3" and "11", shifting every field after it left by one - so on failure this
+    retries the whole file in fixed columns. If the fixed retry also fails, the free-format
+    error is the one raised: it is almost always the more informative one for a file that is
+    genuinely malformed rather than fixed-format.
+    """
+    try:
+        return _parse_mps(path, fixed=False)
+    except ValueError as free_error:
+        try:
+            return _parse_mps(path, fixed=True)
+        except ValueError:
+            raise free_error from None
+
+
+def _parse_mps(path: Path, fixed: bool) -> Model:
     model = Model()
     section = ""
     objective_row = None
@@ -140,7 +184,7 @@ def parse_mps(path: Path) -> Model:
                     raise ValueError(f"{path}:{lineno}: unknown section {head[0]}")
                 continue
 
-            fields = line.split()
+            fields = _tokenize(line, fixed)
             if not fields:
                 continue
 
@@ -149,6 +193,15 @@ def parse_mps(path: Path) -> Model:
                 continue
 
             if section == "ROWS":
+                # Exactly two fields, never more. A fixed-format row named "DEDO3 1R"
+                # free-tokenises to three fields; being lenient and taking the first two
+                # would silently create a row called "DEDO3" instead of raising here and
+                # letting parse_mps() retry the whole file in fixed columns. Matches the
+                # equivalent strictness in src/io/mps_reader.cpp's do_rows().
+                if len(fields) != 2:
+                    raise ValueError(
+                        f"{path}:{lineno}: ROWS entry has {len(fields)} fields, "
+                        f"expected exactly 2 (type and name)")
                 kind = fields[0].upper()
                 name = fields[1]
                 if kind == "N":
