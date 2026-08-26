@@ -7,7 +7,7 @@
 #include <cmath>
 #include <random>
 
-namespace sankhya::pdhg {
+namespace sankhya {
 namespace {
 
 /// Multiply the accumulated scaling by a new pass and rebuild the scaled matrix.
@@ -193,4 +193,4 @@ double estimate_spectral_norm(const SparseMatrix& matrix, int iterations, unsign
   return norm > 0.0 ? norm * 1.01 : 1.0;
 }
 
-}  // namespace sankhya::pdhg
+}  // namespace sankhya

@@ -52,6 +52,7 @@
 #include "sankhya/tolerances.hpp"
 
 #include "../la/lu.hpp"
+#include "../la/scaling.hpp"
 
 namespace sankhya {
 namespace {
@@ -759,9 +760,108 @@ Solution PrimalSimplex::run() {
 
 }  // namespace
 
+/// Number of Ruiz equilibration passes. Ruiz proves geometric convergence of the row and
+/// column infinity norms toward 1, so a handful of passes captures nearly all of the
+/// available improvement; PDLP section 4.1 uses ten and reports the tail as negligible.
+constexpr int kRuizIterations = 10;
+
 Solution solve_primal_simplex(const Model& model, const Options& options, Logger& logger) {
-  PrimalSimplex simplex(model, options, logger);
-  return simplex.run();
+  // WHY THE SIMPLEX IS SCALED. It was assumed for a long time that it need not be - a
+  // simplex pivots on ratios, so a uniform rescaling of a row cancels. That reasoning is
+  // correct about the ALGEBRA and wrong about the ARITHMETIC, and the Netlib medium tier
+  // said so: 18 of its 24 failures were the identical message "basis became singular", on
+  // the known badly scaled corner of the set (fit1d, fit2d, israel, pilot4, e226, ...).
+  // fit1d failed after 23 iterations, far too early for accumulated drift. The bases were
+  // ill-conditioned from the start because the model was.
+  //
+  // Markowitz threshold pivoting (issue #22) helped, but it only chooses among the pivots
+  // available; scaling changes which pivots exist at all. See issue #49.
+  if (!options.get_bool("scaling")) {
+    PrimalSimplex simplex(model, options, logger);
+    return simplex.run();
+  }
+
+  // Cost is passed in the ORIGINAL sense, not minimise space. build_scaling only multiplies
+  // it by the column multipliers, and the multipliers themselves come from matrix norms, so
+  // the sense never enters; folding it in here would mean unfolding it again below.
+  const Scaling scaling = build_scaling(model, model.col_cost, kRuizIterations);
+
+  Model scaled = model;
+  scaled.matrix = scaling.matrix;
+  scaled.col_cost = scaling.cost;
+  scaled.col_lower = scaling.col_lower;
+  scaled.col_upper = scaling.col_upper;
+  scaled.row_lower = scaling.row_lower;
+  scaled.row_upper = scaling.row_upper;
+  // sense, objective_offset, col_type and the names are carried unchanged: a diagonal change
+  // of variable leaves the objective VALUE alone, so no offset correction is needed.
+
+  logger.debug("Scaling: entries {:.3e} to {:.3e} after {} Ruiz passes and one Pock-Chambolle",
+               scaling.min_abs, scaling.max_abs, kRuizIterations);
+
+  PrimalSimplex simplex(scaled, options, logger);
+  Solution solution = simplex.run();
+
+  // UNSCALE, AND UNSCALE EVERYTHING. A diagonal change of variable that is undone for the
+  // primal point but not for the duals produces a point that is feasible, an objective that
+  // is right, and reduced costs that are silently wrong - which passes every check the
+  // solver makes about itself and fails only against an independent verifier. The mapping is
+  // stated in src/la/scaling.hpp and derived there:
+  //
+  //     x = Dc xhat        y = Dr yhat        d = Dc^-1 dhat
+  const Index n = model.num_cols();
+  const Index m = model.num_rows();
+  for (Index j = 0; j < n; ++j) {
+    const auto u = static_cast<std::size_t>(j);
+    const double dc = scaling.column[u];
+    if (u < solution.col_value.size()) solution.col_value[u] *= dc;
+    if (u < solution.col_dual.size()) solution.col_dual[u] /= dc;
+  }
+  for (Index i = 0; i < m; ++i) {
+    const auto u = static_cast<std::size_t>(i);
+    if (u < solution.row_dual.size()) solution.row_dual[u] *= scaling.row[u];
+  }
+
+  // Re-measure against the ORIGINAL model. This is the second half of the correctness
+  // argument and it is not optional: tolerances in tolerances.hpp are ABSOLUTE and stated in
+  // the original problem's units, so a point judged feasible in scaled space says nothing
+  // about the answer we return. recompute_quality rebuilds the row activities from the
+  // original matrix and recomputes the objective, so everything reported below is measured
+  // where the caller lives.
+  solution.recompute_quality(model);
+
+  // FALL BACK WHEN SCALING DOES NOT PAY. Equilibration is a heuristic: it rescues models the
+  // unscaled simplex cannot factorize at all, and on a handful of models it costs more
+  // accuracy than it buys. Measured on the Netlib medium tier, scaling alone took 26/50 to
+  // 35/50 but broke two instances that had been passing - degen2 stalled under Bland's rule
+  // and scsd6 went singular - and degraded the round-trip on our own ill_conditioned case
+  // study from 5e-20 to 1.2e-07, just over the tolerance.
+  //
+  // Rather than pick one path and lose the other's wins, take the union: if the scaled solve
+  // did not produce a point that is feasible IN ORIGINAL UNITS, solve again unscaled and
+  // keep that instead. The second solve costs nothing on the models where scaling already
+  // worked, because it never runs.
+  const double primal_tolerance = options.get_double("primal_feasibility_tolerance");
+  const bool usable =
+      (solution.status == SolveStatus::kOptimal || solution.status == SolveStatus::kFeasible) &&
+      solution.primal_infeasibility <= primal_tolerance;
+  if (usable) return solution;
+
+  logger.info("Scaled solve returned {} (primal infeasibility {:.3e}); retrying unscaled",
+              to_string(solution.status), solution.primal_infeasibility);
+  PrimalSimplex unscaled_simplex(model, options, logger);
+  Solution unscaled = unscaled_simplex.run();
+  const bool unscaled_usable =
+      (unscaled.status == SolveStatus::kOptimal || unscaled.status == SolveStatus::kFeasible) &&
+      unscaled.primal_infeasibility <= primal_tolerance;
+  if (unscaled_usable) {
+    logger.info("Unscaled solve succeeded where the scaled one did not");
+    return unscaled;
+  }
+
+  // Neither worked. Report the one that came closer to feasibility, so the message the user
+  // sees describes the better of the two attempts rather than whichever ran last.
+  return unscaled.primal_infeasibility < solution.primal_infeasibility ? unscaled : solution;
 }
 
 }  // namespace sankhya

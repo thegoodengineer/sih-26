@@ -184,11 +184,11 @@ set(SANKHYA_CORE_SOURCES
   src/io/mps_reader.cpp
   src/io/writer.cpp
   src/la/lu.cpp
+  src/la/scaling.cpp
   src/la/sparse.cpp
   src/simplex/dense_lu.cpp
   src/mip/branch_and_bound.cpp
   src/pdhg/pdhg.cpp
-  src/pdhg/scaling.cpp
   src/simplex/primal_simplex.cpp
   src/util/logging.cpp
   src/util/options.cpp
