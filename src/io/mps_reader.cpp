@@ -526,16 +526,27 @@ bool MpsParser::do_bounds(std::string* error) {
     // The trap. An UP bound with a negative value on a column whose lower bound is still
     // the implicit 0 means the modeller intends a negative variable, so the lower bound
     // becomes -inf. Without this, [0, -5] is an empty interval and the model reads as
-    // infeasible. The convention applies to continuous columns; for an integer column the
-    // established readers disagree with each other, so we keep the lower bound at 0 and
-    // say so rather than picking a side silently.
+    // infeasible.
+    //
+    // The convention is documented for continuous columns and is implementation-defined for
+    // integer ones, where established readers disagree. This reader previously declined to
+    // choose and left the lower bound at 0 for an integer column - which produced [0, -5],
+    // an empty interval, so Model::validate() rejected the model and the file could not be
+    // loaded AT ALL. Declining to guess produced a worse outcome than either guess, and the
+    // resulting error named crossed bounds, which is the symptom rather than the cause.
+    //
+    // The convention is now applied to integer columns too, with the warning kept so the
+    // ambiguity is still visible in the log. That also removes a real inconsistency:
+    // tools/verify_solution.py already reads the file this way, so the independent checker
+    // and the C++ reader were interpreting the same bytes differently - exactly the class of
+    // disagreement that verifier exists to detect, sitting inside the pair by construction.
     if (value < 0.0 && col_lower_explicit_[u] == 0) {
-      if (col_type_[u] == VarType::kContinuous) {
-        col_lower_[u] = -kInfinity;
-      } else {
+      col_lower_[u] = -kInfinity;
+      if (col_type_[u] == VarType::kInteger) {
         default_logger().warning(
-            "UP bound {} on integer column '{}' with lower bound 0: keeping the lower bound "
-            "at 0 (readers disagree on this case)",
+            "UP bound {} on integer column '{}' with no explicit lower bound: applying the "
+            "negative-upper convention and setting the lower bound to -inf (readers disagree "
+            "on this case for integer columns)",
             value, col_names_[u]);
       }
     }

@@ -260,6 +260,42 @@ TEST(MpsBounds, UpWithANegativeValueAfterAnExplicitLowerBoundLeavesItAlone) {
   EXPECT_DOUBLE_EQ(model.col_upper[static_cast<std::size_t>(x)], -5.0);
 }
 
+TEST(MpsBounds, UpWithANegativeValueAppliesToIntegerColumnsToo) {
+  // The convention is documented for continuous columns and implementation-defined for
+  // integer ones. This reader used to decline to choose and leave the lower bound at 0,
+  // which produced [0, -5] - an empty interval - so validate() rejected the model and the
+  // file could not be loaded at all. Declining to guess was worse than either guess.
+  //
+  // It also put the reader at odds with tools/verify_solution.py, which already applies the
+  // convention. Two components disagreeing about what the same bytes mean is precisely what
+  // that verifier exists to catch, so having the disagreement built into the pair made the
+  // check weaker against every instance carrying such a bound.
+  const Model model = parse_or_fail(
+      "NAME          INTUP\n"
+      "ROWS\n"
+      " N  COST\n"
+      " L  R1\n"
+      "COLUMNS\n"
+      "    MARKER                 'MARKER'                 'INTORG'\n"
+      "    X         COST         1.0   R1           1.0\n"
+      "    MARKER                 'MARKER'                 'INTEND'\n"
+      "RHS\n"
+      "    RHS       R1          10.0\n"
+      "BOUNDS\n"
+      " UP BND       X           -5.0\n"
+      "ENDATA\n");
+
+  const Index x = col_of(model, "X");
+  ASSERT_GE(x, 0);
+  const auto u = static_cast<std::size_t>(x);
+  EXPECT_EQ(model.col_type[u], VarType::kInteger);
+  EXPECT_TRUE(is_infinite(model.col_lower[u]));
+  EXPECT_LT(model.col_lower[u], 0.0);
+  EXPECT_DOUBLE_EQ(model.col_upper[u], -5.0);
+  // The whole point: the model is now loadable. It used to fail validation on [0, -5].
+  EXPECT_EQ(model.validate(), "");
+}
+
 TEST(MpsBounds, LoSetsTheLowerBound) {
   const Model model = bounded_column(" LO BND       X            2.5\n");
   const Index x = col_of(model, "X");
