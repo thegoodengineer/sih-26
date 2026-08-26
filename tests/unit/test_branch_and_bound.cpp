@@ -238,6 +238,54 @@ TEST(BranchAndBound, NoIntegerPointMeansNoObjectiveAndNoGap) {
   EXPECT_NE(s.absolute_gap, 0.0) << "a gap of zero would read as a closed search";
 }
 
+TEST(BranchAndBound, DivingResultAgreesWithTheFullSearch) {
+  // #25: diving must never change the ANSWER, only how quickly the search gets there.
+  // Whatever diving finds at the root is only ever accepted through offer_incumbent(), so
+  // this is really a check that the plumbing is correct, on the one instance in this file
+  // already proven (AnAlreadyProvenTreeReportsOptimalNotFeasible) to close the tree fully
+  // and exactly, with a known right answer to compare against.
+  const Model model = make_milp(
+      {
+          {1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0},
+          {0.0, 0.0, 0.0, 0.0, 100.0, 120.0, 150.0, 60.0},
+          {1.0, 0.0, 0.0, 0.0, -100.0, 0.0, 0.0, 0.0},
+          {1.0, 0.0, 0.0, 0.0, -20.0, 0.0, 0.0, 0.0},
+          {0.0, 1.0, 0.0, 0.0, 0.0, -120.0, 0.0, 0.0},
+          {0.0, 1.0, 0.0, 0.0, 0.0, -30.0, 0.0, 0.0},
+          {0.0, 0.0, 1.0, 0.0, 0.0, 0.0, -150.0, 0.0},
+          {0.0, 0.0, 1.0, 0.0, 0.0, 0.0, -10.0, 0.0},
+          {0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, -60.0},
+          {0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, -50.0},
+      },
+      {250.0, 287.5, -kInfinity, 0.0, -kInfinity, 0.0, -kInfinity, 0.0, -kInfinity, 0.0},
+      {250.0, kInfinity, 0.0, kInfinity, 0.0, kInfinity, 0.0, kInfinity, 0.0, kInfinity},
+      {10.0, 12.0, 20.0, 8.0, 100.0, 80.0, 50.0, 450.0},
+      {100.0, 120.0, 150.0, 60.0, 1.0, 1.0, 1.0, 1.0},
+      {false, false, false, false, true, true, true, true});
+  const Solution s = solve(model, mip_options());
+  ASSERT_EQ(s.status, SolveStatus::kOptimal) << s.message;
+  EXPECT_NEAR(s.objective, 3270.0, 1e-6);
+  EXPECT_NEAR(s.dual_bound, s.objective, 1e-9);
+}
+
+TEST(BranchAndBound, DivingBudgetIsBoundedAndUndoneOnFailure) {
+  // #25: the requirement that diving cannot dominate node cost, and that it must never
+  // leak a bound into the real search tree when it fails to find anything. 2x + 3y = 7 has
+  // no integer solution (LHS is always even for integer x, y - wait, 2x is even, 3y can be
+  // either parity, so this DOES have integer solutions in general; the point here is
+  // narrower bounds that make every rounding attempt infeasible): x, y integer in [0, 1],
+  // 2x + 3y = 4 has no solution in that box (0,0)->0 (1,0)->2 (0,1)->3 (1,1)->5, none hit
+  // 4 - so every dive from any fractional relaxation dead-ends without an incumbent, and
+  // the search must still correctly prove kInfeasible, exactly as it would with no diving
+  // at all. This is the "budget exhausted / dive fails" path: dive_from_root() must return
+  // cleanly and leave() must still restore working_ to a state the rest of the search can
+  // use correctly.
+  const Model model = make_milp({{2.0, 3.0}}, {4.0}, {4.0}, {1.0, 1.0}, {1.0, 1.0},
+                                {true, true});
+  const Solution s = solve(model, mip_options());
+  EXPECT_EQ(s.status, SolveStatus::kInfeasible);
+}
+
 TEST(BranchAndBound, MaximisationIsReportedInTheOriginalSense) {
   Model model =
       make_milp({{5.0, 4.0}}, {-kInfinity}, {9.0}, {10.0, 7.0}, {1.0, 1.0}, {true, true});

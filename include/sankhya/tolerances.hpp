@@ -30,6 +30,22 @@ inline constexpr double kMipRelativeGap = 1e-4;
 /// MIP termination: stop when (incumbent - dual bound) falls below this in absolute terms.
 inline constexpr double kMipAbsoluteGap = 1e-6;
 
+/// Diving heuristic (root node only): maximum integer columns fixed in one dive before it
+/// gives up. Bounds the heuristic's own cost independently of instance size - Achterberg,
+/// "Constraint Integer Programming" (thesis, 2007), ch. 6, notes a dive's payoff is
+/// concentrated in its first handful of fixes, so capping it well short of the full integer
+/// column count keeps a dive on a large MILP from itself becoming the expensive part of
+/// solving the root node.
+inline constexpr int kDivingMaxDepth = 50;
+
+/// Diving heuristic (root node only): maximum LP re-solves in one dive. In this
+/// implementation every fixed column costs exactly one re-solve, so this moves together
+/// with kDivingMaxDepth today - kept as its own constant because the two bound different
+/// things (how much of the box the dive may fix vs. how much simplex work it may spend
+/// doing so), and a future dive that backtracks or retries would resolve LPs without fixing
+/// a new column.
+inline constexpr int kDivingMaxLpResolves = 50;
+
 /// LP optimality check used by the independent verifier: primal objective must equal dual
 /// objective to this relative accuracy. Tighter than feasibility on purpose - a converged
 /// simplex basis should reproduce strong duality far better than it satisfies bounds.
