@@ -55,6 +55,37 @@ namespace {
   return v > 0.0 ? "inf" : "-inf";
 }
 
+/// Quote a name for the whitespace-delimited record format, if it needs it.
+///
+/// WHY THIS EXISTS. The columns and rows sections write `name value dual status` separated by
+/// spaces. Fixed-format MPS permits names that CONTAIN spaces - Netlib's `forplan` has
+/// columns called `DEDO3 11` and rows called `AZ 100` - and writing one of those bare makes
+/// the record structurally ambiguous: nothing in `DEDO3 11 0 0.0246 at_lower` says whether
+/// the name is one field or two. That is not a reader bug to work around, it is an output
+/// format with an undecidable case, and tools/verify_solution.py consumes this file without
+/// linking any of our code (CLAUDE.md, "Frozen interfaces"), so both sides have to agree on
+/// something actually parseable.
+///
+/// Quoting was chosen over fixed-width fields because it keeps the file readable by eye,
+/// which is most of the point of this format, and it costs nothing on the overwhelmingly
+/// common case: a name with no whitespace is written exactly as before, so every existing
+/// .sol file is still byte-identical.
+[[nodiscard]] std::string quoted_name(const std::string& name) {
+  const bool needs_quotes =
+      name.empty() || name.find_first_of(" \t\r\n\"\\") != std::string::npos;
+  if (!needs_quotes) return name;
+
+  std::string out;
+  out.reserve(name.size() + 2);
+  out.push_back('"');
+  for (const char c : name) {
+    if (c == '"' || c == '\\') out.push_back('\\');
+    out.push_back(c);
+  }
+  out.push_back('"');
+  return out;
+}
+
 [[nodiscard]] std::string column_name(const Model& model, Index j) {
   const auto u = static_cast<std::size_t>(j);
   if (u < model.col_names.size() && !model.col_names[u].empty()) return model.col_names[u];
@@ -115,7 +146,7 @@ bool write_solution(const std::string& path, const Model& model, const Solution&
   fmt::print(out, "\n# name value reduced_cost basis_status\n");
   fmt::print(out, "begin columns {}\n", n);
   for (Index j = 0; j < n; ++j) {
-    fmt::print(out, "{} {} {} {}\n", column_name(model, j),
+    fmt::print(out, "{} {} {} {}\n", quoted_name(column_name(model, j)),
                exact(value_or(solution.col_value, j)), exact(value_or(solution.col_dual, j)),
                status_or(solution.col_status, j));
   }
@@ -124,7 +155,7 @@ bool write_solution(const std::string& path, const Model& model, const Solution&
   fmt::print(out, "\n# name activity dual basis_status\n");
   fmt::print(out, "begin rows {}\n", m);
   for (Index i = 0; i < m; ++i) {
-    fmt::print(out, "{} {} {} {}\n", row_name(model, i),
+    fmt::print(out, "{} {} {} {}\n", quoted_name(row_name(model, i)),
                exact(value_or(solution.row_activity, i)), exact(value_or(solution.row_dual, i)),
                status_or(solution.row_status, i));
   }

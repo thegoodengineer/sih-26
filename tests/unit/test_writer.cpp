@@ -272,6 +272,105 @@ TEST(SolutionWriter, ReportsAnUnwritablePath) {
 }
 
 // =========================================================================================
+// Names containing whitespace (issue #86)
+// =========================================================================================
+
+/// Split a record the way tools/verify_solution.py does: an optionally quoted leading name,
+/// then whitespace-delimited fields. Written here rather than shared with the writer on
+/// purpose - a round-trip test that uses the writer to parse proves only self-consistency.
+[[nodiscard]] std::vector<std::string> split_record(const std::string& line) {
+  std::vector<std::string> fields;
+  std::size_t i = 0;
+  if (!line.empty() && line[0] == '"') {
+    std::string name;
+    ++i;
+    while (i < line.size()) {
+      if (line[i] == '\\' && i + 1 < line.size()) {
+        name.push_back(line[i + 1]);
+        i += 2;
+        continue;
+      }
+      if (line[i] == '"') {
+        ++i;
+        break;
+      }
+      name.push_back(line[i]);
+      ++i;
+    }
+    fields.push_back(name);
+  }
+  std::istringstream rest(line.substr(i));
+  std::string token;
+  while (rest >> token) fields.push_back(token);
+  return fields;
+}
+
+/// The record for `name` from one section, unparsed.
+[[nodiscard]] std::string record_for(const std::string& text, const std::string& section,
+                                     const std::string& needle) {
+  std::istringstream stream(text);
+  std::string line;
+  bool inside = false;
+  while (std::getline(stream, line)) {
+    if (line.rfind("begin " + section, 0) == 0) {
+      inside = true;
+      continue;
+    }
+    if (line.rfind("end " + section, 0) == 0) break;
+    if (inside && line.find(needle) != std::string::npos) return line;
+  }
+  return {};
+}
+
+TEST(SolutionWriter, NamesContainingWhitespaceAreQuotedAndRecoverExactly) {
+  // Fixed-format MPS permits names with spaces - Netlib forplan has a column `DEDO3 11`
+  // and a row `AZ 100`. Written bare into a whitespace-delimited record, nothing says
+  // whether the name is one field or two, and the file becomes undecidable for ANY reader,
+  // including the independent verifier the whole evidence story rests on.
+  Model model = make_model();
+  model.col_names = {"AL PRIME", "BN", "MU"};
+  model.row_names = {"THRUPUT 1", "DIESEL", "SULPHUR"};
+  const Solution solution = solve_it(model);
+  ASSERT_EQ(solution.status, SolveStatus::kOptimal) << solution.message;
+
+  const TempFile file("", ".sol");
+  std::string error;
+  ASSERT_TRUE(io::write_solution(file.path(), model, solution, &error)) << error;
+  const std::string text = slurp(file.path());
+
+  const std::string column = record_for(text, "columns", "AL PRIME");
+  ASSERT_FALSE(column.empty()) << text;
+  const std::vector<std::string> column_fields = split_record(column);
+  ASSERT_EQ(column_fields.size(), 4u) << column;
+  EXPECT_EQ(column_fields[0], "AL PRIME") << column;
+  EXPECT_DOUBLE_EQ(std::strtod(column_fields[1].c_str(), nullptr), solution.col_value[0]);
+
+  const std::string row = record_for(text, "rows", "THRUPUT 1");
+  ASSERT_FALSE(row.empty()) << text;
+  const std::vector<std::string> row_fields = split_record(row);
+  ASSERT_EQ(row_fields.size(), 4u) << row;
+  EXPECT_EQ(row_fields[0], "THRUPUT 1") << row;
+  EXPECT_DOUBLE_EQ(std::strtod(row_fields[1].c_str(), nullptr), solution.row_activity[0]);
+}
+
+TEST(SolutionWriter, OrdinaryNamesAreNotQuoted) {
+  // No gratuitous format churn: every .sol file written before #86 must still be written
+  // byte for byte the same way, or the change breaks readers to fix one instance.
+  const Model model = make_model();
+  const Solution solution = solve_it(model);
+  const TempFile file("", ".sol");
+  std::string error;
+  ASSERT_TRUE(io::write_solution(file.path(), model, solution, &error)) << error;
+  const std::string text = slurp(file.path());
+
+  const std::string column = record_for(text, "columns", "AL");
+  ASSERT_FALSE(column.empty());
+  EXPECT_EQ(column.find('"'), std::string::npos)
+      << "a name with no whitespace must be written bare: " << column;
+  EXPECT_EQ(split_record(column)[0], "AL");
+}
+
+// =========================================================================================
 // The JSON blob. Key names are consumed by bench/runners/*.py.
 // =========================================================================================
 

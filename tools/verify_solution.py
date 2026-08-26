@@ -371,6 +371,44 @@ class Solution:
             return None
 
 
+QUOTE_CHAR = '"'
+BACKSLASH_CHAR = '\\'
+
+
+def split_record(line: str) -> list[str]:
+    """Split a .sol record, honouring a quoted leading name.
+
+    src/io/writer.cpp quotes any name containing whitespace, because fixed-format MPS permits
+    them - Netlib's forplan has a column called `DEDO3 11` - and a bare one makes the record
+    undecidable: nothing in `DEDO3 11 0 0.0246 at_lower` says whether the name is one field
+    or two.
+
+    This parser is written from the format, not shared with the writer. That is the whole
+    point of this script: if the two disagree about what a file means, the disagreement has
+    to be able to surface, and it cannot if they run the same code.
+    """
+    if not line.startswith(QUOTE_CHAR):
+        return line.split()
+
+    name = []
+    i = 1
+    while i < len(line):
+        c = line[i]
+        if c == BACKSLASH_CHAR and i + 1 < len(line):
+            name.append(line[i + 1])
+            i += 2
+            continue
+        if c == QUOTE_CHAR:
+            i += 1
+            break
+        name.append(c)
+        i += 1
+    else:
+        # No closing quote. Fall back rather than silently truncating the record.
+        return line.split()
+    return ["".join(name)] + line[i:].split()
+
+
 def parse_sol(path: Path) -> Solution:
     solution = Solution()
     block = ""
@@ -379,7 +417,7 @@ def parse_sol(path: Path) -> Solution:
             line = raw.strip()
             if not line or line.startswith("#"):
                 continue
-            fields = line.split()
+            fields = split_record(line)
             if fields[0] == "begin":
                 block = fields[1]
                 continue
