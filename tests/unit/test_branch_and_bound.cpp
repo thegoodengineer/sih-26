@@ -219,6 +219,25 @@ TEST(BranchAndBound, AnAlreadyProvenTreeReportsOptimalNotFeasible) {
   EXPECT_NEAR(s.dual_bound, s.objective, 1e-9);
 }
 
+TEST(BranchAndBound, NoIntegerPointMeansNoObjectiveAndNoGap) {
+  // 2x = 3 with x integer has no solution. The search closes having found nothing, and what
+  // it reports about that has to say "nothing", not zero.
+  //
+  // It used to leave objective, dual_bound and BOTH GAPS at their defaults of 0. A gap of
+  // zero means CLOSED - the precise opposite of a search that closed nothing - and an
+  // objective of 0 names a value no point ever had. MIPLIB found it: enlight8, enlight_hard,
+  // timtab1 and neos-1425699 each came back with `gap 0.00e+00` printed beside a run that
+  // had proved nothing at all.
+  const Model model = make_milp({{2.0}}, {3.0}, {3.0}, {1.0}, {10.0}, {true});
+  const Solution s = solve(model, mip_options());
+  ASSERT_EQ(s.status, SolveStatus::kInfeasible) << s.message;
+  // Minimise, so the worst representable objective is +inf.
+  EXPECT_TRUE(std::isinf(s.objective) && s.objective > 0.0) << s.objective;
+  EXPECT_TRUE(std::isinf(s.absolute_gap)) << s.absolute_gap;
+  EXPECT_TRUE(std::isinf(s.relative_gap)) << s.relative_gap;
+  EXPECT_NE(s.absolute_gap, 0.0) << "a gap of zero would read as a closed search";
+}
+
 TEST(BranchAndBound, MaximisationIsReportedInTheOriginalSense) {
   Model model =
       make_milp({{5.0, 4.0}}, {-kInfinity}, {9.0}, {10.0, 7.0}, {1.0, 1.0}, {true, true});

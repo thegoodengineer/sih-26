@@ -384,6 +384,84 @@ def medium_section(path: Path | None) -> str:
     return netlib_section(path)
 
 
+def milp_section(path: Path | None) -> str:
+    """MIPLIB, where TWO questions have to be answered separately.
+
+    On an LP there is one: is the objective right. On a MILP there are two, and they come
+    apart constantly - reaching the published optimum is not the same as proving it is the
+    optimum. `flugpl` returns exactly 1201500, which IS the published value, while the search
+    stopped on a relative gap target rather than closing the bound. Reporting one number for
+    both would either discard a correct answer or launder a tolerance stop into a proof.
+    """
+    if path is None:
+        return chr(10).join([
+            "Not yet run at this commit. Reproduce with:",
+            "",
+            "```",
+            "python bench/runners/fetch_miplib.py --count 30",
+            "python bench/runners/miplib.py --time-limit 600",
+            "```",
+            "",
+        ])
+
+    rows = read_csv(path)
+    if not rows:
+        return "No MIPLIB results recorded yet." + chr(10)
+
+    matched = [r for r in rows if r.get("matched_published") == "1"]
+    proved = [r for r in rows if r.get("proved_optimal") == "1"]
+    commit = rows[0].get("git_commit", "unknown")
+    machine = rows[0].get("machine", "unknown")
+
+    out = [
+        f"Source CSV: `bench/results/{path.name}`  ",
+        f"Commit `{commit}` · machine `{machine}`",
+        "",
+        f"**{len(matched)} of {len(rows)}** instances reached the published optimum. "
+        f"**{len(proved)} of {len(rows)}** also PROVED it - closed the bound rather than "
+        f"stopping at a gap target or a limit.",
+        "",
+        "Those are different claims and are kept apart deliberately. Branch and bound here has "
+        "no cutting planes and only a rounding heuristic, so it finds good incumbents far more "
+        "often than it finishes the proof. Collapsing the two columns would hide exactly the "
+        "thing #23 is meant to improve.",
+        "",
+        "Instances are the smallest MIPLIB 2017 instances tagged easy that carry a **proven** "
+        "optimum (`=opt=` in MIPLIB's own solution file). A `=best=` value is the best anyone "
+        "has found, not a proof, and scoring against one would let a wrong answer look like a "
+        "record.",
+        "",
+        "| instance | rows | cols | int | status | our objective | published | rel. gap | "
+        "nodes | time (s) | matched | proved | verified |",
+        "|---|---:|---:|---:|---|---:|---:|---:|---:|---:|:--:|:--:|:--:|",
+    ]
+
+    def mark(value: str) -> str:
+        return "yes" if value == "1" else ("**NO**" if value in ("0", "") else "-")
+
+    for row in sorted(rows, key=lambda r: r["instance"]):
+        ours = as_float(row, "our_objective")
+        published = as_float(row, "published_objective")
+        gap = as_float(row, "relative_gap")
+        seconds = as_float(row, "wall_seconds")
+        out.append(
+            f"| `{row['instance']}` | {row.get('rows', '')} | {row.get('columns', '')} "
+            f"| {row.get('integer_columns', '')} | {row.get('status', '')} "
+            f"| {'-' if ours is None else f'{ours:.10g}'} "
+            f"| {'-' if published is None else f'{published:.10g}'} "
+            f"| {'-' if gap is None or not math.isfinite(gap) else f'{gap:.2e}'} "
+            f"| {row.get('nodes', '')} "
+            f"| {'-' if seconds is None else f'{seconds:.1f}'} "
+            f"| {mark(row.get('matched_published', ''))} "
+            f"| {mark(row.get('proved_optimal', ''))} "
+            f"| {mark(row.get('independently_verified', ''))} |")
+
+    unproved = sorted(r["instance"] for r in rows if r.get("proved_optimal") != "1")
+    out += ["", "**Not proved optimal**, named rather than dropped: "
+            + ", ".join(f"`{n}`" for n in unproved) + ".", ""]
+    return chr(10).join(out)
+
+
 def main() -> int:
     # Both tiers, separately. Reporting only one was the whole of issue #53: the small set
     # is 8/8, which reads as a solved problem, and the medium tier is the number that says
@@ -391,6 +469,7 @@ def main() -> int:
     # misleading, which CLAUDE.md's evidence rules treat as the same thing as false.
     small_csv = newest("netlib-small-*.csv")
     medium_csv = newest("netlib-medium-*.csv")
+    milp_csv = newest("miplib-*.csv")
     compare_small_csv = newest("compare-highs-small-*.csv")
     compare_medium_csv = newest("compare-highs-medium-*.csv")
     compare_csv = compare_medium_csv or compare_small_csv or newest("compare-highs-*.csv")
@@ -440,7 +519,15 @@ of Netlib.** Its pass rate is not the headline; section 1b is.
 {medium_section(medium_csv)}
 ---
 
-## 2. Correctness beyond the objective value
+## 2. MIPLIB — the mixed-integer side
+
+The LP tiers above say nothing about the branch and bound. This is the MILP evidence, and it
+is a harder library: MIPLIB instances are chosen to be difficult for mature solvers.
+
+{milp_section(milp_csv)}
+---
+
+## 3. Correctness beyond the objective value
 
 An objective that matches a published number is necessary, not sufficient — it says nothing
 about whether the reported solution is internally consistent. Two independent checks cover
@@ -458,7 +545,7 @@ that, and both run in CI:
 
 ---
 
-## 3. Comparison against an established solver
+## 4. Comparison against an established solver
 
 HiGHS is the reference. It runs as a SEPARATE PROCESS over the same MPS files; no HiGHS code
 is linked into, or read by, SANKHYA - see `docs/PROVENANCE.md`. Both sides are timed on
@@ -472,7 +559,7 @@ mature solver.
 {comparison_section(compare_csv)}
 ---
 
-## 4. What these numbers do not say
+## 5. What these numbers do not say
 
 - **Nothing here supports a claim about large models.** The medium tier is capped at
   instances Netlib publishes with a few hundred rows. PS26119 asks about "thousands to

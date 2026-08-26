@@ -603,6 +603,24 @@ Solution BranchAndBound::run() {
       solution.message = fmt::format(
           "the search closed with no integer feasible point after {} nodes", nodes_explored_);
     }
+
+    // NO POINT WAS FOUND, so there is no objective to report. Leaving these at their
+    // defaults said objective 0, bound 0, gap 0 - and a gap of zero means CLOSED, which is
+    // the exact opposite of what happened. MIPLIB found this: enlight8, enlight_hard,
+    // timtab1 and neos-1425699 all came back `node_limit` with `gap 0.00e+00` beside them.
+    //
+    // The worst representable objective is the honest stand-in for "nothing found": no
+    // feasible point means no bound on the incumbent side at all. The gaps are infinite for
+    // the same reason - unknown, not closed.
+    const double nothing_found =
+        original_.sense == ObjSense::kMaximize ? -kInfinity : kInfinity;
+    solution.objective = nothing_found;
+    // The BOUND is different, and is real information worth keeping: when a limit stopped
+    // the search, the open nodes still prove the optimum is no better than final_bound. Only
+    // a search that closed with nothing has no bound to offer either.
+    solution.dual_bound = limit_hit ? reported(final_bound) : nothing_found;
+    solution.absolute_gap = kInfinity;
+    solution.relative_gap = kInfinity;
     solution.nodes = nodes_explored_;
     solution.solve_seconds = timer_.elapsed_seconds();
     return solution;
