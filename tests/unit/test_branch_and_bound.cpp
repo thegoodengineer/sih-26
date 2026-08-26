@@ -17,6 +17,7 @@
 
 #include "sankhya/model.hpp"
 #include "sankhya/options.hpp"
+#include "sankhya/tolerances.hpp"
 
 #include "oracles/lp_generator.hpp"
 #include "oracles/rational_simplex.hpp"
@@ -135,6 +136,44 @@ TEST(BranchAndBound, ReportsFeasibleRatherThanOptimalAtTheNodeLimit) {
   }
 }
 
+TEST(BranchAndBound, StopsOnALooseRelativeGapAndReportsFeasible) {
+  // #37: mip_relative_gap was read into relative_gap_target_ and never referenced again, so
+  // setting it had zero effect on when the search stopped - it always ran to full closure.
+  //
+  // Same instance as ReportsFeasibleRatherThanOptimalAtTheNodeLimit: capacity 10 makes the
+  // root relaxation fractional, so the search genuinely has to branch and can genuinely be
+  // interrupted by a gap target rather than closing at the root by luck.
+  const Model model =
+      make_milp({{5.0, 4.0, 3.0, 2.0}}, {-kInfinity}, {10.0}, {-10.0, -7.0, -4.0, -3.0},
+                {1.0, 1.0, 1.0, 1.0}, {true, true, true, true});
+
+  // Baseline: default (tight) gaps close the tree completely and prove optimality.
+  const Solution tight = solve(model, mip_options());
+  ASSERT_EQ(tight.status, SolveStatus::kOptimal);
+
+  // A relative gap loose enough that the search should stop long before the tree closes.
+  Options options = mip_options();
+  options.set_double("mip_relative_gap", 0.5);
+  const Solution loose = solve(model, options);
+
+  EXPECT_EQ(loose.status, SolveStatus::kFeasible)
+      << "a 50% relative gap should stop the search before it proves optimality; before the "
+         "fix this always came back kOptimal regardless of the setting";
+  EXPECT_LT(loose.nodes, tight.nodes)
+      << "the gap should make the search stop with fewer nodes than closing the tree";
+
+  // The bound must remain a genuine bound: at least as good as the incumbent.
+  EXPECT_LE(loose.dual_bound, loose.objective + 1e-9);
+
+  // The assertion that pins the bug directly: the reported gap must actually be within what
+  // was requested. Before the fix this ratio would be at or near zero (the search proved
+  // optimality regardless of mip_relative_gap), which would also pass a "<= 0.5" check
+  // vacuously - the EXPECT_LT and EXPECT_EQ above are what make this test load-bearing.
+  const double gap = std::fabs(loose.objective - loose.dual_bound);
+  const double relative = gap / std::max(1.0, std::fabs(loose.objective));
+  EXPECT_LE(relative, 0.5 + 1e-9);
+}
+
 TEST(BranchAndBound, MaximisationIsReportedInTheOriginalSense) {
   Model model =
       make_milp({{5.0, 4.0}}, {-kInfinity}, {9.0}, {10.0, 7.0}, {1.0, 1.0}, {true, true});
@@ -207,9 +246,8 @@ TEST(BranchAndBound, FuzzAgainstTheExactMilpOracle) {
                                 ? "  objective " + std::to_string(exact.objective.to_double())
                                 : "") +
                            "\n  solver: " + std::string(to_string(s.status)) +
-                           (s.status == SolveStatus::kOptimal
-                                ? "  objective " + std::to_string(s.objective)
-                                : "") +
+                           "  objective " + std::to_string(s.objective) + "  bound " +
+                           std::to_string(s.dual_bound) +
                            "\n" + lp.to_text());
       }
     };
@@ -223,17 +261,47 @@ TEST(BranchAndBound, FuzzAgainstTheExactMilpOracle) {
       continue;
     }
 
-    if (s.status != SolveStatus::kOptimal) {
-      disagree("an integer optimum exists but the search did not prove one");
-      continue;
-    }
     const double expected = exact.objective.to_double();
     const double scale = std::max(1.0, std::fabs(expected));
-    if (std::fabs(s.objective - expected) > 1e-6 * scale) {
-      disagree("objectives differ by " + std::to_string(std::fabs(s.objective - expected)));
+
+    if (s.status == SolveStatus::kOptimal) {
+      if (std::fabs(s.objective - expected) > 1e-6 * scale) {
+        disagree("objectives differ by " + std::to_string(std::fabs(s.objective - expected)));
+        continue;
+      }
+      ++agreed_optimal;
       continue;
     }
-    ++agreed_optimal;
+
+    if (s.status == SolveStatus::kFeasible) {
+      // #37: a search that stops on a GAP rather than by exhausting the tree legitimately
+      // reports kFeasible even when the incumbent already IS the true optimum - only
+      // exhaustion proves that, and gap-based termination stops before exhaustion by
+      // design. That alone is not a disagreement with the oracle. A real disagreement
+      // would be: an incumbent worse than the gap tolerance allows, an incumbent BETTER
+      // than the true optimum (impossible unless something upstream is broken), or a
+      // reported bound that oversteps the true optimum (the gap check trusted that bound
+      // to decide it was done; if the bound is wrong, so was the decision).
+      //
+      // This is checkable, not assumed: the termination check compares
+      // incumbent - open_bound against the gap targets, and open_bound <= expected always
+      // holds (every open node's bound underestimates its own subtree, which
+      // underestimates the true optimum). So incumbent - expected
+      // <= incumbent - open_bound <= gap_tolerance is a real guarantee that follows from
+      // branch_and_bound.cpp's termination condition, not a coincidence of this fuzz set.
+      const double gap_tolerance = std::max(tol::kMipAbsoluteGap, tol::kMipRelativeGap * scale);
+      const bool not_better_than_optimal = s.objective >= expected - 1e-6 * scale;
+      const bool within_gap = s.objective <= expected + gap_tolerance + 1e-6 * scale;
+      const bool bound_is_valid = s.dual_bound <= expected + 1e-6 * scale;
+      if (!not_better_than_optimal || !within_gap || !bound_is_valid) {
+        disagree("kFeasible incumbent falls outside what the default gap tolerances allow");
+        continue;
+      }
+      ++agreed_optimal;
+      continue;
+    }
+
+    disagree("an integer optimum exists but the search did not prove one");
   }
 
   std::cout << "\n=== MILP fuzz against the exact oracle ===\n"
