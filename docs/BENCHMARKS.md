@@ -69,18 +69,27 @@ that, and both run in CI:
 
 ## 3. Comparison against an established solver
 
-No comparison has been run yet, so **this section states no numbers**.
+Source CSV: `bench/results/compare-highs-30d7c6c.csv`  
+Commit `30d7c6c` · machine `Windows-AMD64`
 
-`bench/runners/compare.py` is written and ready; it needs a HiGHS binary on the
-machine, which is invoked purely as an external subprocess and is never linked
-into SANKHYA (see the red line in `CLAUDE.md`).
+**8 of 8** instances where the two solvers agree on the objective.
 
-```bash
-apt-get install highs      # or conda install -c conda-forge highs
-python bench/runners/compare.py --time-limit 60
-```
+| instance | SANKHYA obj | HiGHS obj | agree | SANKHYA (s) | HiGHS (s) | ratio |
+|---|---:|---:|:--:|---:|---:|---:|
+| `adlittle` | 2.25494963e+05 | 2.25494963e+05 | yes | 0.033 | 0.115 | 0.29x |
+| `afiro` | -4.64753143e+02 | -4.64753143e+02 | yes | 0.068 | 0.044 | 1.53x |
+| `blend` | -3.08121498e+01 | -3.08121498e+01 | yes | 0.069 | 0.058 | 1.20x |
+| `sc105` | -5.22020612e+01 | -5.22020612e+01 | yes | 0.151 | 0.142 | 1.06x |
+| `sc50a` | -6.45750771e+01 | -6.45750771e+01 | yes | 0.089 | 0.138 | 0.65x |
+| `sc50b` | -7.00000000e+01 | -7.00000000e+01 | yes | 0.082 | 0.152 | 0.54x |
+| `share2b` | -4.15732241e+02 | -4.15732241e+02 | yes | 0.087 | 0.060 | 1.46x |
+| `stocfor1` | -4.11319762e+04 | -4.11319762e+04 | yes | 0.100 | 0.136 | 0.73x |
 
-Once run, this section regenerates itself from the emitted CSV.
+**Summary**
+
+- SANKHYA shifted geometric mean: **0.084s**
+- HiGHS shifted geometric mean: **0.105s**
+- SANKHYA is **0.8x** the HiGHS time by that measure
 
 ---
 
