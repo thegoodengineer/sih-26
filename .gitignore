@@ -19,3 +19,7 @@ compile_commands.json
 # Ignored so a comparison run does not leave a file in the repo root that looks, at a
 # glance, like HiGHS is part of this project. See docs/PROVENANCE.md.
 Highs.log
+# Issue #18: bench/runners/generate_large_lp.py output. Regenerate with a fixed --seed
+# rather than committing - a 10k x 10k instance is tens of MB for something fully
+# reproducible from the generator and a seed recorded in the file's own header comment.
+bench/large/
