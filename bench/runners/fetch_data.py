@@ -29,6 +29,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -158,10 +159,45 @@ def build_emps(work_dir: Path) -> tuple[Path, str]:
 
 
 def decompress(emps: Path, packed: Path, destination: Path) -> None:
-    with destination.open("wb") as out:
-        result = subprocess.run([str(emps), str(packed)], stdout=out, stderr=subprocess.PIPE)
-    if result.returncode != 0:
-        raise SystemExit(f"emps failed on {packed.name}: {result.stderr.decode(errors='replace')}")
+    """Expand `packed` into `destination`, atomically.
+
+    The obvious version opens the destination and points emps at it. That TRUNCATES the
+    target before emps has produced a byte, so any failure - emps erroring, a partial
+    download upstream, the process being interrupted - leaves a 0-byte file behind.
+
+    That is worse than it sounds now that data/netlib/ is tracked: the instance shows up as
+    MODIFIED rather than missing, `git status` looks like an ordinary edit, and the next
+    solve fails with "file ends without an ENDATA record" on a file git is perfectly happy
+    with. It is also a `git add -A` away from committing an empty benchmark instance.
+
+    Writing beside the target and renaming only on success means the destination is always
+    either its previous content or the complete new content, never a truncated middle.
+    """
+    scratch = destination.with_name(destination.name + ".partial")
+    try:
+        with scratch.open("wb") as out:
+            result = subprocess.run([str(emps), str(packed)], stdout=out,
+                                    stderr=subprocess.PIPE)
+        if result.returncode != 0:
+            raise SystemExit(f"emps failed on {packed.name}: "
+                             f"{result.stderr.decode(errors='replace')}")
+
+        # An expander that exits 0 having written nothing is still a failure. Checking here
+        # reports it against the instance being fetched; letting it through moves the
+        # complaint to a solve hours later, far from the cause.
+        size = scratch.stat().st_size
+        if size == 0:
+            raise SystemExit(f"emps produced an empty file for {packed.name}")
+        with scratch.open("rb") as handle:
+            handle.seek(max(0, size - 64))
+            if b"ENDATA" not in handle.read():
+                raise SystemExit(
+                    f"emps output for {packed.name} has no ENDATA record; the expansion was "
+                    f"truncated")
+
+        os.replace(scratch, destination)
+    finally:
+        scratch.unlink(missing_ok=True)
 
 
 def main() -> int:
