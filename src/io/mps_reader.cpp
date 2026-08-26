@@ -56,6 +56,7 @@ enum class Section {
   kRhs,
   kRanges,
   kBounds,
+  kQuadratic,  ///< QUADOBJ / QMATRIX / QSECTION - recognised so it can be REFUSED, not read
   kEnd
 };
 
@@ -95,6 +96,20 @@ constexpr FixedField kFixedFields[6] = {{1, 2}, {4, 8}, {14, 8}, {24, 12}, {39, 
   }
   if (k == "BOUNDS") {
     *out = Section::kBounds;
+    return true;
+  }
+  // QPS quadratic sections. Recognised ONLY so the file can be refused with an accurate
+  // message. Before this, none of these names matched a section, so a QUADOBJ block was
+  // absorbed by whatever section preceded it - a QP written after RHS was read as an extra
+  // RHS vector, the model came back with problem class LP, and the solver returned `optimal`
+  // for the LP RELAXATION of a quadratic program.
+  //
+  // CLAUDE.md names that exact shape - a relaxation reported as optimal - as the single most
+  // damaging thing this codebase can do. solve() already refuses a QP, but that guard reads
+  // Model::has_quadratic_objective(), and a reader that never fills the Hessian means the
+  // guard never fires. The refusal has to happen here, where the evidence is.
+  if (k == "QUADOBJ" || k == "QMATRIX" || k == "QSECTION" || k == "QUADS") {
+    *out = Section::kQuadratic;
     return true;
   }
   if (k == "ENDATA") {
@@ -711,6 +726,18 @@ ReadResult MpsParser::parse(const std::string& path) {
           saw_endata = true;
           break;
         }
+        if (next == Section::kQuadratic) {
+          // REFUSE, rather than skip. Skipping would hand the caller a model that is missing
+          // its quadratic term entirely, and every downstream check would agree it looked
+          // fine: the class would read LP, the simplex would solve it, and the answer would
+          // be the LP relaxation of a QP reported as optimal. Failing here is the only
+          // outcome that does not silently answer a different question. See #55 and #64.
+          return ReadResult::failure(reader_.error_at(fmt::format(
+              "'{}' is a quadratic objective section; this model is a QP and SANKHYA has no "
+              "QP engine yet, so it is refused rather than solved as if the quadratic term "
+              "were not there. Tracked as issue #55 (engine) and #64 (QPS reader)",
+              to_upper(tok_[0]))));
+        }
         if (next == Section::kName) {
           model_->name = tok_.size() >= 2 ? std::string(tok_[1]) : std::string();
           section = Section::kNone;
@@ -760,6 +787,13 @@ ReadResult MpsParser::parse(const std::string& path) {
       case Section::kBounds:
         if (!do_bounds(&error)) return ReadResult::failure(error);
         break;
+      case Section::kQuadratic:
+        // Unreachable: the header itself returns a failure above, so no data line beneath it
+        // is ever reached. Listed anyway because -Werror=switch requires it, and because
+        // silently falling through to the "before any section header" message would describe
+        // the wrong problem if that ever stopped being true.
+        return ReadResult::failure(
+            reader_.error_at("quadratic objective data is not supported; see issue #55"));
       case Section::kNone:
       case Section::kName:
       case Section::kObjsense:
