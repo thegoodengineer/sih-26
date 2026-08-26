@@ -174,6 +174,10 @@ class PrimalSimplex {
   /// Reported once per solve, not once per refactorization.
   bool warned_about_threshold_ = false;
 
+  /// Set by refactorize() when the Markowitz ladder had to climb past its default. Used to
+  /// switch the basis update off for the rest of the solve; see the pivot loop.
+  bool basis_needed_stricter_threshold_ = false;
+
   /// Effort counters for the solve log. rejected_updates_ is the interesting one: a basis
   /// that keeps producing unsafe pivots is badly conditioned, and that is worth seeing.
   Count refactorizations_ = 0;
@@ -296,6 +300,12 @@ bool PrimalSimplex::refactorize() {
   static constexpr double kThresholdLadder[] = {tol::kMarkowitzThreshold, 0.1, 0.5, 1.0};
   for (std::size_t attempt = 0; attempt < std::size(kThresholdLadder); ++attempt) {
     if (lu_.factorize(basis_columns_, m_, tol::kPivotTolerance, kThresholdLadder[attempt])) {
+      // A basis that needed a stricter threshold than the default is poorly conditioned, and
+      // that is the signal used below to stop trusting the product-form update on this model.
+      // It LATCHES: a model that has produced one ill-conditioned basis will produce more,
+      // and assignment rather than latching would clear the flag on the very next basis that
+      // happened to factorize cleanly - leaving the update switched on for most of the solve.
+      if (attempt > 0) basis_needed_stricter_threshold_ = true;
       if (attempt > 0 && !warned_about_threshold_) {
         warned_about_threshold_ = true;
         logger_.warning(
@@ -752,8 +762,20 @@ Solution PrimalSimplex::run() {
       // eta file has grown enough that it costs more per solve than fresh factors would.
       // Both paths matter: refactorizing every iteration was slow but had no accumulated
       // update error, and that property is only preserved by taking the trigger seriously.
-      const bool updated = lu_.update(ratio.leaving_position, alpha_.data());
-      if (!updated) ++rejected_updates_;
+      // The update is NOT used once the factorization has told us the basis is poorly
+      // conditioned. Netlib d6cube is why. It needed a stricter Markowitz threshold, and
+      // carrying an eta file on top of such a basis degraded the pivot path badly: phase 1
+      // went from 1947 iterations to 38634, a twentyfold increase, for the same final status.
+      // The cost is not per-iteration arithmetic, it is that slightly drifted reduced costs
+      // pick different entering columns and the simplex wanders.
+      //
+      // Refactorizing every pivot is exactly the behaviour that had no accumulated update
+      // error, so falling back to it on an ill-conditioned model is the conservative choice
+      // rather than a special case: the update is an optimization, and it is switched off
+      // where the evidence says it does not pay.
+      const bool trust_update = !basis_needed_stricter_threshold_;
+      const bool updated = trust_update && lu_.update(ratio.leaving_position, alpha_.data());
+      if (trust_update && !updated) ++rejected_updates_;
       if (!updated || lu_.should_refactorize()) {
         if (!refactorize()) {
           return finish(SolveStatus::kNumericalError,
