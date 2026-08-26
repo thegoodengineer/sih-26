@@ -195,7 +195,8 @@ cat <<'DEGEN'
 DEGEN
 echo
 echo "    Measured, not asserted. The matrix is read by verify_solution.py's INDEPENDENT MPS"
-echo "    reader and the rank comes from numpy's SVD - no SANKHYA code is involved:"
+echo "    reader, and the rank is computed EXACTLY by elimination over the rationals - no"
+echo "    singular-value threshold to pick, and no SANKHYA code involved:"
 echo
 "$PYTHON" "$CASES/matrix_stats.py" "$CASES/supply_chain.mps" --rank | sed 's/^/        /'
 echo
