@@ -75,7 +75,11 @@ class Mps:
                 else:
                     out.append(" {} BND       {:<10}{:>14.8g}".format(kind, colname, value))
         out.append("ENDATA")
-        path.write_text("\n".join(out) + "\n", encoding="utf-8")
+        # newline set explicitly. .gitattributes stores data/**/*.mps with -text, byte for
+        # byte, so a CRLF written here on Windows is committed as CRLF, and the CI drift
+        # check then regenerates LF on Ubuntu and fails on every line of every file.
+        with open(path, "w", encoding="utf-8", newline=chr(10)) as handle:
+            handle.write(chr(10).join(out) + chr(10))
         print("wrote " + str(path.relative_to(HERE.parent.parent)).replace("\\", "/"))
 
 
