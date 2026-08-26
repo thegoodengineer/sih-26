@@ -106,3 +106,31 @@ We expect to lose on time, and do. HiGHS is a decade of specialist work with pre
 - The simplex still refactorizes a dense basis from scratch every iteration (Phase 2 by
   design). Phase 6 replaces it with a sparse LU and Forrest–Tomlin updates, and the speed
   numbers here are the baseline that work will be measured against.
+
+---
+
+## 5. Known Netlib discrepancies
+
+Two medium-set instances solve to a different objective than Netlib's own published value.
+Both were unsolvable (`basis became singular`) before the scaling fix in #77; scaling let
+the solver reach an answer on both, and that answer disagrees with the published optimum.
+
+| instance | SANKHYA objective | published value | relative difference |
+|---|---:|---:|---:|
+| `e226` | -1.16389290664e+01 | -1.87519290660e+01 | 3.79e-01 |
+| `scrs8` | 9.04296953801e+02 | 9.04299986190e+02 | 3.35e-06 |
+
+Both solutions pass independent verification by `tools/verify_solution.py`, which shares no
+code with the solver and re-derives feasibility, the objective, and reduced costs from
+scratch.
+
+`e226`'s difference is exactly 7.113 — the value the solver reported at the origin before
+scaling let it find a feasible point at all — which points at an objective-row RHS
+convention rather than a numerical accuracy problem; `scrs8`'s much smaller relative
+difference may have a different cause. Both are open as issue #75, tracking whether this is
+a bug in `src/io/mps_reader.cpp`'s reading of the MPS specification or a stale published
+value. Verifier agreement is not proof either way here: `tools/verify_solution.py` and
+`src/io/mps_reader.cpp` were both written by this project, so agreement between them only
+rules out a transcription slip on our side, not a shared misreading of the format.
+
+Measured at commit `5855af0`.
