@@ -42,6 +42,20 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = REPO_ROOT / "data" / "netlib"
 RESULTS_DIR = REPO_ROOT / "bench" / "results"
 
+def display_path(path: Path) -> Path | str:
+    """A path for printing: repo-relative when it is inside the repo, absolute otherwise.
+
+    `relative_to` RAISES when the target is outside REPO_ROOT, and that turned a successful
+    run into a traceback after every result had already been printed - taking the exit code
+    with it, so a run where everything passed reported failure. Writing a CSV somewhere else
+    on purpose is a legitimate thing to ask for, not an error.
+    """
+    try:
+        return path.relative_to(REPO_ROOT)
+    except ValueError:
+        return path
+
+
 CSV_COLUMNS = [
     "instance",
     "published_objective",
@@ -218,7 +232,9 @@ def main() -> int:
     parser.add_argument("--sankhya-binary", type=Path, default=None)
     parser.add_argument("--time-limit", type=float, default=60.0)
     parser.add_argument("--instances", nargs="*")
-    parser.add_argument("--out", type=Path, default=None)
+    parser.add_argument("--out", type=Path, default=None,
+                        help="destination CSV; relative paths are resolved "
+                             "against the repository root")
     args = parser.parse_args()
 
     # Prefer a real command-line binary; fall back to the highspy package. Either way HiGHS
@@ -316,11 +332,27 @@ def main() -> int:
         print(f"median solve-time ratio SANKHYA/HiGHS: {median:.2f}x  (>1 means we are slower)")
 
     out_path = args.out or (RESULTS_DIR / f"compare-highs-{commit}.csv")
+    # Resolve against the repository root BEFORE anything else touches it. Two separate
+    # problems came from leaving a user-supplied relative path alone:
+    #
+    #   1. `relative_to(REPO_ROOT)` on the status line raised ValueError, after the results
+    #      had been printed, taking the exit code with it.
+    #
+    #   2. Worse and quieter: RESULTS_DIR.glob() yields ABSOLUTE paths, so a relative
+    #      out_path never compared equal to any of them. The CSV just written was therefore
+    #      not excluded from the "previous runs" set, and being the newest by mtime it became
+    #      the baseline - so the run was compared against ITSELF and the --check regression
+    #      gate could never fire. That is a gate that silently passes, on the evidence
+    #      CLAUDE.md says the project stands or falls by.
+    #
+    # Problem 2 was unreachable only because problem 1 crashed first. Fixing the traceback
+    # alone would have exposed it.
+    out_path = (REPO_ROOT / out_path).resolve()
     with out_path.open("w", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=CSV_COLUMNS)
         writer.writeheader()
         writer.writerows(rows)
-    print(f"wrote {out_path.relative_to(REPO_ROOT)}")
+    print(f"wrote {display_path(out_path)}")
     return 0
 
 
