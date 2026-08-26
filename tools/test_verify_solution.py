@@ -90,6 +90,79 @@ def test_fixed_format_row_name_with_space() -> None:
                       "row coefficient", f"entries={entries}")
 
 
+# =============================================================================================
+# Reading back the quoted names that src/io/writer.cpp emits (#86).
+#
+# A fixed-format MPS name may legally contain a space - Netlib forplan has a column
+# `DEDO3 11` - and the .sol columns/rows tables are one whitespace-delimited record per line.
+# The writer double-quotes such a name, backslash-escaping a backslash or a quote inside it.
+# parse_sol has to undo exactly that, or the recovered name will not match the one the
+# independent MPS reader parsed, and the column shows up as structurally MISSING rather than
+# merely misnamed - a confusing failure a long way from its cause.
+#
+# The two readers are written from the format independently and deliberately share no code,
+# so this is the only place the pairing between them is actually checked.
+# =============================================================================================
+
+QUOTE, BACKSLASH = chr(34), chr(92)
+ESCAPED_QUOTE_NAME = "HAS" + QUOTE + "QUOTED"
+
+# Built from chr() rather than written as a literal. A quoted name containing an ESCAPED
+# quote cannot be written straightforwardly inside a Python string - the source parser
+# consumes the backslash first, so the file under test ends up with no escape in it and
+# the test silently checks the wrong thing. That happened twice while writing this.
+SOL_WITH_QUOTED_NAMES = "\n".join([
+    "# SANKHYA solution file",
+    "model QTEST",
+    "status optimal",
+    "",
+    "begin columns 2",
+    QUOTE + "DEDO3 11" + QUOTE + " 5 0 basic",
+    "PLAIN 3 0 basic",
+    "end columns",
+    "",
+    "begin rows 2",
+    QUOTE + "DEDO3 1R" + QUOTE + " 4 0.5 at_upper",
+    QUOTE + "HAS" + BACKSLASH + QUOTE + "QUOTED" + QUOTE + " 1 0 basic",
+    "end rows",
+    "",
+]) + "\n"
+
+
+
+def test_sol_reader_recovers_quoted_names() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "quoted.sol"
+        path.write_text(SOL_WITH_QUOTED_NAMES)
+        # parse_sol RAISES rather than returning something wrong when it mis-splits a
+        # record, so catch it here: an uncaught exception aborts the whole runner and every
+        # later test silently never runs, which reads as "no failures" in CI.
+        try:
+            solution = vs.parse_sol(path)
+        except Exception as error:  # noqa: BLE001 - reporting it IS the test
+            check(False, "parse_sol reads a file containing quoted names", f"raised {error!r}")
+            return
+
+        check("DEDO3 11" in solution.col_value, "quoted column name with a space recovered",
+              f"col_value keys={list(solution.col_value)}")
+        check("DEDO3 1R" in solution.row_activity, "quoted row name with a space recovered",
+              f"row_activity keys={list(solution.row_activity)}")
+        check(ESCAPED_QUOTE_NAME in solution.row_activity,
+              "backslash-escaped quote inside a name recovered",
+              f"row_activity keys={list(solution.row_activity)}")
+        check("PLAIN" in solution.col_value, "an unquoted name is unaffected",
+              f"col_value keys={list(solution.col_value)}")
+
+        if "DEDO3 11" in solution.col_value:
+            check(solution.col_value["DEDO3 11"] == 5.0, "value for the quoted column",
+                  f"got {solution.col_value.get('DEDO3 11')}")
+            check(solution.col_status["DEDO3 11"] == "basic", "status for the quoted column",
+                  f"got {solution.col_status.get('DEDO3 11')}")
+        if "DEDO3 1R" in solution.row_activity:
+            check(solution.row_dual["DEDO3 1R"] == 0.5, "dual for the quoted row",
+                  f"got {solution.row_dual.get('DEDO3 1R')}")
+
+
 def test_known_bad_solution_is_rejected() -> None:
     """A sanity check on the pass/fail contract itself: a solution violating a bound must
     fail verification, not pass it."""
@@ -117,6 +190,8 @@ def test_known_bad_solution_is_rejected() -> None:
 def main() -> int:
     print("test_fixed_format_row_name_with_space")
     test_fixed_format_row_name_with_space()
+    print("test_sol_reader_recovers_quoted_names")
+    test_sol_reader_recovers_quoted_names()
     print("test_known_bad_solution_is_rejected")
     test_known_bad_solution_is_rejected()
     print()
