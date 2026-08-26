@@ -425,6 +425,42 @@ Solution BranchAndBound::run() {
       break;
     }
 
+    // Gap-based termination against the GLOBAL open bound - the best (lowest, in minimise
+    // space) bound among every node still in the tree, not just the one about to be popped.
+    // This is a stopping criterion, evaluated once per iteration here; it is deliberately
+    // separate from can_prune(), which fathoms a single node against the absolute target
+    // only. Pruning a node on the RELATIVE gap would discard nodes that could still hold a
+    // genuinely better solution than the current incumbent, which is not what a relative
+    // gap means - it bounds how far the reported answer may be from proven optimal, not
+    // which nodes are worth visiting.
+    if (have_incumbent_) {
+      double open_bound = std::numeric_limits<double>::infinity();
+      for (const Index open_index : open_) {
+        open_bound = std::min(open_bound, nodes_[static_cast<std::size_t>(open_index)].bound);
+      }
+      const double gap = incumbent_internal_ - open_bound;
+      // gap <= 0 means open_bound already >= the incumbent: every node still in the tree
+      // is one can_prune() would fathom the moment it is popped, so nothing open can beat
+      // what has already been found. That is proven optimality, not a tolerance being met
+      // early - the ordinary per-node prune below closes the tree on its own and reports
+      // kOptimal. Treating a non-positive gap as "target met" here would report kFeasible
+      // on an already-exhausted tree: negative <= a small positive target is trivially
+      // true, so an unvisited, already-dead node's stale inherited bound (which need not
+      // sit below the incumbent once every OTHER branch has been explored) would fire this
+      // check before the loop ever reaches it to prune it honestly.
+      if (gap > 0.0) {
+        const double relative = gap / std::max(1.0, std::fabs(incumbent_internal_));
+        if (gap <= absolute_gap_target_ || relative <= relative_gap_target_) {
+          limit_hit = true;
+          solution.message = fmt::format(
+              "stopped on a {} gap target ({:.3e} absolute, {:.3e} relative) after {} nodes",
+              relative <= relative_gap_target_ ? "relative" : "absolute", gap, relative,
+              nodes_explored_);
+          break;
+        }
+      }
+    }
+
     // Depth-first while diving, best-bound when the dive ends. Diving reaches an incumbent
     // quickly, which is what makes every later bound able to prune; best-bound then keeps
     // the tree from growing where it cannot pay.
