@@ -28,6 +28,9 @@ import statistics
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import latest_result
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 RESULTS_DIR = REPO_ROOT / "bench" / "results"
 DATA_DIR = REPO_ROOT / "data" / "netlib"
@@ -81,8 +84,15 @@ def shifted_geometric_mean(values: list[float], shift: float = SHIFT_SECONDS) ->
 
 
 def newest(pattern: str) -> Path | None:
-    candidates = sorted(RESULTS_DIR.glob(pattern), key=lambda p: p.stat().st_mtime)
-    return candidates[-1] if candidates else None
+    """The most recent matching CSV, ordered by GIT HISTORY rather than by mtime.
+
+    mtime is right on the machine that produced the files and wrong everywhere else: git
+    does not record it, so a fresh clone stamps every file with the checkout time and the
+    order becomes arbitrary. That is exactly the situation a judge regenerating this document
+    is in, and the failure is silent - a plausible number from a superseded run. See
+    bench/runners/latest_result.py.
+    """
+    return latest_result.latest(pattern)
 
 
 def read_csv(path: Path) -> list[dict]:
