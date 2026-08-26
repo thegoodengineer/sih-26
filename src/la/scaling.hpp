@@ -15,16 +15,23 @@
 // WHY THIS EXISTS AT ALL. PDHG converges at a rate governed by the operator norm of the
 // constraint matrix, so on a badly scaled model - a refinery LP mixing flows in tonnes with
 // qualities in parts per million is the canonical case - it does not converge in any useful
-// number of iterations. The simplex is largely indifferent to scaling because it pivots on
-// exact ratios; a first-order method is not. Preconditioning is not an optimisation here,
-// it is what makes the method work.
+// number of iterations. Preconditioning is not an optimisation there, it is what makes the
+// method work.
+//
+// BOTH ENGINES USE THIS, which is why it lives in src/la and not under src/pdhg. An earlier
+// version of this comment claimed "the simplex is largely indifferent to scaling because it
+// pivots on exact ratios". That is true of the algebra and false of the arithmetic, and the
+// Netlib medium tier disproved it: 18 of 24 failures were the identical message "basis
+// became singular", concentrated on the badly scaled corner of the set, and fit1d failed
+// after 23 iterations - far too early to be accumulated drift. Equilibrating first took that
+// tier from 26/50 to 37/50. See issue #49.
 #pragma once
 
 #include <vector>
 
 #include "sankhya/model.hpp"
 
-namespace sankhya::pdhg {
+namespace sankhya {
 
 /// A diagonal rescaling of a model:  Ahat = Dr A Dc.
 ///
@@ -65,4 +72,4 @@ struct Scaling {
 [[nodiscard]] double estimate_spectral_norm(const SparseMatrix& matrix, int iterations,
                                             unsigned seed);
 
-}  // namespace sankhya::pdhg
+}  // namespace sankhya

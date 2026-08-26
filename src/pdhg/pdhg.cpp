@@ -49,7 +49,7 @@
 #include "sankhya/timer.hpp"
 #include "sankhya/tolerances.hpp"
 
-#include "scaling.hpp"
+#include "../la/scaling.hpp"
 
 namespace sankhya::pdhg {
 namespace {

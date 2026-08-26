@@ -120,6 +120,16 @@ const std::vector<OptionSpec>& Options::registry() {
                  {"auto", "free", "fixed"}});
     // Default false, not true: no presolve exists yet, and a default of true made the
     // solver assert on every run that reductions had been applied.
+    // Default TRUE, unlike presolve: this is implemented, and it is the difference between
+    // 26 and (measured) far more of the Netlib medium tier. It is exposed as an option so
+    // the unscaled path stays reachable for comparison, not because it is optional.
+    s.push_back({"scaling",
+                 OptionType::Bool,
+                 true,
+                 "Equilibrate the constraint matrix (Ruiz + Pock-Chambolle) before solving.",
+                 0.0,
+                 0.0,
+                 {}});
     s.push_back({"presolve",
                  OptionType::Bool,
                  false,
