@@ -193,7 +193,7 @@ TEST(BranchAndBound, AnAlreadyProvenTreeReportsOptimalNotFeasible) {
   // Columns: P_GA P_GB P_GC P_GD U_GA U_GB U_GC U_GD. Demand 250, reserve margin 1.15.
   const Model model = make_milp(
       {
-          {1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0},        // DEMAND: sum P_g = 250
+          {1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0},         // DEMAND: sum P_g = 250
           {0.0, 0.0, 0.0, 0.0, 100.0, 120.0, 150.0, 60.0},  // RESERVE: sum Pmax_g*U_g >= 287.5
           {1.0, 0.0, 0.0, 0.0, -100.0, 0.0, 0.0, 0.0},      // CAPMX_GA: P - Pmax*U <= 0
           {1.0, 0.0, 0.0, 0.0, -20.0, 0.0, 0.0, 0.0},       // CAPMN_GA: P - Pmin*U >= 0
@@ -290,10 +290,9 @@ TEST(BranchAndBound, FuzzAgainstTheExactMilpOracle) {
                            (exact.status == oracle::OracleStatus::kOptimal
                                 ? "  objective " + std::to_string(exact.objective.to_double())
                                 : "") +
-                           "\n  solver: " + std::string(to_string(s.status)) +
-                           "  objective " + std::to_string(s.objective) + "  bound " +
-                           std::to_string(s.dual_bound) +
-                           "\n" + lp.to_text());
+                           "\n  solver: " + std::string(to_string(s.status)) + "  objective " +
+                           std::to_string(s.objective) + "  bound " +
+                           std::to_string(s.dual_bound) + "\n" + lp.to_text());
       }
     };
 
