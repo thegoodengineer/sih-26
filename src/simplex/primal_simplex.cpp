@@ -79,7 +79,20 @@ constexpr double kInfeasibilityProofFactor = 1e3;
 /// The check costs one sparse mat-vec over the basis columns, which is the same order as the
 /// FTRAN it verifies, so it is amortised over an interval rather than run every pivot.
 constexpr Count kAccuracyCheckInterval = 16;
-constexpr double kUpdateAccuracyTolerance = 1e-9;
+
+/// Tied to kPrimalFeasibility rather than chosen independently, because that is the quantity
+/// this check ultimately protects: factors whose residual is below the feasibility tolerance
+/// cannot corrupt a feasibility judgement made at that tolerance.
+///
+/// It was 1e-9 when this check was written, which is inside the ordinary accumulated rounding
+/// of a sequence of triangular solves rather than evidence that the factors have stopped
+/// representing the basis. At 1e-9 it fired twice on grow22, and because a forced
+/// refactorization changes which row wins the ratio test, those two rebuilds moved the final
+/// vertex from a primal infeasibility of 5.652e-08 to 6.244e-07 - across the reported
+/// tolerance, turning a published optimum into a numerical_error. A factorization that has
+/// genuinely lost its basis misses by orders of magnitude more than this, so the looser
+/// threshold keeps every case the check exists to catch.
+constexpr double kUpdateAccuracyTolerance = tol::kPrimalFeasibility;
 
 /// How a basic variable sits relative to its own bounds. Phase 1 exists to empty the two
 /// outer categories.
