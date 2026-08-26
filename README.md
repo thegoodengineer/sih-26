@@ -1,3 +1,6 @@
+**SIH26119** — Indigenous GPU-Accelerated Optimization Solver (Sovereign Alternative to CPLEX / Xpress)  
+Smart India Hackathon 2026 · Mangalore Refinery and Petrochemicals Limited (MRPL)
+
 # SANKHYA
 
 **Indigenous GPU-accelerated optimization solver — LP, MILP, convex QP, written from
