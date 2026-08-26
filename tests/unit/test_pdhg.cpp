@@ -22,6 +22,8 @@
 #include "sankhya/options.hpp"
 #include "sankhya/tolerances.hpp"
 
+#include "core/status_guard.hpp"
+
 #include "oracles/lp_generator.hpp"
 #include "oracles/rational_simplex.hpp"
 
@@ -230,6 +232,7 @@ TEST(Pdhg, AFeasibleStatusStillMeansTheePointIsActuallyFeasible) {
   if (s.status == SolveStatus::kOptimal || s.status == SolveStatus::kFeasible) {
     EXPECT_LE(s.primal_infeasibility, tol::kPrimalFeasibility);
   }
+}
 
 // =========================================================================================
 // The status must agree with the measured quality of the point
@@ -276,24 +279,57 @@ Model make_blend_lp() {
 }
 
 TEST(SolveStatusGuard, AnInfeasiblePointIsNeverReportedAsOptimal) {
+  // Exercised DIRECTLY rather than through an engine. The original version drove PDHG at a
+  // loose tolerance until it returned an infeasible point labelled optimal, and carried a
+  // guard message saying to re-tune it if that stopped happening. It has stopped happening:
+  // PDHG now refuses to claim optimal or feasible unless the point meets the absolute
+  // tolerance, so the trigger path through that engine no longer exists.
+  //
+  // Which is the point. A guard tested only through a misbehaving engine loses its subject
+  // the moment that engine is fixed, and quietly stops testing anything. This calls the
+  // reconciliation with a Solution built to contradict itself, so it keeps its subject
+  // whatever the engines do - and it is the shape the Phase 8 IPM and QP engines will hit.
   const Model model = make_blend_lp();
+
+  Solution solution;
+  solution.allocate_for(model);
+  solution.status = SolveStatus::kOptimal;
+  solution.algorithm = "fabricated";
+  // A point well outside the feasible region, claimed as a proven optimum.
+  solution.col_value.assign(static_cast<std::size_t>(model.num_cols()), 1.0e4);
+  solution.recompute_quality(model);
+
   Options options;
   options.set_bool("log_to_console", false);
-  options.set_string("algorithm", "pdhg");
-  options.set_double("pdhg_tolerance", 0.01);
-
-  const Solution solution = solve(model, options);
-
-  // The engine's own measurement is what convicts it, so assert on that first: if this
-  // stops holding the test has lost its subject and must be re-tuned, not deleted.
   ASSERT_GT(solution.primal_infeasibility, options.get_double("primal_feasibility_tolerance"))
-      << "this tolerance no longer produces an infeasible point; pick a looser one";
+      << "the fabricated point is supposed to be infeasible";
+
+  Logger silent(nullptr);
+  reconcile_status_with_measurement(&solution, options, silent, /*check_dual=*/true);
 
   EXPECT_NE(solution.status, SolveStatus::kOptimal);
   EXPECT_NE(solution.status, SolveStatus::kFeasible)
       << "a point that violates its own constraints is not feasible either";
   EXPECT_EQ(solution.status, SolveStatus::kNumericalError);
   EXPECT_NE(solution.message.find("primal feasibility"), std::string::npos) << solution.message;
+}
+
+TEST(SolveStatusGuard, AFeasibleOptimalPointIsLeftAlone) {
+  // The guard must not fire on a good answer. Without this, tightening it later could start
+  // rejecting correct solutions and every other test would still pass.
+  const Model model = make_blend_lp();
+  Options options;
+  options.set_bool("log_to_console", false);
+  options.set_string("algorithm", "simplex");
+
+  Solution solution = solve(model, options);
+  ASSERT_EQ(solution.status, SolveStatus::kOptimal);
+  const double objective = solution.objective;
+
+  Logger silent(nullptr);
+  reconcile_status_with_measurement(&solution, options, silent, /*check_dual=*/true);
+  EXPECT_EQ(solution.status, SolveStatus::kOptimal);
+  EXPECT_DOUBLE_EQ(solution.objective, objective);
 }
 
 TEST(SolveStatusGuard, PrimalFeasibleButDualInfeasibleIsFeasibleNotOptimal) {

@@ -15,6 +15,7 @@
 
 #include <fmt/format.h>
 
+#include "core/status_guard.hpp"
 #include "sankhya/logging.hpp"
 #include "sankhya/mip.hpp"
 #include "sankhya/model.hpp"
@@ -48,6 +49,8 @@ const char* class_name(ProblemClass c) {
   }
   return "unknown";
 }
+
+}  // namespace
 
 /// Force the reported status to agree with the measured quality of the point.
 ///
@@ -126,8 +129,6 @@ void reconcile_status_with_measurement(Solution* solution, const Options& option
     logger.warning("{}", detail);
   }
 }
-
-}  // namespace
 
 Solution solve(const Model& model, const Options& options) {
   Timer timer;
