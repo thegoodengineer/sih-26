@@ -44,6 +44,21 @@ DATA_DIR = REPO_ROOT / "data" / "netlib"
 # The Phase 2/3 working set: small, well conditioned, and every one of them has a published
 # optimum. blend is a petroleum blending model, which is why it earns its place in a demo
 # for refinery judges.
+# Named instance sets. `small` is what CI runs; the other two are for manual evidence runs.
+#
+# The point of naming these is that "8 of 8" reads as full coverage when it is 9% of the set,
+# and the largest instance carried by `small` is 118 rows - nothing that could exercise the
+# degeneracy or ill-conditioning the problem statement asks about. `medium` is the first tier
+# with instances big enough for the basis factorization to matter, and `full` is the number
+# Phase 6's ">= 95% of Netlib" exit criterion is actually measured against.
+#
+# `medium` is defined by the PUBLISHED row count rather than by a hand-written list, so it
+# does not silently drift as instances are added, and so nobody has to curate it.
+MEDIUM_MAX_ROWS = 500
+
+# Counts as of the current Netlib readme: small 8, medium 50, full 89.
+SET_NAMES = ("small", "medium", "full")
+
 DEFAULT_SET = [
     "afiro",
     "sc50a",
@@ -152,7 +167,11 @@ def decompress(emps: Path, packed: Path, destination: Path) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("instances", nargs="*", help="instance names (default: a small set)")
-    parser.add_argument("--all", action="store_true", help="fetch every listed instance")
+    parser.add_argument("--set", dest="instance_set", choices=SET_NAMES, default=None,
+                        help=f"named instance set: small (CI default), medium (published "
+                             f"rows <= {MEDIUM_MAX_ROWS}), or full (everything listed)")
+    parser.add_argument("--all", action="store_true",
+                        help="deprecated alias for --set full")
     args = parser.parse_args()
 
     DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -164,12 +183,21 @@ def main() -> int:
     if not published:
         raise SystemExit("could not parse the summary table; the readme format may have changed")
 
-    if args.all:
-        wanted = sorted(published)
-    elif args.instances:
+    # Explicit names win, then --set, then the deprecated --all, then the small default.
+    if args.instances:
         wanted = [name.lower() for name in args.instances]
+        chosen_set = "explicit"
     else:
-        wanted = DEFAULT_SET
+        chosen_set = args.instance_set or ("full" if args.all else "small")
+        if chosen_set == "full":
+            wanted = sorted(published)
+        elif chosen_set == "medium":
+            wanted = sorted(name for name, entry in published.items()
+                            if entry["published_rows"] <= MEDIUM_MAX_ROWS)
+        else:
+            wanted = list(DEFAULT_SET)
+
+    print(f"  set '{chosen_set}': {len(wanted)} of {len(published)} listed instances")
 
     unknown = [name for name in wanted if name not in published]
     if unknown:
@@ -181,6 +209,11 @@ def main() -> int:
         manifest = json.loads(manifest_path.read_text())
     manifest.setdefault("source", NETLIB_BASE)
     manifest.setdefault("instances", {})
+    # The denominator, recorded so that make_benchmarks_doc.py can state coverage honestly
+    # without re-fetching. Without it the generated table says "8 of 8", which reads as full
+    # coverage of Netlib rather than of what was run.
+    manifest["available_instances"] = len(published)
+    manifest["instance_set"] = chosen_set
 
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp)
