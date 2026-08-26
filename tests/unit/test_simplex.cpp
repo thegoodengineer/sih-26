@@ -62,9 +62,17 @@ Model make_model(ObjSense sense, const std::vector<double>& cost,
   return model;
 }
 
+/// Solve with PRESOLVE OFF. Everything in this file is a unit test of the simplex, and
+/// presolve sits in front of it in the dispatcher: once it landed, models built here to
+/// exercise a particular simplex path were being answered before the simplex ever saw them.
+/// The infeasibility test below is the clearest case - presolve proves it from row activity
+/// bounds and the phase-1 proof this file exists to check never runs.
+///
+/// Presolve's own behaviour on these models is tested in test_presolve.cpp, through solve().
 Solution run(const Model& model) {
   Options options;
   options.set_bool("log_to_console", false);
+  options.set_bool("presolve", false);
   return solve(model, options);
 }
 

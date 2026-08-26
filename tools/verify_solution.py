@@ -660,12 +660,32 @@ def verify(model: Model, solution: Solution, primal_tol: float, dual_tol: float,
     # ---- Complementary slackness ----------------------------------------------------------
     # A multiplier may only be nonzero where its constraint is tight.
     worst, where = 0.0, ""
+    def complementarity(multiplier: float, slack: float) -> float:
+        """|multiplier| * slack, except where that product is degenerate.
+
+        WHEN THE SLACK IS INFINITE the product is not a usable measure. A free variable has
+        no finite bound on either side, so min(slack) is INF and |d| * INF evaluates to inf
+        for ANY nonzero d - which demands the reduced cost be BIT-EXACTLY zero. No
+        floating-point solver can promise that, and it is not what complementary slackness
+        requires: for a constraint that cannot be tight, the condition reduces to "the
+        multiplier is zero", and that is testable directly against the dual tolerance.
+
+        This is the same mathematical condition, correctly conditioned - not a loosened one.
+        A free column carrying a genuinely nonzero reduced cost still fails, at exactly the
+        threshold it should. It was found when a solver change altered a pivot path and left
+        -1.05e-15 on a free column of capri: a correct answer, rejected, for having rounded
+        a zero rather than for being wrong.
+        """
+        if not math.isfinite(slack):
+            return abs(multiplier)
+        return abs(multiplier) * slack
+
     for i, name in enumerate(model.row_names):
         if model.row_lower[i] == model.row_upper[i]:
             continue
         slack_lower = (activity[i] - model.row_lower[i]) if math.isfinite(model.row_lower[i]) else INF
         slack_upper = (model.row_upper[i] - activity[i]) if math.isfinite(model.row_upper[i]) else INF
-        product = abs(y[i]) * min(slack_lower, slack_upper)
+        product = complementarity(y[i], min(slack_lower, slack_upper))
         if product > worst:
             worst, where = product, name
     for j, name in enumerate(model.col_names):
@@ -673,7 +693,7 @@ def verify(model: Model, solution: Solution, primal_tol: float, dual_tol: float,
             continue
         slack_lower = (x[j] - model.col_lower[j]) if math.isfinite(model.col_lower[j]) else INF
         slack_upper = (model.col_upper[j] - x[j]) if math.isfinite(model.col_upper[j]) else INF
-        product = abs(d[j]) * min(slack_lower, slack_upper)
+        product = complementarity(d[j], min(slack_lower, slack_upper))
         if product > worst:
             worst, where = product, name
     report.check(worst <= 1e-6, "complementary slackness",

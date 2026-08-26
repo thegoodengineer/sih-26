@@ -16,6 +16,7 @@
 #include <fmt/format.h>
 
 #include "core/status_guard.hpp"
+#include "presolve/presolve.hpp"
 #include "sankhya/logging.hpp"
 #include "sankhya/mip.hpp"
 #include "sankhya/model.hpp"
@@ -178,8 +179,31 @@ Solution solve(const Model& model, const Options& options) {
           "--gpu requested but this build has no CUDA backend compiled in; running on CPU");
     }
 
-    solution = want_pdhg ? pdhg::solve_pdhg(model, options, logger)
-                         : solve_primal_simplex(model, options, logger);
+    // PRESOLVE RUNS HERE, not inside an engine. The reductions are properties of the model,
+    // so both engines get them, and - more importantly - postsolve then re-measures the
+    // recovered point against the ORIGINAL model before the status guard below sees it. A
+    // reduction or postsolve bug therefore surfaces as a feasibility violation on a model no
+    // engine ever touched, and the guard downgrades the status rather than letting a
+    // confident answer to a different problem out of the door.
+    if (options.get_bool("presolve")) {
+      const presolve::Result reduced = presolve::presolve(model, options, logger);
+      if (reduced.proved_infeasible) {
+        solution.status = SolveStatus::kInfeasible;
+        solution.algorithm = "presolve";
+        solution.message = reduced.message;
+        solution.solve_seconds = timer.elapsed_seconds();
+        logger.info("Result: {} (proved during presolve)  {:.3f}s", to_string(solution.status),
+                    solution.solve_seconds);
+        return solution;
+      }
+      Solution inner = want_pdhg ? pdhg::solve_pdhg(reduced.model, options, logger)
+                                 : solve_primal_simplex(reduced.model, options, logger);
+      solution = presolve::postsolve(reduced, model, inner);
+      solution.solve_seconds = timer.elapsed_seconds();
+    } else {
+      solution = want_pdhg ? pdhg::solve_pdhg(model, options, logger)
+                           : solve_primal_simplex(model, options, logger);
+    }
     reconcile_status_with_measurement(&solution, options, logger, /*check_dual=*/true);
     logger.info("Result: {}  objective {:.10g}  {} iterations  {:.3f}s",
                 to_string(solution.status), solution.objective, solution.iterations,
