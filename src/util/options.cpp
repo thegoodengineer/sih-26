@@ -118,11 +118,9 @@ const std::vector<OptionSpec>& Options::registry() {
                  0.0,
                  0.0,
                  {"auto", "free", "fixed"}});
-    // Default false, not true: no presolve exists yet, and a default of true made the
-    // solver assert on every run that reductions had been applied.
-    // Default TRUE, unlike presolve: this is implemented, and it is the difference between
-    // 26 and (measured) far more of the Netlib medium tier. It is exposed as an option so
-    // the unscaled path stays reachable for comparison, not because it is optional.
+    // Default TRUE. Measured: equilibration took the Netlib medium tier from 26/50 to
+    // 39/50 by itself. Exposed as an option because turning it off is how a scaling bug
+    // gets localised, not because it is optional.
     s.push_back({"scaling",
                  OptionType::Bool,
                  true,
@@ -130,14 +128,18 @@ const std::vector<OptionSpec>& Options::registry() {
                  0.0,
                  0.0,
                  {}});
+    // Implemented as of #43, so there is no planned_for marker any more. Default TRUE for
+    // the same reason as scaling: the postsolve round-trip is asserted against the exact
+    // rational oracle and re-measured against the ORIGINAL model on every solve, so
+    // defaulting it off would mean shipping a deliberately slower solver to dodge a risk
+    // the tests already cover.
     s.push_back({"presolve",
                  OptionType::Bool,
-                 false,
-                 "Run presolve reductions before solving.",
+                 true,
+                 "Run presolve reductions before solving, and postsolve the answer back.",
                  0.0,
                  0.0,
-                 {},
-                 "Phase 6"});
+                 {}});
     s.push_back({"gpu",
                  OptionType::Bool,
                  false,
