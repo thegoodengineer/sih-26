@@ -31,8 +31,45 @@ inline constexpr double kMipRelativeGap = 1e-4;
 inline constexpr double kMipAbsoluteGap = 1e-6;
 
 /// LP optimality check used by the independent verifier: primal objective must equal dual
-/// objective to this relative accuracy. Tighter than feasibility on purpose — a converged
+/// objective to this relative accuracy. Tighter than feasibility on purpose - a converged
 /// simplex basis should reproduce strong duality far better than it satisfies bounds.
+///
+/// THIS CONSTANT IS NOT INDEPENDENT OF kDualFeasibility, and the two were originally chosen
+/// as though it were. The duality gap at a primal-feasible point is bounded by the
+/// complementarity residual, which is bounded in turn by the dual infeasibility times the
+/// size of the primal solution:
+///
+///     relative gap  <=  kDualFeasibility * ||x||_1 / |objective|
+///
+/// So a fixed 1e-9 is only attainable when ||x||_1 / |objective| is small. Netlib `etamacro`
+/// is where that surfaced (issue #52). Measured there:
+///
+///     dual infeasibility     1.345e-07      (just over kDualFeasibility)
+///     sum |x_j|, 688 columns 2721
+///     |objective|            755.7
+///     => implied bound on the relative gap    4.84e-07
+///
+/// which is roughly FIVE HUNDRED TIMES looser than the 1e-9 promised here. The observed gap
+/// was 3.25e-09 - far better than the bound, but still over this constant, and no amount of
+/// tightening the gap test can fix a point whose duals have not converged.
+///
+/// DECISION (#52): neither number moves.
+///
+///   * The verifier is NOT loosened. It is the independent check the whole evidence story
+///     rests on, and tuning it so we pass inverts its purpose. `CLAUDE.md` says so directly.
+///   * kDualityGap is NOT relaxed to cover the worst case either. As an expectation for a
+///     genuinely converged basis, 1e-9 is right; the models that miss it are models whose
+///     duals are not converged, and hiding that behind a looser constant is the same
+///     mistake in the other direction.
+///
+/// The honest outcome for such a point is the status kFeasible - a usable primal point,
+/// optimality not proven - which solve() now assigns automatically when the measured dual
+/// infeasibility exceeds tolerance (issue #27). `etamacro` takes that path today and the
+/// verifier accepts it, skipping the strong-duality test because no optimality is claimed.
+///
+/// What is actually needed for `etamacro` to reach kOptimal is better dual convergence, not
+/// a different threshold: Devex pricing (#66) and the Harris ratio test (#67). This constant
+/// should be revisited only if those land and instances still miss it.
 inline constexpr double kDualityGap = 1e-9;
 
 // ---------------------------------------------------------------------------------------
