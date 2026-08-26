@@ -32,7 +32,7 @@ RESULTS_DIR = REPO_ROOT / "bench" / "results"
 DATA_DIR = REPO_ROOT / "data" / "netlib"
 
 
-def coverage_note(run_count: int) -> str:
+def coverage_note(run_count: int, set_name: str | None = None) -> str:
     """State the DENOMINATOR, not just the pass rate.
 
     "8 of 8" is true and reads as full coverage of Netlib. It is 9% of the set, and the
@@ -50,7 +50,12 @@ def coverage_note(run_count: int) -> str:
         return ""
 
     available = manifest.get("available_instances")
-    set_name = manifest.get("instance_set")
+    # The tier comes from the CSV BEING RENDERED, not from whatever reference.json holds at
+    # generation time. reference.json describes the last fetch, so reading it here labelled
+    # the 50-instance medium table as "set small" whenever the small set had been fetched
+    # more recently - a caption contradicting the table directly above it.
+    if set_name is None:
+        set_name = manifest.get("instance_set")
     if not available:
         return ""
 
@@ -94,7 +99,80 @@ def as_float(row: dict, key: str) -> float | None:
         return None
 
 
+FAILURE_CLASSES = [
+    # (substring of the solver's own message, short label, tracking issue)
+    ("basis became singular", "basis went singular", "#49"),
+    ("consecutive degenerate", "degenerate stall", "#51"),
+    ("violates primal feasibility", "point misses feasibility", "#72"),
+    ("violate dual feasibility", "duals miss feasibility", "#52"),
+    ("iteration limit", "hit the iteration limit", None),
+    ("time limit", "hit the time limit", None),
+]
+
+
+def classify_failure(row: dict) -> str:
+    """Name WHY an instance failed, from the solver's own message.
+
+    CLAUDE.md requires failures to be named rather than dropped. A list of names is only
+    half of it - "24 failed: bandm, boeing1, ..." tells a reader nothing about whether the
+    tool fits their model. Eighteen instances failing for one reason is a very different
+    thing from eighteen failing for eighteen reasons, and only the second is alarming.
+    """
+    message = (row.get("message") or "").lower()
+    for needle, label, issue in FAILURE_CLASSES:
+        if needle in message:
+            return f"{label} ({issue})" if issue else label
+
+    status = row.get("status", "")
+    # An instance can be `optimal`, match nothing, and still be a failure - either the
+    # objective disagrees with the published value or the independent verifier rejected the
+    # point. Those are different problems and are not collapsed together here.
+    # The verifier saying no covers two very different situations, and collapsing them
+    # would point the reader at the wrong problem. forplan is the case in point: the
+    # objective matches the published optimum exactly, and the verifier rejected it only
+    # because its own MPS reader cannot parse names containing spaces. Nothing is wrong with
+    # the answer there - what is wrong is that nothing independently checked it.
+    verifier = (row.get("verifier_message") or "").lower()
+    if "cannot read the model" in verifier or "could not convert" in verifier:
+        return "verifier cannot parse the model (#48)"
+    if row.get("independently_verified") == "0":
+        return "verifier rejected the point (#75)"
+    if status == "optimal" and row.get("matches_published") != "1":
+        return "disagrees with the published optimum (#75)"
+    return status or "unknown"
+
+
+def failure_breakdown(failed: list[dict]) -> list[str]:
+    """The failures, grouped by cause, most common first."""
+    if not failed:
+        return ["Every instance in this set passed.", ""]
+
+    grouped: dict[str, list[str]] = {}
+    for row in failed:
+        grouped.setdefault(classify_failure(row), []).append(row["instance"])
+
+    lines = [
+        f"**{len(failed)} failed**, grouped by the reason the solver itself gave. They are "
+        f"named here because a pass rate without its failures is a claim, not evidence:",
+        "",
+        "| why it failed | count | instances |",
+        "|---|---:|---|",
+    ]
+    for label, names in sorted(grouped.items(), key=lambda kv: (-len(kv[1]), kv[0])):
+        lines.append(f"| {label} | {len(names)} | {', '.join(sorted(names))} |")
+    lines.append("")
+    return lines
+
+
+def tier_of(path: Path) -> str | None:
+    """The instance set a results CSV came from, read off its filename."""
+    stem = path.stem
+    parts = stem.split("-")
+    return parts[1] if len(parts) > 2 else None
+
+
 def netlib_section(path: Path) -> str:
+    set_name = tier_of(path)
     rows = read_csv(path)
     if not rows:
         return "No Netlib results recorded yet.\n"
@@ -116,8 +194,9 @@ def netlib_section(path: Path) -> str:
         f"published optimum to a relative 1e-6 **and** passed independent verification by "
         f"`tools/verify_solution.py`.",
         "",
-        coverage_note(len(rows)),
+        coverage_note(len(rows), set_name),
         "",
+        *failure_breakdown(failed),
         "| instance | rows | cols | status | our objective | published optimum | rel. error |"
         " iters | time (s) | verified |",
         "|---|---:|---:|---|---:|---:|---:|---:|---:|:--:|",
@@ -154,6 +233,27 @@ def netlib_section(path: Path) -> str:
         out.append("- no failures on this set")
     out.append("")
     return "\n".join(out)
+
+
+def comparison_verdict(ratio):
+    """Say what the measured ratio shows, rather than a fixed sentence that can go stale."""
+    standing = (
+        "HiGHS is a decade of specialist work with presolve, a dual simplex and a mature "
+        "pricing scheme, and this solver still has neither of the first two. The part that "
+        "has to be right first is that **the answers agree** - the problem statement asks us "
+        "to compare, not to win.")
+    if ratio is None:
+        return standing
+    if ratio > 1.15:
+        return (f"We are **{ratio:.2f}x slower** than HiGHS by this measure, and publish that "
+                f"rather than bury it. ") + standing
+    if ratio < 0.87:
+        return (f"We come out **{1.0 / ratio:.2f}x faster** than HiGHS by this measure on "
+                f"this set. That is a real measurement and a narrow one: these are small, "
+                f"well conditioned instances, and a shifted geometric mean over eight of them "
+                f"settles nothing about large models. ") + standing
+    return (f"The two are **within noise of each other** here, at {ratio:.2f}x. A narrow "
+            f"claim: eight small instances settle nothing about large models. ") + standing
 
 
 def comparison_section(path: Path | None) -> str:
@@ -222,18 +322,48 @@ def comparison_section(path: Path | None) -> str:
             out.append(f"- SANKHYA is **{ours_mean / theirs_mean:.1f}x** the HiGHS time by "
                        f"that measure")
     out.append("")
-    out.append("We expect to lose on time, and do. HiGHS is a decade of specialist work with "
-               "presolve, a dual simplex and a mature pricing scheme; this solver has none of "
-               "those yet. What the table does show is that **the answers agree**, which is "
-               "the part that has to be right first. The problem statement asks us to "
-               "compare, not to win.")
+    # Derived, not asserted. This paragraph used to state flatly that we lose on time.
+    # That was true when written and stopped being true when the product-form basis
+    # update landed, at which point the file argued against its own table two lines up.
+    ratio = ours_mean / theirs_mean if (ours and theirs and theirs_mean > 0) else None
+    out.append(comparison_verdict(ratio))
     out.append("")
     return "\n".join(out)
 
 
+def medium_section(path: Path | None) -> str:
+    """The 50-instance tier, which is the number that should be quoted.
+
+    Kept separate from the small set rather than merged into one table, because the two
+    answer different questions. The small set shows the pipeline works end to end and that
+    a judge can pick an instance safely. The medium tier says how far the solver actually
+    goes, and it is the one with failures in it.
+    """
+    if path is None:
+        return chr(10).join([
+            "Not yet run at this commit. Reproduce with:",
+            "",
+            "```",
+            "python bench/runners/fetch_data.py --set medium",
+            "python bench/runners/netlib.py --time-limit 60",
+            "```",
+            "",
+        ])
+    return netlib_section(path)
+
+
 def main() -> int:
-    netlib_csv = newest("netlib-*.csv")
+    # Both tiers, separately. Reporting only one was the whole of issue #53: the small set
+    # is 8/8, which reads as a solved problem, and the medium tier is the number that says
+    # what the solver can actually do. Publishing the first without the second is true and
+    # misleading, which CLAUDE.md's evidence rules treat as the same thing as false.
+    small_csv = newest("netlib-small-*.csv")
+    medium_csv = newest("netlib-medium-*.csv")
     compare_csv = newest("compare-highs-*.csv")
+
+    # Legacy untagged CSVs predate the tier tag; fall back so an old results directory still
+    # generates something rather than failing.
+    netlib_csv = small_csv or newest("netlib-*.csv")
 
     if netlib_csv is None:
         print("no netlib-*.csv in bench/results/; run bench/runners/netlib.py first",
@@ -264,7 +394,16 @@ rather than dropped.
 The reference optimum for each instance is parsed by `bench/runners/fetch_data.py` from
 Netlib's own `readme`. None of these values was typed from memory.
 
+### 1a. The small set — what the demo runs
+
+Eight instances, committed to the repository so a fresh clone can reproduce this with no
+network. **This is the set `demo/run_demo.sh` lets a judge pick from, and it is the easy end
+of Netlib.** Its pass rate is not the headline; section 1b is.
+
 {netlib_section(netlib_csv)}
+### 1b. The medium tier — the honest headline
+
+{medium_section(medium_csv)}
 ---
 
 ## 2. Correctness beyond the objective value
@@ -292,13 +431,18 @@ that, and both run in CI:
 
 ## 4. What these numbers do not say
 
-- The instances here are the small end of Netlib. Nothing on this page supports a claim
-  about large models.
+- **Nothing here supports a claim about large models.** The medium tier is capped at
+  instances Netlib publishes with a few hundred rows. PS26119 asks about "thousands to
+  millions of variables"; that is not demonstrated anywhere on this page, and no pass rate
+  above substitutes for it. Tracked as part of #54.
 - Wall-clock times at this size are dominated by process start-up and file reading, so
   ratios between solvers are not meaningful until the instances get big enough to matter.
-- The simplex still refactorizes a dense basis from scratch every iteration (Phase 2 by
-  design). Phase 6 replaces it with a sparse LU and Forrest–Tomlin updates, and the speed
-  numbers here are the baseline that work will be measured against.
+  The comparison in section 3 uses solver-internal time on both sides for that reason.
+- The failures in section 1b are real and are not going to be quietly dropped from a later
+  edition of this file. Each one carries the issue tracking it.
+- The largest remaining gap is not on this page at all: there is no QP engine, no
+  interior-point method and no GPU backend, all three named in PS26119. `docs/PROVENANCE.md`
+  and issue #54 carry the full accounting.
 """
 
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)

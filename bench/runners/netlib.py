@@ -67,12 +67,20 @@ CSV_COLUMNS = [
     "columns",
     "nonzeros",
     "status",
+    # The solver's own explanation. Without it every failure is just "numerical_error" and
+    # docs/BENCHMARKS.md cannot say WHICH failure, which is most of what makes a named
+    # failure useful to anyone deciding whether the tool fits their model.
+    "message",
     "our_objective",
     "published_objective",
     "absolute_gap",
     "relative_gap",
     "matches_published",
     "independently_verified",
+    # Why the verifier said no. Without it, "the verifier rejected this" cannot distinguish
+    # a bad point from a model the verifier could not parse - and those want different
+    # people looking at them.
+    "verifier_message",
     "passed",
     "wall_seconds",
     "solver_seconds",
@@ -159,6 +167,7 @@ def run_one(binary: Path, mps: Path, time_limit: float, verify: bool) -> dict:
         effort = blob.get("effort", {})
         flat = {
             "status": result.get("status", "unknown"),
+            "message": result.get("message", ""),
             "objective": as_number(result.get("objective")),
             "absolute_gap": as_number(result.get("absolute_gap")),
             "relative_gap": as_number(result.get("relative_gap")),
@@ -243,6 +252,8 @@ def main() -> int:
             "columns": blob.get("columns", ""),
             "nonzeros": blob.get("nonzeros", ""),
             "status": status,
+            "message": blob.get("message", ""),
+            "verifier_message": blob.get("verifier_output", ""),
             "our_objective": "" if ours is None else repr(ours),
             "published_objective": repr(published),
             "absolute_gap": "" if ours is None else repr(abs(ours - published)),
@@ -281,7 +292,12 @@ def main() -> int:
         # Naming the failures is not optional. A pass rate without them is a claim.
         print(f"failed: {', '.join(failed)}")
 
-    out_path = args.out or (RESULTS_DIR / f"netlib-{commit}.csv")
+    # Tier goes in the FILENAME. Both tiers at the same commit previously produced the same
+    # path, so running medium after small silently overwrote it and docs/BENCHMARKS.md could
+    # only ever describe whichever ran last.
+    tier = json.loads(reference_path.read_text()).get("instance_set", "")
+    tier_tag = f"{tier}-" if tier and tier != "explicit" else ""
+    out_path = args.out or (RESULTS_DIR / f"netlib-{tier_tag}{commit}.csv")
     # Resolve against the repository root BEFORE anything else touches it. Two separate
     # problems came from leaving a user-supplied relative path alone:
     #
@@ -305,7 +321,27 @@ def main() -> int:
     print(f"wrote {display_path(out_path)}")
 
     if args.check:
-        previous = sorted((p for p in RESULTS_DIR.glob("netlib-*.csv") if p != out_path),
+        # Compare against the SAME TIER only. Now that the tier is in the filename, a bare
+        # netlib-*.csv glob would happily take a 50-instance medium baseline for an 8-instance
+        # small run and report a catastrophic regression, or the reverse and report a triumph.
+        # Either way the gate would be measuring the size of the instance set rather than the
+        # health of the solver - the same class of silently-wrong gate #31 fixed here.
+        # Compare against a baseline covering the SAME INSTANCES, by row count rather than by
+        # filename. Matching on the tier tag alone would silently discard every CSV written
+        # before the tag existed - all of them small-set runs, and the only history there is.
+        # Matching on size keeps them and still refuses to weigh an 8-instance run against a
+        # 50-instance one, which would measure the size of the set rather than the health of
+        # the solver: the same class of silently-wrong gate #31 fixed here.
+        def comparable(candidate: Path) -> bool:
+            if candidate == out_path:
+                return False
+            try:
+                with candidate.open(newline="") as handle:
+                    return len(list(csv.DictReader(handle))) == len(rows)
+            except OSError:
+                return False
+
+        previous = sorted((p for p in RESULTS_DIR.glob("netlib-*.csv") if comparable(p)),
                           key=lambda p: p.stat().st_mtime)
         if not previous:
             print("no earlier CSV to compare against; this run is the baseline")
