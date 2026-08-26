@@ -828,5 +828,48 @@ TEST(MpsReader, LargeBoundsAreStillInfinityNotAnError) {
   EXPECT_TRUE(is_infinite(model.col_upper[0]));
 }
 
+// =========================================================================================
+// QPS quadratic sections (#55, #64)
+// =========================================================================================
+
+TEST(MpsReader, RefusesAQuadraticObjectiveSectionRatherThanIgnoringIt) {
+  // BEFORE THIS, none of these names matched a section, so a QUADOBJ block was absorbed by
+  // whatever section preceded it. A QP written after RHS was read as an extra RHS vector,
+  // Model::has_quadratic_objective() stayed false, solve() classified it LP, and the simplex
+  // returned `optimal` - for the LP RELAXATION of a quadratic program.
+  //
+  // That is the shape CLAUDE.md names as the single most damaging outcome available to this
+  // codebase. solve() does refuse a QP, but that guard reads the Hessian, and a reader that
+  // never fills one means the guard never fires. The refusal belongs here, where the
+  // evidence is.
+  for (const char* keyword : {"QUADOBJ", "QMATRIX", "QSECTION", "QUADS"}) {
+    const std::string error = parse_expecting_failure(
+        std::string("NAME          QPTEST\n") + "ROWS\n" + " N  COST\n" + " G  R1\n" +
+        "COLUMNS\n" + "    X         COST         1.0   R1           1.0\n" + "RHS\n" +
+        "    RHS       R1           2.0\n" + keyword + "\n" +
+        "    X         X            2.0\n" + "ENDATA\n");
+    EXPECT_NE(error.find("quadratic"), std::string::npos) << keyword << ": " << error;
+  }
+}
+
+TEST(MpsReader, AColumnNamedQuadobjIsStillJustAColumn) {
+  // The section check fires only on an UNINDENTED line. A data line whose first field
+  // happens to be one of those words is an ordinary name, and refusing it would break a
+  // legal file to fix a different problem.
+  const Model model = parse_or_fail(
+      "NAME          QNAME\n"
+      "ROWS\n"
+      " N  COST\n"
+      " G  R1\n"
+      "COLUMNS\n"
+      "    QUADOBJ   COST         1.0   R1           1.0\n"
+      "RHS\n"
+      "    RHS       R1           2.0\n"
+      "ENDATA\n");
+  ASSERT_EQ(model.num_cols(), 1);
+  EXPECT_EQ(model.col_names[0], "QUADOBJ");
+  EXPECT_FALSE(model.has_quadratic_objective());
+}
+
 }  // namespace
 }  // namespace sankhya
