@@ -22,26 +22,28 @@ rather than dropped.
 The reference optimum for each instance is parsed by `bench/runners/fetch_data.py` from
 Netlib's own `readme`. None of these values was typed from memory.
 
-Source CSV: `bench/results/netlib-aa68b8a.csv`  
-Commit `aa68b8a` · machine `Windows-AMD64` · generated 2026-08-25T18:20:28+00:00
+Source CSV: `bench/results/netlib-37e08f9.csv`  
+Commit `37e08f9` · machine `Windows-AMD64` · generated 2026-08-26T05:29:59+00:00
 
-**8 of 8** instances matched their published optimum to a relative 1e-6 **and** passed independent verification by `tools/verify_solution.py`.
+**8 of 8 instances in this working set** matched their published optimum to a relative 1e-6 **and** passed independent verification by `tools/verify_solution.py`.
+
+To be plain about coverage: this is **8 of the 89 instances** Netlib publishes, chosen as the small, well conditioned end of the set. It is not a claim about the other 81, and it is not a claim about large models. Widening the set is tracked as an issue.
 
 | instance | rows | cols | status | our objective | published optimum | rel. error | iters | time (s) | verified |
 |---|---:|---:|---|---:|---:|---:|---:|---:|:--:|
-| `adlittle` | 56 | 97 | optimal | 2.2549496316e+05 | 2.2549496316e+05 | 1.1e-11 | 140 | 0.061 | yes |
-| `afiro` | 27 | 32 | optimal | -4.6475314286e+02 | -4.6475314286e+02 | 6.1e-12 | 16 | 0.084 | yes |
-| `blend` | 74 | 83 | optimal | -3.0812149846e+01 | -3.0812149846e+01 | 5.6e-12 | 468 | 0.099 | yes |
-| `sc105` | 105 | 103 | optimal | -5.2202061212e+01 | -5.2202061212e+01 | 5.6e-12 | 107 | 0.080 | yes |
-| `sc50a` | 50 | 48 | optimal | -6.4575077059e+01 | -6.4575077059e+01 | 6.7e-12 | 47 | 0.058 | yes |
-| `sc50b` | 50 | 48 | optimal | -7.0000000000e+01 | -7.0000000000e+01 | 2.0e-16 | 50 | 0.081 | yes |
-| `share2b` | 96 | 79 | optimal | -4.1573224074e+02 | -4.1573224074e+02 | 3.4e-12 | 123 | 0.090 | yes |
-| `stocfor1` | 117 | 111 | optimal | -4.1131976219e+04 | -4.1131976219e+04 | 1.1e-11 | 79 | 0.089 | yes |
+| `adlittle` | 56 | 97 | optimal | 2.2549496316e+05 | 2.2549496316e+05 | 1.1e-11 | 139 | 0.072 | yes |
+| `afiro` | 27 | 32 | optimal | -4.6475314286e+02 | -4.6475314286e+02 | 6.1e-12 | 16 | 0.053 | yes |
+| `blend` | 74 | 83 | optimal | -3.0812149846e+01 | -3.0812149846e+01 | 5.6e-12 | 510 | 0.122 | yes |
+| `sc105` | 105 | 103 | optimal | -5.2202061212e+01 | -5.2202061212e+01 | 5.6e-12 | 108 | 0.055 | yes |
+| `sc50a` | 50 | 48 | optimal | -6.4575077059e+01 | -6.4575077059e+01 | 6.7e-12 | 48 | 0.049 | yes |
+| `sc50b` | 50 | 48 | optimal | -7.0000000000e+01 | -7.0000000000e+01 | 4.1e-16 | 48 | 0.067 | yes |
+| `share2b` | 96 | 79 | optimal | -4.1573224074e+02 | -4.1573224074e+02 | 3.4e-12 | 121 | 0.084 | yes |
+| `stocfor1` | 117 | 111 | optimal | -4.1131976219e+04 | -4.1131976219e+04 | 1.1e-11 | 79 | 0.038 | yes |
 
 **Summary**
 
-- shifted geometric mean solve time (shift 1s): **0.080s**
-- slowest solved instance: 0.099s
+- shifted geometric mean solve time (shift 1s): **0.067s**
+- slowest solved instance: 0.122s
 - worst relative error against a published optimum: **1.06e-11**
 - no failures on this set
 

@@ -2,7 +2,11 @@ build/
 build-*/
 .cache/
 *.o
-data/netlib/
+# data/netlib/ is deliberately NOT ignored. The eight benchmark instances are about
+# 100 KB of text in total, and committing them means a fresh clone can run the whole
+# benchmark and the demo with no network - including the part that matters most, where
+# a judge picks the instance. Provenance is unaffected: every CSV row records the
+# instance sha256 and reference.json records the upstream readme hash.
 data/miplib/
 data/qplib/
 __pycache__/

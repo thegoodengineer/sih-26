@@ -465,8 +465,13 @@ def verify(model: Model, solution: Solution, primal_tol: float, dual_tol: float,
                      f"recomputed {objective:.12e}, solver said {claimed:.12e}, "
                      f"difference {abs(objective - claimed):.3e}")
 
-    if solution.status not in ("optimal", "feasible"):
-        report.note("duality", f"skipped: status is {solution.status}")
+    if solution.status != "optimal":
+        # Strong duality is a test of OPTIMALITY. A solver reporting kFeasible is explicitly
+        # declining to claim optimality - a first-order method that stopped on a tolerance,
+        # or a search stopped by a limit - so holding its point to an optimality standard
+        # measures something it never asserted. Primal feasibility, integrality and the
+        # objective are all still checked above, and those are what kFeasible does assert.
+        report.note("duality", f"skipped: status is {solution.status}, not an optimality claim")
         return report
 
     if integer_columns:

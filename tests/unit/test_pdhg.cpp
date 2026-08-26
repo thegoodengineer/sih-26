@@ -20,6 +20,7 @@
 
 #include "sankhya/model.hpp"
 #include "sankhya/options.hpp"
+#include "sankhya/tolerances.hpp"
 
 #include "oracles/lp_generator.hpp"
 #include "oracles/rational_simplex.hpp"
@@ -197,6 +198,38 @@ TEST(Pdhg, AgreesWithTheSimplexOnGeneratedInstances) {
   }
   EXPECT_EQ(disagreed, 0);
   EXPECT_GT(compared, 60) << "too few instances converged for this to mean anything";
+}
+
+TEST(Pdhg, OptimalIsNeverClaimedOnAPointThatWouldFailVerification) {
+  // The bug this pins: PDHG converges on RELATIVE residuals, dividing by (1 + ||bounds||).
+  // On a model whose right-hand sides are large, a relative 1e-8 leaves an absolute
+  // violation orders of magnitude bigger - and the engine used to stamp "optimal" on it,
+  // which tools/verify_solution.py then rejected. kOptimal now means, and must keep meaning,
+  // "this point would survive verification".
+  //
+  // Right-hand side 1e5 makes the two measures diverge by five orders of magnitude.
+  const Model model = make_lp({{1.0, 1.0}}, {1.0e5}, {kInfinity}, {1.0, 1.0});
+
+  for (const double requested : {1e-4, 1e-6, 1e-8}) {
+    const Solution s = solve(model, pdhg_options(requested));
+    if (s.status != SolveStatus::kOptimal) continue;
+    EXPECT_LE(s.primal_infeasibility, tol::kPrimalFeasibility)
+        << "claimed optimal at requested tolerance " << requested
+        << " with absolute primal infeasibility " << s.primal_infeasibility;
+    EXPECT_LE(s.integrality_violation, tol::kIntegrality);
+  }
+}
+
+TEST(Pdhg, AFeasibleStatusStillMeansTheePointIsActuallyFeasible) {
+  // kFeasible is a weaker claim than kOptimal but it is still a claim: sankhya::Solution
+  // documents it as "a feasible point exists and is reported". Stopping on a relative
+  // residual alone would let this engine assert feasibility for a point that misses the
+  // project's own primal tolerance.
+  const Model model = make_lp({{1.0, 1.0}}, {1.0e5}, {kInfinity}, {1.0, 1.0});
+  const Solution s = solve(model, pdhg_options(1e-6));
+  if (s.status == SolveStatus::kOptimal || s.status == SolveStatus::kFeasible) {
+    EXPECT_LE(s.primal_infeasibility, tol::kPrimalFeasibility);
+  }
 }
 
 }  // namespace

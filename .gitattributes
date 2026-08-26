@@ -5,3 +5,11 @@
 *.png binary
 *.gz  binary
 *.mps text eol=lf
+
+# Benchmark instances are stored byte-for-byte, with NO line-ending conversion.
+# Every benchmark CSV records the sha256 of the instance it solved, and that number is only
+# meaningful if the bytes are the same everywhere. Netlib's emps decoder writes CRLF when it
+# runs on Windows and LF elsewhere, so leaving these to text normalisation would give a
+# cloned tree and a freshly fetched one two different hashes for the same instance.
+data/netlib/*.mps -text
+data/**/*.mps -text

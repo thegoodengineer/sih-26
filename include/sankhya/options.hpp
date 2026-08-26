@@ -35,6 +35,19 @@ struct OptionSpec {
   double max_value = 0.0;
   /// For String options, the permitted values. Empty means unrestricted.
   std::vector<std::string> choices;
+
+  /// Empty when the option is live. Otherwise the phase that will implement it, e.g.
+  /// "Phase 6".
+  ///
+  /// An option table is a capability list, and `sankhya options` is one of the first things
+  /// anyone runs. Registering a knob the solver never reads and printing it exactly like a
+  /// working one overstates the product - and it is the cheapest kind of overclaim to catch:
+  /// set it, watch nothing happen, ask why. The entry stays registered, because the CLI, the
+  /// C API and the bindings all read this one table and removing rows would churn all three;
+  /// what changes is that the printed table says so.
+  std::string planned_for{};
+
+  [[nodiscard]] bool implemented() const { return planned_for.empty(); }
 };
 
 /// A mutable set of solver options, initialised from the registry defaults.
