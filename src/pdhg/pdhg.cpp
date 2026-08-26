@@ -85,9 +85,49 @@ struct Residuals {
   double primal_objective = 0.0;
   double dual_objective = 0.0;
 
+  /// The same violations UNSCALED. A relative residual divides by (1 + ||bounds||), so on a
+  /// model whose right-hand sides run to 1e4 a relative 1e-8 still permits an absolute
+  /// violation around 1e-4. That is standard and fine as a stopping rule - it is what the
+  /// PDLP literature uses - but it is NOT the standard the rest of this project reports
+  /// against, and conflating the two is how the solver ends up stamping "optimal" on a point
+  /// tools/verify_solution.py then rejects.
+  double absolute_primal = 0.0;
+  double absolute_dual = 0.0;
+
+  /// The duality gap normalised the way tools/verify_solution.py normalises it, by
+  /// max(1, |primal objective|), rather than the PDLP convention of 1 + |primal| + |dual|.
+  /// The two differ by roughly a factor of two, which is more than enough for this engine to
+  /// pass its own optimality test and fail the verifier's on the same point. The PDLP form
+  /// stays as the stopping rule because that is the literature convention; the claim is
+  /// judged by the verifier's form because that is what will be checked.
+  double gap_as_verified = 0.0;
+
+  /// max |multiplier| * slack over rows and columns - the same product form
+  /// tools/verify_solution.py uses. The duality gap implies this only in the limit, so a
+  /// point can show a tiny gap and still price a constraint it is not sitting on.
+  double complementarity = 0.0;
+
   [[nodiscard]] double worst() const { return std::max({primal, dual, gap}); }
-  [[nodiscard]] bool converged(double tolerance) const {
-    return primal <= tolerance && dual <= tolerance && gap <= tolerance;
+
+  /// Has the run met the tolerance the CALLER asked for, AND is the point actually feasible
+  /// in absolute terms? Both are required to stop.
+  ///
+  /// The absolute half is not pedantry. kFeasible in sankhya::Solution asserts that a
+  /// feasible point is being reported, so stopping on a relative residual alone would let
+  /// this engine claim feasibility for a point that misses the project's own primal
+  /// tolerance - a weaker claim than kOptimal, but still one the verifier rejects.
+  [[nodiscard]] bool meets_request(double tolerance) const {
+    return primal <= tolerance && dual <= tolerance && gap <= tolerance &&
+           absolute_primal <= tol::kPrimalFeasibility;
+  }
+
+  /// Would this point survive independent verification? These are the project's own
+  /// tolerances from include/sankhya/tolerances.hpp, the same ones the .sol file is judged
+  /// against, and meeting them is the ONLY basis on which this engine claims kOptimal.
+  [[nodiscard]] bool meets_project_standard() const {
+    return absolute_primal <= tol::kPrimalFeasibility &&
+           absolute_dual <= tol::kDualFeasibility && gap_as_verified <= tol::kDualityGap &&
+           complementarity <= 1e-6;
   }
 };
 
@@ -126,7 +166,8 @@ Residuals evaluate(const Problem& problem, const std::vector<double>& x,
     }
     primal_violation += violation * violation;
   }
-  r.primal = std::sqrt(primal_violation) / (1.0 + problem.bound_norm);
+  r.absolute_primal = std::sqrt(primal_violation);
+  r.primal = r.absolute_primal / (1.0 + problem.bound_norm);
 
   // ---- Dual: d = c + A'y. A component of d is only a violation where no bound can absorb
   // it, i.e. a positive reduced cost on a variable with no lower bound, or a negative one
@@ -179,7 +220,34 @@ Residuals evaluate(const Problem& problem, const std::vector<double>& x,
       }
     }
   }
-  r.dual = std::sqrt(dual_violation) / (1.0 + problem.cost_norm);
+  r.absolute_dual = std::sqrt(dual_violation);
+  r.dual = r.absolute_dual / (1.0 + problem.cost_norm);
+
+  // Complementary slackness, in the product form the verifier uses.
+  for (Index i = 0; i < rows; ++i) {
+    const auto u = static_cast<std::size_t>(i);
+    if (model.row_lower[u] == model.row_upper[u]) continue;  // equality: always tight
+    const double lower_slack = is_finite_bound(model.row_lower[u])
+                                   ? (*activity)[u] - model.row_lower[u]
+                                   : std::numeric_limits<double>::infinity();
+    const double upper_slack = is_finite_bound(model.row_upper[u])
+                                   ? model.row_upper[u] - (*activity)[u]
+                                   : std::numeric_limits<double>::infinity();
+    r.complementarity =
+        std::max(r.complementarity, std::fabs(y[u]) * std::min(lower_slack, upper_slack));
+  }
+  for (Index j = 0; j < cols; ++j) {
+    const auto u = static_cast<std::size_t>(j);
+    if (model.col_lower[u] == model.col_upper[u]) continue;  // fixed column
+    const double lower_slack = is_finite_bound(model.col_lower[u])
+                                   ? x[u] - model.col_lower[u]
+                                   : std::numeric_limits<double>::infinity();
+    const double upper_slack = is_finite_bound(model.col_upper[u])
+                                   ? model.col_upper[u] - x[u]
+                                   : std::numeric_limits<double>::infinity();
+    r.complementarity = std::max(r.complementarity,
+                                 std::fabs((*reduced)[u]) * std::min(lower_slack, upper_slack));
+  }
 
   double primal_objective = 0.0;
   for (Index j = 0; j < cols; ++j) {
@@ -188,8 +256,9 @@ Residuals evaluate(const Problem& problem, const std::vector<double>& x,
   }
   r.primal_objective = primal_objective;
   r.dual_objective = bound_contribution - support;
-  r.gap = std::fabs(r.primal_objective - r.dual_objective) /
-          (1.0 + std::fabs(r.primal_objective) + std::fabs(r.dual_objective));
+  const double absolute_gap = std::fabs(r.primal_objective - r.dual_objective);
+  r.gap = absolute_gap / (1.0 + std::fabs(r.primal_objective) + std::fabs(r.dual_objective));
+  r.gap_as_verified = absolute_gap / std::max(1.0, std::fabs(r.primal_objective));
   return r;
 }
 
@@ -466,7 +535,14 @@ Solution solve_pdhg(const Model& model, const Options& options, Logger& logger) 
     logger.iteration(iteration, sense * better.primal_objective, better.primal, better.dual,
                      timer.elapsed_seconds());
 
-    if (better.converged(tolerance)) {
+    if (better.meets_request(tolerance)) {
+      // Report the point that PASSED, not whichever earlier iterate happened to have the
+      // smallest relative residual. best_x tracks worst(), which is a relative measure, so
+      // an earlier iterate can hold that title while being less feasible in absolute terms -
+      // and reporting it would hand back a point that never satisfied the stopping test.
+      best = better;
+      best_x = *chosen_x;
+      best_y = *chosen_y;
       converged = true;
       break;
     }
@@ -538,19 +614,39 @@ Solution solve_pdhg(const Model& model, const Options& options, Logger& logger) 
   solution.iterations = iteration;
   solution.solve_seconds = timer.elapsed_seconds();
 
-  if (converged) {
+  // kOptimal is a claim that this point would survive tools/verify_solution.py, which
+  // measures ABSOLUTE feasibility against the tolerances in tolerances.hpp. Meeting the
+  // caller's RELATIVE tolerance is a different and weaker statement: on a model whose
+  // right-hand sides run to 1e4, a relative 1e-8 leaves an absolute violation around 1e-4.
+  //
+  // Claiming optimality on the weaker test is how this engine came to stamp "optimal" on
+  // points the verifier rejected. A point that stops on the caller's tolerance but misses
+  // the project standard is a usable answer with no optimality claim attached - which is
+  // exactly what kFeasible means, and it is what gets reported now.
+  const bool verifiable = converged && final_residuals.meets_project_standard();
+
+  if (verifiable) {
     solution.status = SolveStatus::kOptimal;
-    solution.message =
-        fmt::format("converged to a relative {:.1e} after {} iterations and {} restarts",
-                    tolerance, iteration, restarts);
-  } else if (timer.elapsed_seconds() > time_limit) {
-    solution.status = SolveStatus::kTimeLimit;
+    solution.message = fmt::format(
+        "converged after {} iterations and {} restarts; absolute primal {:.3e}, dual {:.3e}, "
+        "relative gap {:.3e}",
+        iteration, restarts, final_residuals.absolute_primal, final_residuals.absolute_dual,
+        final_residuals.gap_as_verified);
+  } else if (converged) {
+    solution.status = SolveStatus::kFeasible;
+    solution.message = fmt::format(
+        "met the requested relative tolerance {:.1e} after {} iterations, but NOT the "
+        "absolute standard this project verifies against (primal {:.3e} vs {:.1e}, dual "
+        "{:.3e} vs {:.1e}, relative gap {:.3e} vs {:.1e}). Reported as feasible, not "
+        "optimal. Tighten --option pdhg_tolerance to close it",
+        tolerance, iteration, final_residuals.absolute_primal, tol::kPrimalFeasibility,
+        final_residuals.absolute_dual, tol::kDualFeasibility, final_residuals.gap_as_verified,
+        tol::kDualityGap);
   } else {
-    solution.status = SolveStatus::kIterationLimit;
-  }
-  if (!converged) {
     // PDHG stopping short is the normal case, not an exception. Report the residuals it
     // actually reached rather than implying the point is optimal.
+    solution.status = timer.elapsed_seconds() > time_limit ? SolveStatus::kTimeLimit
+                                                           : SolveStatus::kIterationLimit;
     solution.message = fmt::format(
         "stopped at relative primal {:.3e}, dual {:.3e}, gap {:.3e} after {} iterations "
         "and {} restarts (target {:.1e})",
@@ -558,8 +654,9 @@ Solution solve_pdhg(const Model& model, const Options& options, Logger& logger) 
         tolerance);
   }
 
-  solution.recompute_quality(model);
-  if (converged) {
+  // Only a verifiable point carries a dual bound. Anything else leaves it unknown, which is
+  // the infinity on the unexplored side of the objective.
+  if (verifiable) {
     solution.dual_bound = sense * final_residuals.dual_objective + model.objective_offset;
   } else {
     solution.dual_bound = model.sense == ObjSense::kMaximize ? kInfinity : -kInfinity;

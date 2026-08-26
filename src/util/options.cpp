@@ -118,13 +118,16 @@ const std::vector<OptionSpec>& Options::registry() {
                  0.0,
                  0.0,
                  {"auto", "free", "fixed"}});
+    // Default false, not true: no presolve exists yet, and a default of true made the
+    // solver assert on every run that reductions had been applied.
     s.push_back({"presolve",
                  OptionType::Bool,
-                 true,
+                 false,
                  "Run presolve reductions before solving.",
                  0.0,
                  0.0,
-                 {}});
+                 {},
+                 "Phase 6"});
     s.push_back({"gpu",
                  OptionType::Bool,
                  false,
@@ -138,14 +141,16 @@ const std::vector<OptionSpec>& Options::registry() {
                  "Worker threads; 0 means one per hardware core.",
                  0.0,
                  1024.0,
-                 {}});
+                 {},
+                 "Phase 7"});
     s.push_back({"deterministic",
                  OptionType::Bool,
                  true,
                  "Reproduce identical results across thread counts (work-based clock).",
                  0.0,
                  0.0,
-                 {}});
+                 {},
+                 "Phase 7"});
     s.push_back({"random_seed",
                  OptionType::Int,
                  std::int64_t{0},
@@ -226,7 +231,8 @@ const std::vector<OptionSpec>& Options::registry() {
                  "Print scaling ranges, basis conditioning and refactorization counts.",
                  0.0,
                  0.0,
-                 {}});
+                 {},
+                 "Phase 9"});
     return s;
   }();
   return specs;

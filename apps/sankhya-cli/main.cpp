@@ -54,9 +54,23 @@ void print_option_table() {
       case sankhya::OptionType::Double: type_name = "double"; break;
       case sankhya::OptionType::String: type_name = "string"; break;
     }
+    // An option the solver does not read yet is marked, not hidden. The registry is the
+    // one table the CLI, the C API and the bindings all share, so entries stay put; what
+    // must not happen is a planned knob printing exactly like a working one.
+    const std::string description =
+        spec.implemented()
+            ? spec.description
+            : fmt::format("[NOT IMPLEMENTED - {}] {}", spec.planned_for, spec.description);
     fmt::print("{:<32} {:<8} {:<12} {}\n", spec.name, type_name,
-               defaults.value_as_string(spec.name), spec.description);
+               defaults.value_as_string(spec.name), description);
   }
+
+  // The algorithm choices need the same honesty: two of the five are not engines yet,
+  // and asking for one returns not_solved rather than an answer.
+  fmt::print(
+      "\nalgorithm choices: auto and simplex select the revised primal simplex; pdhg "
+      "selects the\nfirst-order engine. dual-simplex and ipm are NOT IMPLEMENTED "
+      "(Phases 6 and 8) and\nreturn not_solved if requested.\n");
 }
 
 /// True when the path names an LP-format file, ignoring a trailing .gz.

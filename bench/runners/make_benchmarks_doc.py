@@ -79,9 +79,14 @@ def netlib_section(path: Path) -> str:
         f"Source CSV: `bench/results/{path.name}`  ",
         f"Commit `{commit}` · machine `{machine}` · generated {timestamp}",
         "",
-        f"**{len(passed)} of {len(rows)}** instances matched their published optimum to a "
-        f"relative 1e-6 **and** passed independent verification by "
+        f"**{len(passed)} of {len(rows)} instances in this working set** matched their "
+        f"published optimum to a relative 1e-6 **and** passed independent verification by "
         f"`tools/verify_solution.py`.",
+        "",
+        f"To be plain about coverage: this is **{len(rows)} of the 89 instances** Netlib "
+        f"publishes, chosen as the small, well conditioned end of the set. It is not a claim "
+        f"about the other 81, and it is not a claim about large models. Widening the set is "
+        f"tracked as an issue.",
         "",
         "| instance | rows | cols | status | our objective | published optimum | rel. error |"
         " iters | time (s) | verified |",

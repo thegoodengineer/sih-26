@@ -66,17 +66,27 @@ Beyond the objective, the solution file carries the **shadow price of every row*
 blending model those are the numbers a refinery planner acts on: what one more unit of
 diesel commitment costs, and what the sulphur specification is worth.
 
+## Demo
+
+```bash
+demo/run_demo.sh --list      # the instances a judge can pick from
+demo/run_demo.sh share2b     # solve it live, then verify it independently
+```
+
+The eight Netlib instances are committed, so the demo needs no network. Every number it
+prints comes from a command it just ran.
+
 ## Layout
 
 ```
 include/sankhya/  public headers — Model, Solution, Options, tolerances, sparse containers
 src/core          Model/Solution implementation and the solve() dispatcher
 src/util          logging, timers, arena allocator, option registry
-src/la            sparse linear algebra
 src/io            MPS + LP readers, solution and JSON writers
-src/simplex       primal revised simplex, dense LU     (dual simplex: Phase 6)
-src/pdhg src/gpu  first-order method, CUDA backend     (Phase 4)
-src/mip           branch and cut                       (Phase 5)
+src/simplex       primal revised simplex               (dual simplex: Phase 6)
+src/la            sparse containers, sparse Markowitz LU, dense LU (test oracle only)
+src/pdhg          restarted PDHG, CPU                  (CUDA backend: not started)
+src/mip           branch and bound                     (cutting planes: Phase 7)
 src/ipm src/qp    interior point, convex QP            (Phase 8)
 tests/  bench/  tools/  docs/  demo/
 ```
