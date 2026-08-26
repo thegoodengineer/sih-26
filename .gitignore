@@ -13,3 +13,9 @@ __pycache__/
 .venv/
 compile_commands.json
 .vscode/
+# Written by the HiGHS command-line binary, which bench/runners/compare.py shells out to
+# for the reference comparison. It is an artifact OF a third-party solver run, not of our
+# build - nothing in SANKHYA produces or reads it, and no HiGHS code is linked or vendored.
+# Ignored so a comparison run does not leave a file in the repo root that looks, at a
+# glance, like HiGHS is part of this project. See docs/PROVENANCE.md.
+Highs.log
