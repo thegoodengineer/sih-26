@@ -331,7 +331,12 @@ def main() -> int:
         median = ordered[len(ordered) // 2]
         print(f"median solve-time ratio SANKHYA/HiGHS: {median:.2f}x  (>1 means we are slower)")
 
-    out_path = args.out or (RESULTS_DIR / f"compare-highs-{commit}.csv")
+    # Tier in the filename, for the same reason netlib.py carries one: running the medium
+    # comparison after the small one at the same commit otherwise overwrites it, and
+    # docs/BENCHMARKS.md can then only ever describe whichever ran last.
+    tier = json.loads((DATA_DIR / "reference.json").read_text()).get("instance_set", "")
+    tier_tag = f"{tier}-" if tier and tier != "explicit" else ""
+    out_path = args.out or (RESULTS_DIR / f"compare-highs-{tier_tag}{commit}.csv")
     # Resolve against the repository root BEFORE anything else touches it. Two separate
     # problems came from leaving a user-supplied relative path alone:
     #

@@ -24,6 +24,7 @@ from __future__ import annotations
 import csv
 import json
 import math
+import statistics
 import sys
 from pathlib import Path
 
@@ -202,6 +203,7 @@ def netlib_section(path: Path) -> str:
         "|---|---:|---:|---|---:|---:|---:|---:|---:|:--:|",
     ]
 
+
     for row in sorted(rows, key=lambda r: r["instance"]):
         ours = as_float(row, "our_objective")
         published = as_float(row, "published_objective")
@@ -295,12 +297,15 @@ def comparison_section(path: Path | None) -> str:
         "| instance | SANKHYA obj | HiGHS obj | agree | SANKHYA (s) | HiGHS (s) | ratio |",
         "|---|---:|---:|:--:|---:|---:|---:|",
     ]
+    ratios: list[float] = []
     for row in sorted(rows, key=lambda r: r["instance"]):
         a = as_float(row, "sankhya_objective")
         b = as_float(row, "highs_objective")
         sa = as_float(row, "sankhya_seconds")
         sb = as_float(row, "highs_seconds")
         ratio = as_float(row, "speed_ratio_sankhya_over_highs")
+        if ratio is not None:
+            ratios.append(ratio)
         out.append(
             f"| `{row['instance']}` "
             f"| {'-' if a is None else f'{a:.8e}'} | {'-' if b is None else f'{b:.8e}'} "
@@ -325,7 +330,24 @@ def comparison_section(path: Path | None) -> str:
     # Derived, not asserted. This paragraph used to state flatly that we lose on time.
     # That was true when written and stopped being true when the product-form basis
     # update landed, at which point the file argued against its own table two lines up.
+    ours_mean = shifted_geometric_mean(ours) if ours else 0.0
+    theirs_mean = shifted_geometric_mean(theirs) if theirs else 0.0
     ratio = ours_mean / theirs_mean if (ours and theirs and theirs_mean > 0) else None
+
+    # The MEDIAN alongside the geometric mean, because on the medium tier they say different
+    # things - 1.4x against 3.3x - and the gap between them is the finding. A uniform 3.3x
+    # would mean the solver is broadly slow; a median near 1 with a mean of 3.3 means it is
+    # competitive on most instances and pathological on a few, which points at specific
+    # instances to fix rather than at the whole engine. Reporting only the mean would hide
+    # that, and reporting only the median would flatter us.
+    per_instance = sorted(r for r in ratios if r is not None)
+    if len(per_instance) >= 3:
+        median = statistics.median(per_instance)
+        slowest = per_instance[-1]
+        out.append(f"- per-instance ratio: median **{median:.2f}x**, worst **{slowest:.2f}x**, "
+                   f"faster than HiGHS on **{sum(1 for r in per_instance if r < 1.0)} of "
+                   f"{len(per_instance)}** instances")
+    out.append("")
     out.append(comparison_verdict(ratio))
     out.append("")
     return "\n".join(out)
@@ -359,7 +381,9 @@ def main() -> int:
     # misleading, which CLAUDE.md's evidence rules treat as the same thing as false.
     small_csv = newest("netlib-small-*.csv")
     medium_csv = newest("netlib-medium-*.csv")
-    compare_csv = newest("compare-highs-*.csv")
+    compare_small_csv = newest("compare-highs-small-*.csv")
+    compare_medium_csv = newest("compare-highs-medium-*.csv")
+    compare_csv = compare_medium_csv or compare_small_csv or newest("compare-highs-*.csv")
 
     # Legacy untagged CSVs predate the tier tag; fall back so an old results directory still
     # generates something rather than failing.
@@ -425,6 +449,15 @@ that, and both run in CI:
 ---
 
 ## 3. Comparison against an established solver
+
+HiGHS is the reference. It runs as a SEPARATE PROCESS over the same MPS files; no HiGHS code
+is linked into, or read by, SANKHYA - see `docs/PROVENANCE.md`. Both sides are timed on
+solver-internal time only.
+
+The comparison below is run on **the same tier as section 1b**, not on the eight-instance
+demo set. Comparing only where we pass would be the easy version of this table and would say
+nothing: the instances we fail are exactly the ones a reader should want to see against a
+mature solver.
 
 {comparison_section(compare_csv)}
 ---
