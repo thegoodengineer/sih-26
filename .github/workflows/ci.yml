@@ -123,6 +123,60 @@ jobs:
       - name: numpy, for the condition number only
         run: pip install numpy
 
+      # The synthetic generator (#18). Small on purpose - this is a smoke test that the
+      # generator still produces a solvable instance whose analytic optimum both engines
+      # find, not a scale benchmark. 400x400 solves in under a second on both; the sizes
+      # where the two engines diverge cost a minute of simplex time each and belong in a
+      # benchmark run, not on every pull request.
+      - name: Synthetic large LP generator
+        run: |
+          set -euo pipefail
+          mkdir -p bench/large
+
+          python3 bench/runners/generate_large_lp.py             --rows 400 --cols 400 --nnz-per-col 5 --seed 42 --out bench/large/ci.mps
+
+          # The analytic optimum is read out of the instance's own header, which the
+          # generator writes, rather than hard-coded here where it would rot the moment the
+          # construction changed.
+          expected=$(grep -oE 'analytic optimum = -?[0-9]+' bench/large/ci.mps | grep -oE -- '-?[0-9]+$')
+          echo "analytic optimum from the file header: $expected"
+
+          # Written once rather than heredoc'd inside the loop below: a heredoc in a loop
+          # body is a fragile construct, and the first version of this step silently skipped
+          # its second iteration - the pdhg check never ran and the step still looked like it
+          # had tested both engines.
+          cat > check_analytic.py <<'PYEOF'
+          import json, sys
+          engine, expected = sys.argv[1], float(sys.argv[2])
+          blob = json.load(open(f"ci-{engine}.json"))
+          status = blob["result"]["status"]
+          objective = blob["result"]["objective"]
+          assert status in ("optimal", "feasible"), f"{engine}: status is {status}"
+          rel = abs(objective - expected) / max(1.0, abs(expected))
+          assert rel <= 1e-6, (f"{engine}: objective {objective!r} vs analytic {expected!r}, "
+                               f"relative error {rel:.3e}")
+          print(f"{engine}: {status}, objective {objective!r} matches the analytic optimum")
+          PYEOF
+
+          for engine in simplex pdhg; do
+            echo "--- $engine ---"
+            # `solve` returns 0 ONLY for optimal; a limit or a feasible-but-unproven point is
+            # 1, and 5 is a real error (see apps/sankhya-cli/main.cpp). PDHG legitimately
+            # returns `feasible` here - it meets its relative tolerance but not the absolute
+            # standard this project verifies against - so a bare invocation under `set -e`
+            # aborts the loop. The first version of this step did exactly that: it passed
+            # having silently never checked pdhg at all.
+            code=0
+            ./build/sankhya solve bench/large/ci.mps --time-limit 120               --option algorithm=$engine --option log_to_console=false               --stats "ci-$engine.json" || code=$?
+            if [ "$code" -ge 5 ]; then
+              echo "::error::$engine failed with exit code $code"
+              exit 1
+            fi
+            # The status and the objective are checked properly below; the exit code only
+            # distinguishes "ran" from "errored".
+            python3 check_analytic.py "$engine" "$expected"
+          done
+
       - name: PS26119 case studies
         run: |
           set -euo pipefail
