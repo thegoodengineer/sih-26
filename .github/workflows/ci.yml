@@ -128,9 +128,29 @@ jobs:
           cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Release -DSANKHYA_BUILD_TESTS=OFF
           cmake --build build -j
 
+      # data/netlib/ is gitignored, so without a cache this job downloads the whole set
+      # from netlib.org on every run. A netlib.org outage then turns the benchmark red for
+      # a reason unrelated to the change under review - and over a sprint that trains
+      # everyone to ignore a red benchmark job, which is the one job whose failure matters
+      # most.
+      #
+      # Keyed on fetch_data.py itself, because that file decides both WHICH instances are
+      # fetched (the --set tiers) and HOW the published optima are parsed out of the
+      # readme. Any change to either has to re-fetch; nothing else needs to.
+      - name: Cache the fetched Netlib instances
+        id: netlib-cache
+        uses: actions/cache@v4
+        with:
+          path: data/netlib
+          key: netlib-v1-${{ hashFiles('bench/runners/fetch_data.py') }}
+
       # Downloads the instances and PARSES the reference optima out of Netlib's own
       # readme. No expected value is stored in this repository, so the benchmark cannot
       # be made to pass by editing a constant.
+      #
+      # Still runs on a cache hit. It is cheap when the files are already present, it
+      # re-verifies every sha256 in reference.json, and it keeps the fetch path on the
+      # tested route rather than letting it rot behind a cache that always hits.
       - name: Fetch the Netlib set and its published optima
         run: python3 bench/runners/fetch_data.py
 
