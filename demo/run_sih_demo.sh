@@ -280,19 +280,7 @@ fi
 # ===========================================================================================
 # Read the medium-tier result out of the newest committed CSV. Falls back to naming the
 # reproduction command if none is present, rather than printing a number from nowhere.
-MEDIUM_SUMMARY="$("$PYTHON" - <<'PYMED'
-import csv, pathlib, sys
-results = sorted(pathlib.Path("bench/results").glob("netlib-medium-*.csv"))
-if not results:
-    print("an unknown number - no medium-tier CSV in bench/results/")
-    sys.exit(0)
-newest = results[-1]
-rows = list(csv.DictReader(newest.open(newline="")))
-passed = sum(1 for r in rows if r.get("passed") == "1")
-commit = rows[0].get("git_commit", "?") if rows else "?"
-print(f"{passed}, measured on commit {commit}")
-PYMED
-)"
+MEDIUM_SUMMARY="$("$PYTHON" bench/runners/latest_result.py "netlib-medium-*.csv" --summary)"
 
 rule "6. What PS26119 asks for that we do NOT yet have"
 # THE MEDIUM-TIER FIGURE BELOW IS READ FROM THE COMMITTED CSV, not typed here. The demo does

@@ -1,0 +1,105 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+"""Pick the most recent results CSV for a glob, ordered by GIT HISTORY.
+
+WHY NOT THE OBVIOUS THINGS. Two of them were tried here and both are wrong:
+
+  Sorting by FILENAME sorts the commit sha as text, which is meaningless. It put
+  `netlib-medium-e71ad03.csv` after `netlib-medium-a90db47.csv` purely because `e` follows
+  `a`, so the demo reported 40/50 from a superseded run when the current one said 41/50.
+
+  Sorting by MODIFICATION TIME is right on the machine that produced the files and wrong
+  everywhere else: git does not record mtimes, so a fresh clone stamps every file with the
+  checkout time and the order becomes arbitrary. That is precisely the situation a judge is
+  in, and the failure is silent - a plausible number from the wrong run.
+
+Every results CSV records the commit it was produced at, and `git log` orders those exactly.
+That ordering is identical on every clone, which is the property the other two lack.
+
+    python bench/runners/latest_result.py "netlib-medium-*.csv"
+"""
+from __future__ import annotations
+
+import argparse
+import csv
+import subprocess
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+RESULTS_DIR = REPO_ROOT / "bench" / "results"
+
+
+def commit_order() -> list[str]:
+    """Full commit hashes, newest first. Empty when git is unavailable."""
+    try:
+        out = subprocess.run(["git", "log", "--format=%H"], cwd=REPO_ROOT,
+                             capture_output=True, text=True, check=True)
+    except (OSError, subprocess.CalledProcessError):
+        return []
+    return out.stdout.split()
+
+
+def commit_of(path: Path) -> str:
+    """The commit recorded in a results CSV's first row."""
+    try:
+        with path.open(newline="", encoding="utf-8") as handle:
+            for row in csv.DictReader(handle):
+                return (row.get("git_commit") or "").strip()
+    except (OSError, ValueError):
+        pass
+    return ""
+
+
+def latest(pattern: str) -> Path | None:
+    candidates = list(RESULTS_DIR.glob(pattern))
+    if not candidates:
+        return None
+
+    order = commit_order()
+    # Position in `git log`, so smaller is newer. A CSV whose commit is not in this history -
+    # produced on another branch, or rebased away - sorts last rather than being dropped: a
+    # stale number is better than no number, and the caller prints which commit it came from.
+    index = {sha: i for i, sha in enumerate(order)}
+
+    def rank(path: Path) -> tuple[int, float]:
+        recorded = commit_of(path)
+        position = len(order)
+        if recorded:
+            for sha, i in index.items():
+                if sha.startswith(recorded):
+                    position = i
+                    break
+        # mtime only breaks ties among commits git cannot order.
+        return (position, -path.stat().st_mtime)
+
+    return sorted(candidates, key=rank)[0]
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("pattern", help='e.g. "netlib-medium-*.csv"')
+    parser.add_argument("--summary", action="store_true",
+                        help="print 'PASSED, measured on commit SHA' instead of the path")
+    args = parser.parse_args()
+
+    path = latest(args.pattern)
+    if path is None:
+        if args.summary:
+            print(f"an unknown number - no CSV matching {args.pattern} in bench/results/")
+            return 0
+        return 1
+
+    if not args.summary:
+        print(path)
+        return 0
+
+    rows = list(csv.DictReader(path.open(newline="", encoding="utf-8")))
+    passed = sum(1 for row in rows if row.get("passed") == "1")
+    commit = rows[0].get("git_commit", "?") if rows else "?"
+    print(f"{passed}, measured on commit {commit}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
