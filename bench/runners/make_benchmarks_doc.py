@@ -157,6 +157,11 @@ def comparison_section(path: Path | None) -> str:
         "",
         f"**{agreed} of {len(rows)}** instances where the two solvers agree on the objective.",
         "",
+        "Times are **solver-internal on both sides** - HiGHS's own `getRunTime()` against our "
+        "`effort.solve_seconds` - so process start-up is excluded for both. At this instance "
+        "size start-up would otherwise dominate and the comparison would measure the wrong "
+        "thing entirely.",
+        "",
         "| instance | SANKHYA obj | HiGHS obj | agree | SANKHYA (s) | HiGHS (s) | ratio |",
         "|---|---:|---:|:--:|---:|---:|---:|",
     ]
@@ -186,6 +191,12 @@ def comparison_section(path: Path | None) -> str:
         if theirs_mean > 0:
             out.append(f"- SANKHYA is **{ours_mean / theirs_mean:.1f}x** the HiGHS time by "
                        f"that measure")
+    out.append("")
+    out.append("We expect to lose on time, and do. HiGHS is a decade of specialist work with "
+               "presolve, a dual simplex and a mature pricing scheme; this solver has none of "
+               "those yet. What the table does show is that **the answers agree**, which is "
+               "the part that has to be right first. The problem statement asks us to "
+               "compare, not to win.")
     out.append("")
     return "\n".join(out)
 

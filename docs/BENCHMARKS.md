@@ -22,8 +22,8 @@ rather than dropped.
 The reference optimum for each instance is parsed by `bench/runners/fetch_data.py` from
 Netlib's own `readme`. None of these values was typed from memory.
 
-Source CSV: `bench/results/netlib-37e08f9.csv`  
-Commit `37e08f9` · machine `Windows-AMD64` · generated 2026-08-26T05:29:59+00:00
+Source CSV: `bench/results/netlib-30d7c6c.csv`  
+Commit `30d7c6c` · machine `Windows-AMD64` · generated 2026-08-26T05:44:53+00:00
 
 **8 of 8 instances in this working set** matched their published optimum to a relative 1e-6 **and** passed independent verification by `tools/verify_solution.py`.
 
@@ -31,19 +31,19 @@ To be plain about coverage: this is **8 of the 89 instances** Netlib publishes, 
 
 | instance | rows | cols | status | our objective | published optimum | rel. error | iters | time (s) | verified |
 |---|---:|---:|---|---:|---:|---:|---:|---:|:--:|
-| `adlittle` | 56 | 97 | optimal | 2.2549496316e+05 | 2.2549496316e+05 | 1.1e-11 | 139 | 0.072 | yes |
-| `afiro` | 27 | 32 | optimal | -4.6475314286e+02 | -4.6475314286e+02 | 6.1e-12 | 16 | 0.053 | yes |
-| `blend` | 74 | 83 | optimal | -3.0812149846e+01 | -3.0812149846e+01 | 5.6e-12 | 510 | 0.122 | yes |
-| `sc105` | 105 | 103 | optimal | -5.2202061212e+01 | -5.2202061212e+01 | 5.6e-12 | 108 | 0.055 | yes |
-| `sc50a` | 50 | 48 | optimal | -6.4575077059e+01 | -6.4575077059e+01 | 6.7e-12 | 48 | 0.049 | yes |
-| `sc50b` | 50 | 48 | optimal | -7.0000000000e+01 | -7.0000000000e+01 | 4.1e-16 | 48 | 0.067 | yes |
-| `share2b` | 96 | 79 | optimal | -4.1573224074e+02 | -4.1573224074e+02 | 3.4e-12 | 121 | 0.084 | yes |
-| `stocfor1` | 117 | 111 | optimal | -4.1131976219e+04 | -4.1131976219e+04 | 1.1e-11 | 79 | 0.038 | yes |
+| `adlittle` | 56 | 97 | optimal | 2.2549496316e+05 | 2.2549496316e+05 | 1.1e-11 | 139 | 0.110 | yes |
+| `afiro` | 27 | 32 | optimal | -4.6475314286e+02 | -4.6475314286e+02 | 6.1e-12 | 16 | 0.054 | yes |
+| `blend` | 74 | 83 | optimal | -3.0812149846e+01 | -3.0812149846e+01 | 5.6e-12 | 510 | 0.110 | yes |
+| `sc105` | 105 | 103 | optimal | -5.2202061212e+01 | -5.2202061212e+01 | 5.6e-12 | 108 | 0.098 | yes |
+| `sc50a` | 50 | 48 | optimal | -6.4575077059e+01 | -6.4575077059e+01 | 6.7e-12 | 48 | 0.057 | yes |
+| `sc50b` | 50 | 48 | optimal | -7.0000000000e+01 | -7.0000000000e+01 | 4.1e-16 | 48 | 0.052 | yes |
+| `share2b` | 96 | 79 | optimal | -4.1573224074e+02 | -4.1573224074e+02 | 3.4e-12 | 121 | 0.079 | yes |
+| `stocfor1` | 117 | 111 | optimal | -4.1131976219e+04 | -4.1131976219e+04 | 1.1e-11 | 79 | 0.075 | yes |
 
 **Summary**
 
-- shifted geometric mean solve time (shift 1s): **0.067s**
-- slowest solved instance: 0.122s
+- shifted geometric mean solve time (shift 1s): **0.079s**
+- slowest solved instance: 0.110s
 - worst relative error against a published optimum: **1.06e-11**
 - no failures on this set
 
@@ -69,18 +69,31 @@ that, and both run in CI:
 
 ## 3. Comparison against an established solver
 
-No comparison has been run yet, so **this section states no numbers**.
+Source CSV: `bench/results/compare-highs-30d7c6c.csv`  
+Commit `30d7c6c` · machine `Windows-AMD64`
 
-`bench/runners/compare.py` is written and ready; it needs a HiGHS binary on the
-machine, which is invoked purely as an external subprocess and is never linked
-into SANKHYA (see the red line in `CLAUDE.md`).
+**8 of 8** instances where the two solvers agree on the objective.
 
-```bash
-apt-get install highs      # or conda install -c conda-forge highs
-python bench/runners/compare.py --time-limit 60
-```
+Times are **solver-internal on both sides** - HiGHS's own `getRunTime()` against our `effort.solve_seconds` - so process start-up is excluded for both. At this instance size start-up would otherwise dominate and the comparison would measure the wrong thing entirely.
 
-Once run, this section regenerates itself from the emitted CSV.
+| instance | SANKHYA obj | HiGHS obj | agree | SANKHYA (s) | HiGHS (s) | ratio |
+|---|---:|---:|:--:|---:|---:|---:|
+| `adlittle` | 2.25494963e+05 | 2.25494963e+05 | yes | 0.019 | 0.008 | 2.49x |
+| `afiro` | -4.64753143e+02 | -4.64753143e+02 | yes | 0.000 | 0.002 | 0.29x |
+| `blend` | -3.08121498e+01 | -3.08121498e+01 | yes | 0.112 | 0.005 | 24.90x |
+| `sc105` | -5.22020612e+01 | -5.22020612e+01 | yes | 0.020 | 0.003 | 6.62x |
+| `sc50a` | -6.45750771e+01 | -6.45750771e+01 | yes | 0.004 | 0.002 | 2.23x |
+| `sc50b` | -7.00000000e+01 | -7.00000000e+01 | yes | 0.004 | 0.002 | 1.94x |
+| `share2b` | -4.15732241e+02 | -4.15732241e+02 | yes | 0.048 | 0.008 | 6.31x |
+| `stocfor1` | -4.11319762e+04 | -4.11319762e+04 | yes | 0.016 | 0.005 | 3.21x |
+
+**Summary**
+
+- SANKHYA shifted geometric mean: **0.027s**
+- HiGHS shifted geometric mean: **0.004s**
+- SANKHYA is **6.6x** the HiGHS time by that measure
+
+We expect to lose on time, and do. HiGHS is a decade of specialist work with presolve, a dual simplex and a mature pricing scheme; this solver has none of those yet. What the table does show is that **the answers agree**, which is the part that has to be right first. The problem statement asks us to compare, not to win.
 
 ---
 
