@@ -1,0 +1,222 @@
+
+[1m0. What this is[0m
+======================================================================================
+SANKHYA 0.1.0 (a0e2dae, Release, GNU 16.2.0, CUDA off)
+
+SANKHYA is a mathematical optimization solver core written from scratch in C++20 for
+SIH PS26119, issued by Mangalore Refinery and Petrochemicals. LP and MILP engines are
+implemented and benchmarked; QP is not yet. This script walks the problem statement in
+its own order. Where we do not have something, it says so rather than changing the subject.
+
+[1m1. Sovereignty: not built on an existing solver[0m
+======================================================================================
+
+[2mPS26119 asks:[0m 'It shall not be built upon any existing open source solver library but shall be built
+              from scratch from mathematical foundation.'
+
+Everything the binary links against, right now:
+    	ntdll.dll => /c/WINDOWS/SYSTEM32/ntdll.dll (0x7ffc7e7a0000)
+    	KERNEL32.DLL => /c/WINDOWS/System32/KERNEL32.DLL (0x7ffc7d930000)
+    	KERNELBASE.dll => /c/WINDOWS/System32/KERNELBASE.dll (0x7ffc7bba0000)
+    	ucrtbase.dll => /c/WINDOWS/System32/ucrtbase.dll (0x7ffc7c240000)
+    	zlib1.dll => /c/msys64/ucrt64/bin/zlib1.dll (0x7ffc65620000)
+
+CBC, Clp, HiGHS, SCIP, SoPlex, GLPK, lp_solve, OSQP, PDLP, OR-Tools, Gurobi, CPLEX and
+Xpress appear nowhere in that list - not their simplex, not their cuts, not their MPS
+reader. The simplex, the LU factorization, the branch and bound, the MPS parser and the
+first-order method are all ours. docs/PROVENANCE.md carries the dependency table, the
+algorithm-to-citation table and the full CMake link line; CI regenerates an SPDX SBOM.
+
+[1m2. The LP core, on a recognised benchmark library[0m
+======================================================================================
+
+[2mPS26119 asks:[0m 'The solver should successfully solve standard benchmark problems from recognised
+              optimization libraries such as MIPLIB, Netlib or Mittelmann benchmark sets.'
+
+Solving the committed Netlib set live, and checking every answer against the optimum
+published by netlib.org - which bench/runners/fetch_data.py parses from their readme.
+
+
+instance   status            our objective             published   rel err  iters    time  verified  result
+--------------------------------------------------------------------------------------------------------
+adlittle   optimal      2.254949631624e+05    2.254949631600e+05   1.1e-11    163   0.03s  yes     PASS
+afiro      optimal     -4.647531428571e+02   -4.647531428600e+02   6.1e-12     16   0.02s  yes     PASS
+blend      optimal     -3.081214984583e+01   -3.081214984600e+01   5.6e-12    421   0.06s  yes     PASS
+sc105      optimal     -5.220206121171e+01   -5.220206121200e+01   5.6e-12    109   0.02s  yes     PASS
+sc50a      optimal     -6.457507705856e+01   -6.457507705900e+01   6.7e-12     47   0.02s  yes     PASS
+sc50b      optimal     -7.000000000000e+01   -7.000000000000e+01   2.0e-16     49   0.02s  yes     PASS
+share2b    optimal     -4.157322407414e+02   -4.157322407400e+02   3.4e-12    117   0.03s  yes     PASS
+stocfor1   optimal     -4.113197621944e+04   -4.113197621900e+04   1.1e-11     79   0.02s  yes     PASS
+--------------------------------------------------------------------------------------------------------
+8/8 matched the published optimum to a relative 1e-06 AND passed independent verification
+wrote C:/Users/gurav/AppData/Local/Temp/tmp.UcFJ3xitlN/netlib.csv
+
+[1m3. The industrial scope PS26119 names[0m
+======================================================================================
+
+[2mPS26119 asks:[0m 'refinery scheduling, crude blending, process optimization, production planning,
+              logistics, power system dispatch, transportation and supply chain management.'
+
+    case study             class    rows   cols  status            objective
+    ----------------------------------------------------------------------------
+    crude blending         LP          3      3  optimal          214.145946
+    refinery scheduling    MILP        3      4  optimal          223.857605
+    power dispatch         MILP       10      8  optimal         3270.000000
+    supply chain           LP          7     12  optimal         4500.000000
+    production planning    MILP        8     11  optimal          770.000000
+
+Each of those was then handed to tools/verify_solution.py, which has its OWN MPS reader
+and links no part of our C++. It re-derives the row activities, the objective, the
+reduced costs and the duality gap independently:
+
+    crude_blend.mps                    VERIFIED: 11 checks passed
+    blend_milp.mps                     VERIFIED: 8 checks passed
+    power_dispatch.mps                 VERIFIED: 8 checks passed
+    supply_chain.mps                   VERIFIED: 11 checks passed
+    lot_sizing.mps                     VERIFIED: 8 checks passed
+
+--- What a planner actually reads: the shadow prices on the blend ------------------
+
+The dual value on a constraint is the marginal worth of relaxing it by one unit. It is
+the output a refinery planner acts on, and it is why an LP is worth solving exactly.
+
+    THRUPUT      activity     107.813514    shadow price       0.000000
+    DIESEL       activity      40.000000    shadow price       4.972973
+    SULPHUR      activity      -0.000000    shadow price       1.135135
+
+--- A MILP answer corroborated by exhaustion, not by itself ------------------------
+
+verify_solution.py can confirm a MILP answer is feasible, integral and that the bound closed.
+It CANNOT confirm no better answer exists - that is the whole content of the search, and a
+branch and bound which wrongly fathoms a node returns a point that passes every such check.
+The dispatch instance is small enough to settle by exhaustion, so we settle it:
+
+    Exhaustive oracle over all 16 commitment patterns (4 of them can serve the load):
+        committed        GA GB GC
+        GA                 100.00 MW
+        GB                 120.00 MW
+        GC                  30.00 MW
+        GD                   0.00 MW
+        total cost       3270.000000
+
+    SANKHYA returned:  3270.0  in 4 nodes
+    AGREES with the exhaustive oracle to 1e-9.
+
+[1m4. Numerical robustness, on the three hazards PS26119 names[0m
+======================================================================================
+
+[2mPS26119 asks:[0m '...challenging large-scale optimization problems involving degeneracy, weak LP
+              relaxations or ill-conditioned constraint matrices, where simpler
+              implementations struggle to achieve reliable convergence.'
+
+(a) DEGENERACY - data/casestudies/supply_chain.mps
+
+    Balanced transportation: total supply equals total demand, so the seven equality rows
+    are linearly DEPENDENT and the constraint matrix has rank 6, not 7. A basis needs
+    m + n - 1 = 6 basic variables against 7 rows, so a basic variable sits at zero at every
+    iteration and ratio-test ties are the norm. This is the classical cycling test bed - the
+    structure that makes a naive simplex stall forever on a sequence of zero-length steps.
+
+    Measured, not asserted. The matrix is read by verify_solution.py's INDEPENDENT MPS
+    reader, and the rank is computed EXACTLY by elimination over the rationals - no
+    singular-value threshold to pick, and no SANKHYA code involved:
+
+        7 rows x 12 columns, exact rank 6  ->  1 redundant row(s)
+        every basis is therefore degenerate: 1 basic variable(s) pinned at zero
+
+    SANKHYA: status optimal, objective 4500.0, 13 iterations, no stall.
+    Anti-cycling is Bland's rule, cited in src/simplex/primal_simplex.cpp.
+
+(b) ILL-CONDITIONING - data/casestudies/ill_conditioned.mps
+
+    The SAME model, with rows scaled by 10^-6 ... 10^+6 and columns re-parameterised by
+    10^-6 ... 10^+4. Both are exact changes of variable, so the optimal objective MUST be
+    unchanged. That makes the robustness claim falsifiable instead of decorative: we know
+    the right answer, so a solver that drifts here cannot hide it.
+
+    what the scaling did to the matrix, measured the same independent way:
+
+<frozen importlib._bootstrap>:491: Warning: Numpy built with MINGW-W64 on Windows 64 bits is experimental, and only available for 
+testing. You are advised not to use it for production. 
+
+CRASHES ARE TO BE EXPECTED - PLEASE REPORT THEM TO NUMPY DEVELOPERS
+        entries span 1.000e-10 to 1.000e+12, a ratio of 1.000e+22
+        2-norm condition number: 2.235e+28
+
+    well-scaled supply_chain:    4500.0
+    ill-conditioned re-scaling:  4500.0
+    relative difference:         0.000e+00
+    The two agree. The scaling did not move the answer.
+
+(c) WEAK LP RELAXATION - data/casestudies/lot_sizing.mps
+
+    Lot sizing with a big-M set-up link, x_t <= M y_t. In the relaxation y_t is free to take
+    x_t / M, so a period producing one unit pays 1/180 of a set-up rather than a whole one.
+    The bound therefore sits far below the integer optimum and branch and bound has to close
+    the difference by search. This is the standard weak-formulation failure mode.
+
+    LP relaxation bound:               510.0
+    proven integer optimum:            770.0
+    nodes explored to close it:        12
+    integrality gap the search closed: 33.77%
+
+[1m5. Compared against an established solver[0m
+======================================================================================
+
+[2mPS26119 asks:[0m '...with solution quality and computational performance compared against at least one
+              established commercial or open-source solver.'
+
+HiGHS is the reference. It is invoked as a SEPARATE PROCESS over the same MPS files;
+no HiGHS code is linked into, or read by, SANKHYA. Both sides are timed on solver
+time only, so neither is charged for interpreter start-up.
+
+times are SOLVER-INTERNAL on both sides: HiGHS getRunTime() against our
+         effort.solve_seconds. Process start-up is excluded for both.
+machine  Windows-AMD64   time limit 60.0s
+
+instance            SANKHYA obj           HiGHS obj  agree  SANKHYA s   HiGHS s   ratio
+---------------------------------------------------------------------------------------
+adlittle       2.2549496316e+05    2.2549496316e+05    yes     0.007s    0.000s-
+afiro         -4.6475314286e+02   -4.6475314286e+02    yes     0.000s    0.000s-
+blend         -3.0812149846e+01   -3.0812149846e+01    yes     0.042s    0.000s-
+sc105         -5.2202061212e+01   -5.2202061212e+01    yes     0.008s    0.000s-
+sc50a         -6.4575077059e+01   -6.4575077059e+01    yes     0.001s    0.000s-
+sc50b         -7.0000000000e+01   -7.0000000000e+01    yes     0.002s    0.000s-
+share2b       -4.1573224074e+02   -4.1573224074e+02    yes     0.040s    0.000s-
+stocfor1      -4.1131976219e+04   -4.1131976219e+04    yes     0.030s    0.010s    3.03
+---------------------------------------------------------------------------------------
+8/8 instances where the two solvers agree on the objective
+median solve-time ratio SANKHYA/HiGHS: 3.03x  (>1 means we are slower)
+wrote C:/Users/gurav/AppData/Local/Temp/tmp.UcFJ3xitlN/compare.csv
+
+[1m6. What PS26119 asks for that we do NOT yet have[0m
+======================================================================================
+    Stating these is the point. A solver that is vague about its limits is not one an
+    industrial user can plan around.
+
+    QP                  Not implemented. PS26119 names LP, MILP and QP as the initial focus.
+                        The Model already carries the Hessian and solve() refuses a QP with
+                        `not_solved` rather than silently reporting its LP relaxation.
+    Interior point      Not implemented. The continuous engines today are revised simplex
+                        (exact, gives a basis) and restarted PDHG (first-order, CPU).
+    Cutting planes      Branch and bound is plain: no Gomory, MIR or cover cuts yet, no
+                        pseudocost branching. Tracked as issue #23.
+    GPU acceleration    NOT WRITTEN. The first-order method it needs exists and runs on CPU;
+                        the CUDA backend is issues #16-#19. --gpu today prints a warning and
+                        falls back to CPU. We are not claiming a speed-up we have not measured.
+    Scale               Everything above is small. The committed Netlib set is the small end
+                        of Netlib, and NOTHING here supports a claim about the "thousands to
+                        millions of variables" the problem statement asks for. On the wider
+                        50-instance Netlib medium set we pass 37, measured on commit a2f4bbe.
+                        That is issue #34, and it is the honest headline number, not the 8/8
+                        above. Reproduce it with:
+                            python bench/runners/fetch_data.py --set medium
+                            python bench/runners/netlib.py --time-limit 60
+    Parallelism         Single-threaded today.
+
+    Where we already lose: HiGHS beats us on the median instance above. We publish that
+    rather than bury it - the problem statement asks us to compare, not to win, and HiGHS is
+    a decade of specialist work. The claim we do make is narrower and checkable: on every
+    instance we report as solved, the answer matches the published optimum AND survives an
+    independent verifier that shares no code with the solver.
+
