@@ -174,6 +174,51 @@ TEST(BranchAndBound, StopsOnALooseRelativeGapAndReportsFeasible) {
   EXPECT_LE(relative, 0.5 + 1e-9);
 }
 
+TEST(BranchAndBound, AnAlreadyProvenTreeReportsOptimalNotFeasible) {
+  // Found via data/casestudies/power_dispatch.mps (4-unit single-period unit commitment,
+  // #37's own reference implementation in generate.py). The termination check added for
+  // #37 computes gap = incumbent - open_bound, where open_bound is the best bound among
+  // nodes still OPEN. That is fine when some open node genuinely still offers a chance of
+  // improvement (gap > 0). It is wrong when every remaining node's bound is ALREADY worse
+  // than the incumbent (gap <= 0) but the node has not been popped and pruned yet: gap
+  // then goes negative, and "negative <= a small positive target" is trivially true, so
+  // the search stops and reports kFeasible on a tree that is - once that last node is
+  // honestly visited and fathomed - actually fully exhausted. That is proven optimality,
+  // not an early stop, and must report kOptimal.
+  //
+  // Reconstructed directly (not read from the .mps) so this test has no file-path
+  // dependency on data/casestudies/. cost, Pmin, Pmax, start-up per unit:
+  //   GA  10   20  100  100      GB  12   30  120   80
+  //   GC  20   10  150   50      GD   8   50   60  450
+  // Columns: P_GA P_GB P_GC P_GD U_GA U_GB U_GC U_GD. Demand 250, reserve margin 1.15.
+  const Model model = make_milp(
+      {
+          {1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0},        // DEMAND: sum P_g = 250
+          {0.0, 0.0, 0.0, 0.0, 100.0, 120.0, 150.0, 60.0},  // RESERVE: sum Pmax_g*U_g >= 287.5
+          {1.0, 0.0, 0.0, 0.0, -100.0, 0.0, 0.0, 0.0},      // CAPMX_GA: P - Pmax*U <= 0
+          {1.0, 0.0, 0.0, 0.0, -20.0, 0.0, 0.0, 0.0},       // CAPMN_GA: P - Pmin*U >= 0
+          {0.0, 1.0, 0.0, 0.0, 0.0, -120.0, 0.0, 0.0},      // CAPMX_GB
+          {0.0, 1.0, 0.0, 0.0, 0.0, -30.0, 0.0, 0.0},       // CAPMN_GB
+          {0.0, 0.0, 1.0, 0.0, 0.0, 0.0, -150.0, 0.0},      // CAPMX_GC
+          {0.0, 0.0, 1.0, 0.0, 0.0, 0.0, -10.0, 0.0},       // CAPMN_GC
+          {0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, -60.0},       // CAPMX_GD
+          {0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, -50.0},       // CAPMN_GD
+      },
+      {250.0, 287.5, -kInfinity, 0.0, -kInfinity, 0.0, -kInfinity, 0.0, -kInfinity, 0.0},
+      {250.0, kInfinity, 0.0, kInfinity, 0.0, kInfinity, 0.0, kInfinity, 0.0, kInfinity},
+      {10.0, 12.0, 20.0, 8.0, 100.0, 80.0, 50.0, 450.0},
+      {100.0, 120.0, 150.0, 60.0, 1.0, 1.0, 1.0, 1.0},
+      {false, false, false, false, true, true, true, true});
+
+  const Solution s = solve(model, mip_options());
+  ASSERT_EQ(s.status, SolveStatus::kOptimal)
+      << "the tree closes fully on this instance (4 nodes, all reachable); a search that "
+         "stops on a spuriously negative gap reports kFeasible here instead. message: "
+      << s.message;
+  EXPECT_NEAR(s.objective, 3270.0, 1e-6);
+  EXPECT_NEAR(s.dual_bound, s.objective, 1e-9);
+}
+
 TEST(BranchAndBound, MaximisationIsReportedInTheOriginalSense) {
   Model model =
       make_milp({{5.0, 4.0}}, {-kInfinity}, {9.0}, {10.0, 7.0}, {1.0, 1.0}, {true, true});

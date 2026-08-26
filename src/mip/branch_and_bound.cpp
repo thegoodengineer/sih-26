@@ -439,14 +439,25 @@ Solution BranchAndBound::run() {
         open_bound = std::min(open_bound, nodes_[static_cast<std::size_t>(open_index)].bound);
       }
       const double gap = incumbent_internal_ - open_bound;
-      const double relative = gap / std::max(1.0, std::fabs(incumbent_internal_));
-      if (gap <= absolute_gap_target_ || relative <= relative_gap_target_) {
-        limit_hit = true;
-        solution.message = fmt::format(
-            "stopped on a {} gap target ({:.3e} absolute, {:.3e} relative) after {} nodes",
-            relative <= relative_gap_target_ ? "relative" : "absolute", gap, relative,
-            nodes_explored_);
-        break;
+      // gap <= 0 means open_bound already >= the incumbent: every node still in the tree
+      // is one can_prune() would fathom the moment it is popped, so nothing open can beat
+      // what has already been found. That is proven optimality, not a tolerance being met
+      // early - the ordinary per-node prune below closes the tree on its own and reports
+      // kOptimal. Treating a non-positive gap as "target met" here would report kFeasible
+      // on an already-exhausted tree: negative <= a small positive target is trivially
+      // true, so an unvisited, already-dead node's stale inherited bound (which need not
+      // sit below the incumbent once every OTHER branch has been explored) would fire this
+      // check before the loop ever reaches it to prune it honestly.
+      if (gap > 0.0) {
+        const double relative = gap / std::max(1.0, std::fabs(incumbent_internal_));
+        if (gap <= absolute_gap_target_ || relative <= relative_gap_target_) {
+          limit_hit = true;
+          solution.message = fmt::format(
+              "stopped on a {} gap target ({:.3e} absolute, {:.3e} relative) after {} nodes",
+              relative <= relative_gap_target_ ? "relative" : "absolute", gap, relative,
+              nodes_explored_);
+          break;
+        }
       }
     }
 
