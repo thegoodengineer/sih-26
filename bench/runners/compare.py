@@ -86,10 +86,26 @@ def git_commit() -> str:
 
 
 def find_highs(explicit: Path | None) -> Path | None:
+    """A HiGHS command-line binary, if the machine has one."""
     if explicit is not None:
         return explicit if explicit.exists() else None
     found = shutil.which("highs") or shutil.which("highs.exe")
     return Path(found) if found else None
+
+
+def find_highspy():
+    """The `highspy` package, as a fallback when no HiGHS binary is installed.
+
+    Still an external solver, still never linked into SANKHYA: `highspy` is a pip package
+    that this benchmark script imports, and nothing in `src/` knows it exists. It is not a
+    build dependency and no part of HiGHS informs our code. See the red line in CLAUDE.md
+    and section 1 of docs/PROVENANCE.md.
+    """
+    try:
+        import highspy  # noqa: PLC0415 - optional, only needed for the comparison
+        return highspy
+    except ImportError:
+        return None
 
 
 def default_sankhya() -> Path:
@@ -114,33 +130,79 @@ def run_sankhya(binary: Path, mps: Path, time_limit: float) -> dict:
             return {"status": "no_output", "objective": None, "seconds": wall,
                     "iterations": ""}
         blob = json.loads(stats.read_text())
+        effort = blob.get("effort", {})
+        # Solver-internal time, to match what HiGHS reports. Process wall time is kept
+        # alongside it because it is the number a user actually waits through, but it is not
+        # the number the two solvers are compared on - it would be dominated by start-up on
+        # instances this small.
+        internal = as_number(effort.get("solve_seconds"))
         return {
             "status": blob.get("result", {}).get("status", "unknown"),
             "objective": as_number(blob.get("result", {}).get("objective")),
-            "seconds": wall,
-            "iterations": blob.get("effort", {}).get("iterations", ""),
+            "seconds": wall if internal is None else internal,
+            "wall_seconds": wall,
+            "iterations": effort.get("iterations", ""),
         }
 
 
 # HiGHS prints a summary block; these are the lines we need out of it.
 HIGHS_STATUS = re.compile(r"^\s*Model\s+status\s*:\s*(.+?)\s*$", re.M | re.I)
 HIGHS_OBJECTIVE = re.compile(r"^\s*Objective\s+value\s*:\s*(-?[\d.eE+]+)\s*$", re.M | re.I)
+HIGHS_ITERATIONS = re.compile(r"^\s*Simplex\s+iterations?\s*:\s*(\d+)\s*$", re.M | re.I)
+HIGHS_RUNTIME = re.compile(r"^\s*HiGHS\s+run\s+time\s*:\s*([\d.eE+-]+)\s*$", re.M | re.I)
 
 
-def run_highs(binary: Path, mps: Path, time_limit: float) -> dict:
+def run_highs_binary(binary: Path, mps: Path, time_limit: float) -> dict:
     started = time.perf_counter()
-    completed = subprocess.run(
-        [str(binary), str(mps), "--time_limit", str(time_limit)],
-        capture_output=True, text=True)
+    completed = subprocess.run([str(binary), str(mps), "--time_limit", str(time_limit)],
+                               capture_output=True, text=True)
+    wall = time.perf_counter() - started
+    text = completed.stdout + completed.stderr
+
+    status = HIGHS_STATUS.search(text)
+    objective = HIGHS_OBJECTIVE.search(text)
+    iterations = HIGHS_ITERATIONS.search(text)
+    runtime = HIGHS_RUNTIME.search(text)
+    return {
+        "status": status.group(1).strip().lower() if status else "unparsed",
+        "objective": float(objective.group(1)) if objective else None,
+        "iterations": int(iterations.group(1)) if iterations else "",
+        # Prefer HiGHS's own reported run time; fall back to wall clock.
+        "seconds": float(runtime.group(1)) if runtime else wall,
+        "wall_seconds": wall,
+        "raw": text[-500:] if objective is None else "",
+    }
+
+
+def run_highs_python(highspy, mps: Path, time_limit: float) -> dict:
+    """Solve through the `highspy` package, reporting HiGHS's OWN run time.
+
+    Timing note, and it matters for honesty: a Python process pays roughly 50 ms of
+    interpreter start-up, which is more than ten times what HiGHS takes to solve `afiro`.
+    Timing the process would therefore make our solver look good for a reason that has
+    nothing to do with either solver. Both sides are measured by their own internal solve
+    time instead - HiGHS's `getRunTime()` against our `effort.solve_seconds` - which is also
+    what published benchmark tables report.
+    """
+    solver = highspy.Highs()
+    solver.setOptionValue("output_flag", False)
+    solver.setOptionValue("time_limit", float(time_limit))
+    started = time.perf_counter()
+    solver.readModel(str(mps))
+    solver.run()
     wall = time.perf_counter() - started
 
-    text = completed.stdout + completed.stderr
-    status_match = HIGHS_STATUS.search(text)
-    objective_match = HIGHS_OBJECTIVE.search(text)
-    status = status_match.group(1).strip().lower() if status_match else "unparsed"
-    objective = float(objective_match.group(1)) if objective_match else None
-    return {"status": status, "objective": objective, "seconds": wall,
-            "raw": text[-500:] if objective is None else ""}
+    info = solver.getInfo()
+    status = solver.modelStatusToString(solver.getModelStatus()).strip().lower()
+    optimal = status == "optimal"
+    return {
+        "status": status,
+        "objective": info.objective_function_value if optimal else None,
+        "iterations": info.simplex_iteration_count,
+        "seconds": solver.getRunTime(),
+        "wall_seconds": wall,
+        "raw": "",
+    }
 
 
 def relative_error(value: float | None, published: float) -> float | None:
@@ -159,19 +221,23 @@ def main() -> int:
     parser.add_argument("--out", type=Path, default=None)
     args = parser.parse_args()
 
+    # Prefer a real command-line binary; fall back to the highspy package. Either way HiGHS
+    # runs as a separate solver and is never linked into SANKHYA.
     highs = find_highs(args.highs_binary)
-    if highs is None:
-        # Refusing to invent numbers is the whole point of this project. No binary, no row.
+    highspy = None if highs is not None else find_highspy()
+    if highs is None and highspy is None:
+        # Refusing to invent numbers is the whole point of this project. No HiGHS, no row.
         print("HiGHS was not found on this machine, so no comparison was run.")
         print()
         print("Install it (none of these affects the SANKHYA build):")
+        print("    pip install highspy")
         print("    apt-get install highs")
         print("    conda install -c conda-forge highs")
-        print("    or a release from https://github.com/ERGO-Code/HiGHS/releases")
         print()
         print("then re-run:")
         print("    python bench/runners/compare.py --time-limit 60")
         return 2
+    backend = str(highs) if highs is not None else "highspy (pip package, separate process)"
 
     sankhya = args.sankhya_binary or default_sankhya()
     reference_path = DATA_DIR / "reference.json"
@@ -186,7 +252,9 @@ def main() -> int:
     timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
 
     print(f"SANKHYA  {sankhya}")
-    print(f"HiGHS    {highs}   (external subprocess; never linked)")
+    print(f"HiGHS    {backend}   (external solver; never linked)")
+    print("times are SOLVER-INTERNAL on both sides: HiGHS getRunTime() against our")
+    print("         effort.solve_seconds. Process start-up is excluded for both.")
     print(f"machine  {machine}   time limit {args.time_limit}s")
     print()
     print(f"{'instance':<11}{'SANKHYA obj':>20}{'HiGHS obj':>20}{'agree':>7}"
@@ -200,7 +268,8 @@ def main() -> int:
             continue
         published = reference[name]["published_optimal"]
         ours = run_sankhya(sankhya, mps, args.time_limit)
-        theirs = run_highs(highs, mps, args.time_limit)
+        theirs = (run_highs_binary(highs, mps, args.time_limit) if highs is not None
+                  else run_highs_python(highspy, mps, args.time_limit))
 
         our_error = relative_error(ours["objective"], published)
         their_error = relative_error(theirs["objective"], published)
@@ -244,7 +313,7 @@ def main() -> int:
     if ratios:
         ordered = sorted(ratios)
         median = ordered[len(ordered) // 2]
-        print(f"median wall-time ratio SANKHYA/HiGHS: {median:.2f}x")
+        print(f"median solve-time ratio SANKHYA/HiGHS: {median:.2f}x  (>1 means we are slower)")
 
     out_path = args.out or (RESULTS_DIR / f"compare-highs-{commit}.csv")
     with out_path.open("w", newline="") as handle:

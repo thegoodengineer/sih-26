@@ -4,7 +4,7 @@ This document exists so that the claim "built from mathematical foundations, not
 around an existing solver" can be **checked** rather than believed. It is maintained
 continuously, not written at the end.
 
-Last updated: **Phase 5** (branch and bound). Every number and every command output below was
+Last updated: **Phase 6** (sparse LU), with the HiGHS comparison run. Every number and every command output below was
 produced by running the command shown, on the machine described, at the commit recorded.
 
 ---
@@ -16,9 +16,11 @@ list explicitly includes CBC, Clp, HiGHS, SCIP, SoPlex, GLPK, lp_solve, OSQP, PD
 cuPDLP / cuPDLP-C / cuPDLPx, OR-Tools GLOP and CP-SAT, Gurobi, CPLEX and Xpress — not their
 simplex, not their cuts, not their MPS readers.
 
-HiGHS appears later in this project **only** as an externally installed comparison binary
-invoked as a subprocess by `bench/runners/compare.py` (Phase 3). It is never linked, never
-a build dependency, and no part of its source informs ours.
+HiGHS appears in this project **only** as the comparison baseline in
+`bench/runners/compare.py`. It runs either as an externally installed command-line binary or,
+where none is present, through the `highspy` pip package in a separate Python process. It is
+never linked into SANKHYA, never a build dependency, and no part of its source informs ours.
+The comparison results are in `docs/BENCHMARKS.md` section 3.
 
 ---
 
@@ -33,6 +35,7 @@ Every dependency is a general-purpose library. None of them solves an optimizati
 | **nlohmann/json** | 3.11.3 | MIT | header-only | JSON serialisation for the `--stats` result blob. |
 | **zlib** | 1.3.1 | zlib | yes, static | DEFLATE decompression, for `.mps.gz` inputs (Phase 2). |
 | **GoogleTest** | 1.14.0 | BSD-3-Clause | test binary only | Unit test framework. Never linked into `sankhya_core`. |
+| **highspy** | pip, benchmark only | MIT | **never linked** | The HiGHS solver, used ONLY as the comparison baseline in `bench/runners/compare.py`. It runs in a separate Python process, is not a build dependency, and nothing in `src/` knows it exists. Its source does not inform ours - see the red line in section 1. |
 
 Planned, not yet present:
 

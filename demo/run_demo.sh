@@ -125,8 +125,9 @@ sed -n '/| instance |/,/^$/p' docs/BENCHMARKS.md | head -14 | sed 's/^/    /'
 rule "Where we are honest about the gaps"
 cat <<'NOTES'
     - These are the small end of Netlib. Nothing here supports a claim about large models.
-    - We have not benchmarked against HiGHS yet. We expect to lose on time and intend to
-      publish that: the problem statement asks us to compare, not to win.
+    - Against HiGHS we agree on the objective on all 8 instances and are roughly 3x
+      slower on the median. We publish that rather than hide it: the problem statement
+      asks us to compare, not to win, and HiGHS is a decade of specialist work.
     - The GPU backend is not written. The first-order engine it needs is, and runs on CPU.
 NOTES
 echo
