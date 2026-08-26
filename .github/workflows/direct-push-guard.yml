@@ -1,0 +1,85 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Fail loudly when a commit reaches main without having gone through a pull request.
+#
+# WHY THIS EXISTS RATHER THAN BRANCH PROTECTION. Branch protection and rulesets both require
+# GitHub Pro on a private repository, and this one is private until submission. So the rule
+# cannot be enforced at the server: every collaborator has push access and always will while
+# that is true.
+#
+# What this job does instead is make a direct push VISIBLE. It cannot stop one - by the time
+# it runs the commit is already on main - but it turns a silent bypass into a red build and a
+# notification, which is the difference between a convention nobody can check and one
+# everybody can. If it fires, the fix is not to delete the job.
+#
+# Every squash-merged pull request also arrives on main as a push event, and those are fine:
+# the resulting commit IS associated with its pull request, which is exactly what the check
+# below asks the API. A commit with no associated PR is one that never had a review, never
+# ran the gates on its own branch, and never appeared in the record.
+name: direct-push guard
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  came-from-a-pull-request:
+    name: main only advances through a PR
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check this commit belongs to a merged pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.sha }}
+          REPO: ${{ github.repository }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+
+          # The commit that a squash merge produces is associated with the PR it came from,
+          # so this is the same question as "did this go through review", asked of the API
+          # rather than of anyone's memory.
+          count=$(gh api "repos/$REPO/commits/$SHA/pulls" \
+                    -H "Accept: application/vnd.github.groot-preview+json" \
+                    --jq 'length')
+
+          if [ "$count" -gt 0 ]; then
+            echo "OK: $SHA came from a pull request."
+            gh api "repos/$REPO/commits/$SHA/pulls" \
+              -H "Accept: application/vnd.github.groot-preview+json" \
+              --jq '.[] | "  #\(.number)  \(.title)"'
+            exit 0
+          fi
+
+          # An initial commit has no parents and cannot have come from a PR.
+          parents=$(gh api "repos/$REPO/commits/$SHA" --jq '.parents | length')
+          if [ "$parents" -eq 0 ]; then
+            echo "OK: $SHA is the initial commit."
+            exit 0
+          fi
+
+          echo "::error::$SHA was pushed to main directly, by @$ACTOR, with no pull request."
+          cat <<'EXPLAIN'
+
+          main is supposed to advance only through a reviewed pull request. This commit did
+          not, which means it never ran the gates on a branch of its own and never appeared
+          in the record where anyone could look at it.
+
+          This repository is private on the free plan, so GitHub cannot BLOCK the push -
+          branch protection and rulesets both need GitHub Pro. This job is the substitute:
+          it makes the bypass visible rather than silent.
+
+          What to do now, in order of preference:
+
+            1. If the change is small and correct, open a pull request that contains it, so
+               the record is complete. Say in the PR that the commit is already on main.
+            2. If it is not correct, revert it on a branch and open that as a pull request.
+
+          Do not "fix" this by deleting this workflow. If direct pushes are genuinely wanted,
+          say so and remove it deliberately, not as a way to make a red build go away.
+          EXPLAIN
+          exit 1
