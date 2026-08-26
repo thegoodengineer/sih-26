@@ -117,6 +117,12 @@ jobs:
       # confidently to a judge. Each optimum below was established OUTSIDE the solver:
       # power_dispatch by exhaustive enumeration, lot_sizing by hand, and supply_chain and
       # ill_conditioned by the fact that the second is an exact re-scaling of the first.
+      # numpy is OPTIONAL. matrix_stats.py computes rank exactly over the rationals, which
+      # is the load-bearing claim and needs no third party; numpy is used only for the SVD
+      # behind the condition number, and the script says so plainly when it is absent.
+      - name: numpy, for the condition number only
+        run: pip install numpy
+
       - name: PS26119 case studies
         run: |
           set -euo pipefail
