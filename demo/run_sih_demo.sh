@@ -278,15 +278,31 @@ else
 fi
 
 # ===========================================================================================
+# Read the medium-tier result out of the newest committed CSV. Falls back to naming the
+# reproduction command if none is present, rather than printing a number from nowhere.
+MEDIUM_SUMMARY="$("$PYTHON" - <<'PYMED'
+import csv, pathlib, sys
+results = sorted(pathlib.Path("bench/results").glob("netlib-medium-*.csv"))
+if not results:
+    print("an unknown number - no medium-tier CSV in bench/results/")
+    sys.exit(0)
+newest = results[-1]
+rows = list(csv.DictReader(newest.open(newline="")))
+passed = sum(1 for r in rows if r.get("passed") == "1")
+commit = rows[0].get("git_commit", "?") if rows else "?"
+print(f"{passed}, measured on commit {commit}")
+PYMED
+)"
+
 rule "6. What PS26119 asks for that we do NOT yet have"
-# THE ONLY HAND-WRITTEN NUMBERS IN THIS SCRIPT ARE BELOW. Everything above is printed from a
-# command this run executed; this section states a figure from a benchmark tier the demo does
-# not run, because fetching 50 instances takes minutes. That makes it the one thing here that
-# can silently go stale - it already did once, still claiming 26/50 after #49 took it to
-# 37/50, which understated us to anyone reading. Re-measure and update it, with the commit,
-# whenever the LP core changes. Tracked alongside #53.
+# THE MEDIUM-TIER FIGURE BELOW IS READ FROM THE COMMITTED CSV, not typed here. The demo does
+# not run that tier - fetching 50 instances takes minutes - so it was hand-written, and it
+# went stale three separate times in two days: 26 after #49 made it 37, then 37 after #86
+# made it 40. Each time it UNDERSTATED the solver, which is the safe direction and still
+# wrong. Deriving it from bench/results/netlib-medium-*.csv removes the failure mode rather
+# than asking the next person to remember. Same reasoning as #53.
 # ===========================================================================================
-cat <<'GAPS'
+cat <<'GAPS' | sed "s|@MEDIUM@|${MEDIUM_SUMMARY}|"
     Stating these is the point. A solver that is vague about its limits is not one an
     industrial user can plan around.
 
@@ -303,17 +319,19 @@ cat <<'GAPS'
     Scale               Everything above is small. The committed Netlib set is the small end
                         of Netlib, and NOTHING here supports a claim about the "thousands to
                         millions of variables" the problem statement asks for. On the wider
-                        50-instance Netlib medium set we pass 37, measured on commit a2f4bbe.
+                        50-instance Netlib medium set we pass @MEDIUM@.
                         That is issue #34, and it is the honest headline number, not the 8/8
                         above. Reproduce it with:
                             python bench/runners/fetch_data.py --set medium
                             python bench/runners/netlib.py --time-limit 60
     Parallelism         Single-threaded today.
 
-    Where we already lose: HiGHS beats us on the median instance above. We publish that
-    rather than bury it - the problem statement asks us to compare, not to win, and HiGHS is
-    a decade of specialist work. The claim we do make is narrower and checkable: on every
-    instance we report as solved, the answer matches the published optimum AND survives an
-    independent verifier that shares no code with the solver.
+    On speed against HiGHS, section 5 above prints the measured ratio for this run rather
+    than repeating a number here that would go stale - and it is a narrow comparison either
+    way: eight small, well conditioned instances settle nothing about large models. HiGHS is
+    a decade of specialist work with presolve and a dual simplex, neither of which we have.
+    The claim we do make is narrower and checkable: on every instance we report as solved,
+    the answer matches the published optimum AND survives an independent verifier that
+    shares no code with the solver.
 GAPS
 echo
