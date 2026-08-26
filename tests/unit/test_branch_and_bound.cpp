@@ -280,8 +280,8 @@ TEST(BranchAndBound, DivingBudgetIsBoundedAndUndoneOnFailure) {
   // at all. This is the "budget exhausted / dive fails" path: dive_from_root() must return
   // cleanly and leave() must still restore working_ to a state the rest of the search can
   // use correctly.
-  const Model model = make_milp({{2.0, 3.0}}, {4.0}, {4.0}, {1.0, 1.0}, {1.0, 1.0},
-                                {true, true});
+  const Model model =
+      make_milp({{2.0, 3.0}}, {4.0}, {4.0}, {1.0, 1.0}, {1.0, 1.0}, {true, true});
   const Solution s = solve(model, mip_options());
   EXPECT_EQ(s.status, SolveStatus::kInfeasible);
 }
