@@ -22,6 +22,8 @@
 #include "sankhya/options.hpp"
 #include "sankhya/tolerances.hpp"
 
+#include "core/status_guard.hpp"
+
 #include "oracles/lp_generator.hpp"
 #include "oracles/rational_simplex.hpp"
 
@@ -230,6 +232,200 @@ TEST(Pdhg, AFeasibleStatusStillMeansTheePointIsActuallyFeasible) {
   if (s.status == SolveStatus::kOptimal || s.status == SolveStatus::kFeasible) {
     EXPECT_LE(s.primal_infeasibility, tol::kPrimalFeasibility);
   }
+}
+
+// =========================================================================================
+// The status must agree with the measured quality of the point
+//
+// These pin down a defect that reached main and that every existing test was blind to.
+// PDHG terminates on a RELATIVE KKT criterion at pdhg_tolerance, and that was being
+// translated straight into kOptimal. A relative KKT residual of 1e-4 is not the same claim
+// as "primal feasible to 1e-7": on all eight fetched Netlib instances the engine reported
+// `optimal` and tools/verify_solution.py rejected every one, with row violations up to
+// 4.5e-2. sc50b, published optimum exactly -70, came back as -70.0139 and was labelled
+// optimal - a value BETTER than the optimum, reachable only from outside the feasible set.
+//
+// Solution::recompute_quality() had measured and printed the violation the whole time.
+// Nothing connected that measurement to the status. solve() now reconciles the two.
+// =========================================================================================
+
+/// The blending model from demo/crude_blend.mps, built in memory. It is used here because
+/// its conditioning makes PDHG stop well short of the solver's feasibility tolerance at a
+/// loose setting, which is exactly the situation being pinned down.
+Model make_blend_lp() {
+  Model model;
+  model.name = "BLENDGUARD";
+  model.sense = ObjSense::kMaximize;
+  model.col_cost = {2.40, 1.60, 1.64};
+  model.col_lower = {10.0, 0.0, 0.0};
+  model.col_upper = {kInfinity, 45.0, 60.0};
+  model.col_type.assign(3, VarType::kContinuous);
+  model.row_lower = {90.0, 40.0, -kInfinity};
+  model.row_upper = {120.0, 40.0, 0.0};
+
+  model.matrix.reset(3, 3);
+  model.matrix.add_entry(0, 0, 1.0);
+  model.matrix.add_entry(0, 1, 1.0);
+  model.matrix.add_entry(0, 2, 1.0);
+  model.matrix.add_entry(1, 0, 0.30);
+  model.matrix.add_entry(1, 1, 0.45);
+  model.matrix.add_entry(1, 2, 0.38);
+  model.matrix.add_entry(2, 0, 0.80);
+  model.matrix.add_entry(2, 1, -0.86);
+  model.matrix.add_entry(2, 2, -0.22);
+  model.matrix.finalize();
+  EXPECT_EQ(model.validate(), "");
+  return model;
+}
+
+TEST(SolveStatusGuard, AnInfeasiblePointIsNeverReportedAsOptimal) {
+  // Exercised DIRECTLY rather than through an engine. The original version drove PDHG at a
+  // loose tolerance until it returned an infeasible point labelled optimal, and carried a
+  // guard message saying to re-tune it if that stopped happening. It has stopped happening:
+  // PDHG now refuses to claim optimal or feasible unless the point meets the absolute
+  // tolerance, so the trigger path through that engine no longer exists.
+  //
+  // Which is the point. A guard tested only through a misbehaving engine loses its subject
+  // the moment that engine is fixed, and quietly stops testing anything. This calls the
+  // reconciliation with a Solution built to contradict itself, so it keeps its subject
+  // whatever the engines do - and it is the shape the Phase 8 IPM and QP engines will hit.
+  const Model model = make_blend_lp();
+
+  Solution solution;
+  solution.allocate_for(model);
+  solution.status = SolveStatus::kOptimal;
+  solution.algorithm = "fabricated";
+  // A point well outside the feasible region, claimed as a proven optimum.
+  solution.col_value.assign(static_cast<std::size_t>(model.num_cols()), 1.0e4);
+  solution.recompute_quality(model);
+
+  Options options;
+  options.set_bool("log_to_console", false);
+  ASSERT_GT(solution.primal_infeasibility, options.get_double("primal_feasibility_tolerance"))
+      << "the fabricated point is supposed to be infeasible";
+
+  Logger silent(nullptr);
+  reconcile_status_with_measurement(&solution, options, silent, /*check_dual=*/true);
+
+  EXPECT_NE(solution.status, SolveStatus::kOptimal);
+  EXPECT_NE(solution.status, SolveStatus::kFeasible)
+      << "a point that violates its own constraints is not feasible either";
+  EXPECT_EQ(solution.status, SolveStatus::kNumericalError);
+  EXPECT_NE(solution.message.find("primal feasibility"), std::string::npos) << solution.message;
+}
+
+TEST(SolveStatusGuard, AFeasibleOptimalPointIsLeftAlone) {
+  // The guard must not fire on a good answer. Without this, tightening it later could start
+  // rejecting correct solutions and every other test would still pass.
+  const Model model = make_blend_lp();
+  Options options;
+  options.set_bool("log_to_console", false);
+  options.set_string("algorithm", "simplex");
+
+  Solution solution = solve(model, options);
+  ASSERT_EQ(solution.status, SolveStatus::kOptimal);
+  const double objective = solution.objective;
+
+  Logger silent(nullptr);
+  reconcile_status_with_measurement(&solution, options, silent, /*check_dual=*/true);
+  EXPECT_EQ(solution.status, SolveStatus::kOptimal);
+  EXPECT_DOUBLE_EQ(solution.objective, objective);
+}
+
+TEST(SolveStatusGuard, PrimalFeasibleButDualInfeasibleIsFeasibleNotOptimal) {
+  // The other half of the rule. The point satisfies every constraint, so it is usable and
+  // kFeasible is honest - but the reduced costs do not support a claim of optimality, and
+  // kOptimal is a claim of proof.
+  const Model model = make_blend_lp();
+  Options options;
+  options.set_bool("log_to_console", false);
+  options.set_string("algorithm", "pdhg");
+  options.set_double("pdhg_tolerance", 0.1);
+
+  const Solution solution = solve(model, options);
+
+  ASSERT_LE(solution.primal_infeasibility, options.get_double("primal_feasibility_tolerance"))
+      << "expected a primal-feasible point at this tolerance";
+  ASSERT_GT(solution.dual_infeasibility, options.get_double("dual_feasibility_tolerance"))
+      << "expected the duals to be short of tolerance at this setting";
+
+  EXPECT_EQ(solution.status, SolveStatus::kFeasible);
+  EXPECT_TRUE(solution.has_primal_values());
+}
+
+TEST(SolveStatusGuard, AConvergedPdhgSolveStillReportsOptimal) {
+  // The guard must not simply forbid PDHG from ever succeeding. Given a tolerance it can
+  // actually meet, the optimality claim stands.
+  const Model model = make_blend_lp();
+  Options options;
+  options.set_bool("log_to_console", false);
+  options.set_string("algorithm", "pdhg");
+  options.set_double("pdhg_tolerance", 1e-12);
+
+  const Solution solution = solve(model, options);
+  ASSERT_EQ(solution.status, SolveStatus::kOptimal) << solution.message;
+  EXPECT_LE(solution.primal_infeasibility, options.get_double("primal_feasibility_tolerance"));
+  EXPECT_LE(solution.dual_infeasibility, options.get_double("dual_feasibility_tolerance"));
+  EXPECT_NEAR(solution.objective, 214.14594594594595, 1e-4);
+}
+
+TEST(SolveStatusGuard, TheSimplexIsUnaffected) {
+  // The simplex terminates at a vertex with an exact basis, so it must pass the guard
+  // untouched. A false positive here would be as damaging as the bug being fixed.
+  const Model model = make_blend_lp();
+  Options options;
+  options.set_bool("log_to_console", false);
+  options.set_string("algorithm", "simplex");
+
+  const Solution solution = solve(model, options);
+  EXPECT_EQ(solution.status, SolveStatus::kOptimal) << solution.message;
+  // Within tolerance, NOT exactly zero. The guard's contract is that a measured violation
+  // stays under the documented tolerance; the simplex never promised a bit-exact zero and
+  // does not deliver one. Recomputing row activities from a model whose coefficients span
+  // 0.22 to 20 leaves accumulation at machine-epsilon scale - this assertion first read
+  // EXPECT_DOUBLE_EQ(..., 0.0), which passed on Windows/Release and failed on Linux/Debug
+  // at 3.55e-15. That is twelve orders of magnitude inside the tolerance being tested, so
+  // the assertion was wrong rather than the code.
+  EXPECT_LE(solution.primal_infeasibility, options.get_double("primal_feasibility_tolerance"));
+  EXPECT_LE(solution.dual_infeasibility, options.get_double("dual_feasibility_tolerance"));
+  EXPECT_NEAR(solution.objective, 214.14594594594595, 1e-9);
+}
+
+TEST(SolveStatusGuard, TheMilpPathIsReconciledWithoutFalsePositives) {
+  // Branch and bound goes through the same gate, but with the dual test DISABLED. An
+  // incumbent comes from a node LP whose bounds were tightened by branching, so its reduced
+  // costs are dual feasible for that node and generally are not for the original model.
+  // Optimality of a MILP is proved by the bound closing against the incumbent, not by the
+  // last LP's reduced costs, so applying the dual test here would reject correct answers.
+  //
+  // Integrality replaces it: an engine reporting optimal while holding a fractional integer
+  // column has reported the relaxation, which is the failure CLAUDE.md singles out.
+  Model model = make_blend_lp();
+  model.col_type[0] = VarType::kInteger;
+
+  Options options;
+  options.set_bool("log_to_console", false);
+  const Solution solution = solve(model, options);
+
+  ASSERT_EQ(solution.status, SolveStatus::kOptimal) << solution.message;
+  EXPECT_LE(solution.integrality_violation, options.get_double("integrality_tolerance"));
+  EXPECT_LE(solution.primal_infeasibility, options.get_double("primal_feasibility_tolerance"));
+  // The integer column really is integral, so the claim is not vacuous.
+  EXPECT_NEAR(solution.col_value[0], std::round(solution.col_value[0]), 1e-6);
+}
+
+TEST(SolveStatusGuard, ANonClaimingStatusIsLeftAlone) {
+  // kIterationLimit makes no assertion about optimality, so the guard has no business
+  // rewriting it - the caller needs to know the run was cut short, not that it was
+  // numerically unsound.
+  const Model model = make_blend_lp();
+  Options options;
+  options.set_bool("log_to_console", false);
+  options.set_string("algorithm", "pdhg");
+  options.set_int("iteration_limit", 5);
+
+  const Solution solution = solve(model, options);
+  EXPECT_EQ(solution.status, SolveStatus::kIterationLimit) << solution.message;
 }
 
 }  // namespace
