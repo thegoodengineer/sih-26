@@ -279,6 +279,12 @@ fi
 
 # ===========================================================================================
 rule "6. What PS26119 asks for that we do NOT yet have"
+# THE ONLY HAND-WRITTEN NUMBERS IN THIS SCRIPT ARE BELOW. Everything above is printed from a
+# command this run executed; this section states a figure from a benchmark tier the demo does
+# not run, because fetching 50 instances takes minutes. That makes it the one thing here that
+# can silently go stale - it already did once, still claiming 26/50 after #49 took it to
+# 37/50, which understated us to anyone reading. Re-measure and update it, with the commit,
+# whenever the LP core changes. Tracked alongside #53.
 # ===========================================================================================
 cat <<'GAPS'
     Stating these is the point. A solver that is vague about its limits is not one an
@@ -297,8 +303,11 @@ cat <<'GAPS'
     Scale               Everything above is small. The committed Netlib set is the small end
                         of Netlib, and NOTHING here supports a claim about the "thousands to
                         millions of variables" the problem statement asks for. On the wider
-                        50-instance Netlib medium set we currently pass 26. That is issue #34
-                        and it is the honest headline number, not the 8/8 above.
+                        50-instance Netlib medium set we pass 37, measured on commit a2f4bbe.
+                        That is issue #34, and it is the honest headline number, not the 8/8
+                        above. Reproduce it with:
+                            python bench/runners/fetch_data.py --set medium
+                            python bench/runners/netlib.py --time-limit 60
     Parallelism         Single-threaded today.
 
     Where we already lose: HiGHS beats us on the median instance above. We publish that
