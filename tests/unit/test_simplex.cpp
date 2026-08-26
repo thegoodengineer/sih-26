@@ -627,5 +627,56 @@ TEST(PrimalSimplex, AnInterruptedSolveClaimsNoBound) {
   EXPECT_NE(solution.dual_bound, solution.objective);
 }
 
+// =========================================================================================
+// Phase 1 feasibility is measured per element, not summed
+//
+// The tolerance kPrimalFeasibility is documented as "max allowed row/column bound violation"
+// and Solution::recompute_quality() measures exactly that. Phase 1 used to compare the SUM of
+// violations against it, which silently demands a per-row violation of tolerance/m: the more
+// rows a model has, the stricter the requirement becomes.
+//
+// On Netlib grow15 (300 rows) that made a point whose largest single violation was 0.000e+00
+// - feasible by the project's own measurement - fail a test reading 1.062e-07, and phase 1
+// then reported the model INFEASIBLE. grow15 and grow22 both have published optima. A false
+// infeasibility is the least checkable answer this solver can give.
+// =========================================================================================
+
+TEST(PrimalSimplex, FeasibilityDoesNotGetStricterAsRowsAreAdded) {
+  // The same trivially feasible constraint, repeated many times. Every row is satisfied
+  // exactly, so no tolerance of any kind should be in play - but under a SUMMED test, the
+  // accumulated round-off across many rows is what eventually crosses the threshold.
+  // Solving at both sizes and requiring the same verdict is the property that was violated.
+  for (const Index rows : {2, 40, 400}) {
+    std::vector<std::vector<double>> matrix;
+    std::vector<double> lower;
+    std::vector<double> upper;
+    for (Index i = 0; i < rows; ++i) {
+      // 0.1 x + 0.2 y >= 0.3 has no exact binary representation on either side, so each row
+      // contributes a little round-off rather than none.
+      matrix.push_back({0.1, 0.2});
+      lower.push_back(0.3);
+      upper.push_back(kInf);
+    }
+    const Model model = make_model(ObjSense::kMinimize, {1.0, 1.0}, {0.0, 0.0}, {kInf, kInf},
+                                   matrix, lower, upper);
+    const Solution solution = run(model);
+    ASSERT_NE(solution.status, SolveStatus::kInfeasible)
+        << rows << " identical feasible rows were reported infeasible: " << solution.message;
+    EXPECT_EQ(solution.status, SolveStatus::kOptimal) << solution.message;
+  }
+}
+
+TEST(PrimalSimplex, AMarginalPhaseOneStallIsNotCalledInfeasible) {
+  // A genuinely infeasible model must still be reported as such - the fix must not turn
+  // kInfeasible into a status the solver can never reach.
+  //   x >= 5 and x <= 1 simultaneously, as two rows.
+  const Model model = make_model(ObjSense::kMinimize, {1.0}, {0.0}, {kInf}, {{1.0}, {1.0}},
+                                 {5.0, -kInf}, {kInf, 1.0});
+  const Solution solution = run(model);
+  EXPECT_EQ(solution.status, SolveStatus::kInfeasible) << solution.message;
+  // And it says so on the strength of a violation far above tolerance, not a marginal one.
+  EXPECT_NE(solution.message.find("far above"), std::string::npos) << solution.message;
+}
+
 }  // namespace
 }  // namespace sankhya

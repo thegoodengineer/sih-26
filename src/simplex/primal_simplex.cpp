@@ -61,6 +61,17 @@ namespace {
 /// it, short enough that a genuine cycle is reported in under a second.
 constexpr int kStallLimit = 20 * tol::kBlandSwitchIterations;
 
+/// How far above the feasibility tolerance a phase-1 stall has to sit before it is reported
+/// as a genuine infeasibility rather than a numerical stall.
+///
+/// There is no principled value: the honest position is that a floating-point stall proves
+/// nothing either way, and this only decides which of two imperfect answers is less
+/// misleading. 1e3 keeps kInfeasible for residuals that are large in absolute terms while
+/// refusing to make a definitive claim about a point that is nearly feasible. Netlib grow15
+/// and grow22 stalled at 1.06e-07 and 1.31e-07 against a 1e-07 tolerance - a factor of 1.3 -
+/// and both have published optima.
+constexpr double kInfeasibilityProofFactor = 1e3;
+
 /// How a basic variable sits relative to its own bounds. Phase 1 exists to empty the two
 /// outer categories.
 enum class Position { kBelowLower, kFeasible, kAboveUpper };
@@ -92,7 +103,15 @@ class PrimalSimplex {
   void compute_basic_values();
 
   [[nodiscard]] Position position_of(Index basic_slot) const;
-  [[nodiscard]] double total_infeasibility() const;
+  /// Largest single bound violation over the basic variables. THIS is the feasibility test.
+  ///
+  /// The two must not be confused. kPrimalFeasibility is documented as "max allowed
+  /// row/column bound violation" and Solution::recompute_quality() measures exactly that, so
+  /// comparing the SUM against it silently demands a per-row violation of tolerance/m: the
+  /// larger the model, the stricter the requirement. On Netlib grow15 (300 rows) that made a
+  /// point with a max violation of 0.000e+00 - feasible by the project's own measurement -
+  /// fail a test reading 1.062e-07, and phase 1 then reported the model INFEASIBLE.
+  [[nodiscard]] double max_infeasibility() const;
 
   /// Fill cost_basic_ with the phase-1 gradient or the phase-2 costs, then BTRAN for y and
   /// price every nonbasic column into reduced_cost_.
@@ -313,17 +332,17 @@ Position PrimalSimplex::position_of(Index basic_slot) const {
   return Position::kFeasible;
 }
 
-double PrimalSimplex::total_infeasibility() const {
-  double sum = 0.0;
+double PrimalSimplex::max_infeasibility() const {
+  double worst = 0.0;
   for (Index slot = 0; slot < m_; ++slot) {
     const Index k = basis_[static_cast<std::size_t>(slot)];
     const double x = x_basic_[static_cast<std::size_t>(slot)];
     const double lo = lower_[static_cast<std::size_t>(k)];
     const double hi = upper_[static_cast<std::size_t>(k)];
-    if (is_finite_bound(lo) && x < lo) sum += lo - x;
-    if (is_finite_bound(hi) && x > hi) sum += x - hi;
+    if (is_finite_bound(lo) && x < lo) worst = std::max(worst, lo - x);
+    if (is_finite_bound(hi) && x > hi) worst = std::max(worst, x - hi);
   }
-  return sum;
+  return worst;
 }
 
 void PrimalSimplex::compute_reduced_costs(bool phase_one) {
@@ -593,7 +612,9 @@ Solution PrimalSimplex::run() {
   bool was_phase_one = true;
 
   for (;;) {
-    const double infeasibility = total_infeasibility();
+    // The phase decision is made on the largest single violation, not on their sum. The sum
+    // is still computed for the iteration log, where it is the objective being minimised.
+    const double infeasibility = max_infeasibility();
     const bool phase_one = infeasibility > primal_tolerance_;
     if (was_phase_one && !phase_one) {
       logger_.info("Phase 1 complete after {} iterations: primal feasible", iterations);
@@ -614,11 +635,30 @@ Solution PrimalSimplex::run() {
 
     if (entering < 0) {
       if (phase_one) {
-        // Phase 1 is bounded below by zero, so a stall with residual infeasibility is a
-        // proof that no feasible point exists, not an inconclusive stop.
+        // Phase 1 is bounded below by zero, so its true minimum being positive would indeed
+        // prove that no feasible point exists. What is observed here is weaker: no column
+        // PRICES as improving to within the dual tolerance. On a badly scaled basis that
+        // happens while an improving direction still exists, so a stall is evidence, not a
+        // proof, and the strength of the evidence depends on how far from feasible we are.
+        //
+        // A residual within a couple of orders of magnitude of the feasibility tolerance is a
+        // numerical stall and is reported as one. Claiming kInfeasible there tells a planner
+        // their model has no solution when it has one, which is the least checkable and most
+        // damaging answer this solver can give.
+        if (infeasibility <= kInfeasibilityProofFactor * primal_tolerance_) {
+          return finish(SolveStatus::kNumericalError,
+                        fmt::format("phase 1 stalled at max bound violation {:.3e}, only just "
+                                    "above the {:.1e} feasibility tolerance; no column prices "
+                                    "as improving, but this is a numerical stall rather than "
+                                    "a proof that the model is infeasible",
+                                    infeasibility, primal_tolerance_),
+                        iterations, timer.elapsed_seconds());
+        }
         return finish(
             SolveStatus::kInfeasible,
-            fmt::format("phase 1 terminated with total infeasibility {:.3e}", infeasibility),
+            fmt::format("phase 1 terminated with max bound violation {:.3e}, far above the "
+                        "{:.1e} feasibility tolerance",
+                        infeasibility, primal_tolerance_),
             iterations, timer.elapsed_seconds());
       }
       return finish(SolveStatus::kOptimal, {}, iterations, timer.elapsed_seconds());
