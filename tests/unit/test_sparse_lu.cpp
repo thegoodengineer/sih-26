@@ -352,5 +352,200 @@ TEST(SparseLu, FuzzOnVerySparseMatricesWhereFillMatters) {
   EXPECT_LT(worst_residual, 1e-9) << "worst residual " << worst_residual;
 }
 
+// =========================================================================================
+// Basis update (product form)
+//
+// The update is checked against a FROM-SCRATCH factorization of the updated basis - never
+// against itself, never against the pre-update state. An update rule with the eta order
+// reversed, or with the transpose applied in the wrong direction, still produces a vector of
+// entirely plausible magnitude and still passes any self-consistency check. Only an
+// independent factorization of what the basis actually became can tell the difference.
+// =========================================================================================
+
+/// A random, diagonally dominant sparse matrix - nonsingular with high probability.
+TestMatrix random_basis(std::mt19937& rng, Index m, double density) {
+  std::uniform_real_distribution<double> value(-4.0, 4.0);
+  std::uniform_real_distribution<double> unit(0.0, 1.0);
+  TestMatrix matrix(m);
+  for (Index j = 0; j < m; ++j) {
+    for (Index i = 0; i < m; ++i) {
+      if (i != j && unit(rng) < density) matrix.set(i, j, value(rng));
+    }
+    matrix.set(j, j, 3.0 + unit(rng));
+  }
+  return matrix;
+}
+
+/// Rebuild `basis` with column `leaving` replaced by `entering`, as a fresh TestMatrix.
+TestMatrix with_column_replaced(const TestMatrix& basis, Index m, Index leaving,
+                                const std::vector<double>& entering) {
+  TestMatrix next(m);
+  const std::vector<LuColumn> cols = basis.columns();
+  for (Index j = 0; j < m; ++j) {
+    if (j == leaving) {
+      for (Index i = 0; i < m; ++i) {
+        const double v = entering[static_cast<std::size_t>(i)];
+        if (v != 0.0) next.set(i, j, v);
+      }
+      continue;
+    }
+    const LuColumn& c = cols[static_cast<std::size_t>(j)];
+    for (Index k = 0; k < c.size; ++k) next.set(c.rows[k], j, c.values[k]);
+  }
+  return next;
+}
+
+TEST(SparseLuUpdate, OneUpdateMatchesAFreshFactorization) {
+  std::mt19937 rng(4242);
+  std::uniform_real_distribution<double> value(-4.0, 4.0);
+
+  int compared = 0;
+  double worst_ftran = 0.0;
+  double worst_btran = 0.0;
+
+  for (int trial = 0; trial < 200; ++trial) {
+    const Index m = 2 + static_cast<Index>(trial % 18);
+    const TestMatrix basis = random_basis(rng, m, 0.3);
+
+    SparseLu lu;
+    if (!lu.factorize(basis.columns(), m, tol::kPivotTolerance, kThreshold)) continue;
+
+    const Index leaving = static_cast<Index>(trial) % m;
+    std::vector<double> entering(static_cast<std::size_t>(m));
+    for (Index i = 0; i < m; ++i) {
+      entering[static_cast<std::size_t>(i)] = value(rng) + (i == leaving ? 5.0 : 0.0);
+    }
+
+    // alpha = B^-1 a, which is exactly what the simplex already has to hand at a pivot.
+    std::vector<double> alpha = entering;
+    lu.solve(alpha.data());
+    if (!lu.update(leaving, alpha.data())) continue;
+    ++compared;
+
+    const TestMatrix updated = with_column_replaced(basis, m, leaving, entering);
+    SparseLu reference;
+    ASSERT_TRUE(reference.factorize(updated.columns(), m, tol::kPivotTolerance, kThreshold));
+
+    std::vector<double> rhs(static_cast<std::size_t>(m));
+    for (double& v : rhs) v = value(rng);
+
+    std::vector<double> a = rhs;
+    lu.solve(a.data());
+    std::vector<double> b = rhs;
+    reference.solve(b.data());
+    worst_ftran = std::max(worst_ftran, max_difference(a, b));
+
+    std::vector<double> at = rhs;
+    lu.solve_transpose(at.data());
+    std::vector<double> bt = rhs;
+    reference.solve_transpose(bt.data());
+    worst_btran = std::max(worst_btran, max_difference(at, bt));
+  }
+
+  EXPECT_GT(compared, 150) << "too few usable updates for this test to mean anything";
+  EXPECT_LT(worst_ftran, 1e-8) << "updated FTRAN disagrees with a fresh factorization by "
+                               << worst_ftran;
+  EXPECT_LT(worst_btran, 1e-8) << "updated BTRAN disagrees with a fresh factorization by "
+                               << worst_btran;
+}
+
+TEST(SparseLuUpdate, ManyUpdatesInSequenceStayCorrect) {
+  // A single update can be right while the ORDER the etas are applied in is wrong; that only
+  // shows once more than one is stacked. Both directions are re-checked after every update
+  // against a fresh factorization of the basis as it now stands.
+  std::mt19937 rng(20260826);
+  std::uniform_real_distribution<double> value(-3.0, 3.0);
+
+  constexpr Index m = 14;
+  TestMatrix current = random_basis(rng, m, 0.35);
+  SparseLu lu;
+  ASSERT_TRUE(lu.factorize(current.columns(), m, tol::kPivotTolerance, kThreshold));
+
+  double worst = 0.0;
+  int applied = 0;
+
+  for (int step = 0; step < 25; ++step) {
+    const Index leaving = static_cast<Index>(step) % m;
+    std::vector<double> entering(static_cast<std::size_t>(m));
+    for (Index i = 0; i < m; ++i) {
+      entering[static_cast<std::size_t>(i)] = value(rng) + (i == leaving ? 6.0 : 0.0);
+    }
+
+    std::vector<double> alpha = entering;
+    lu.solve(alpha.data());
+    if (!lu.update(leaving, alpha.data())) break;
+    ++applied;
+
+    current = with_column_replaced(current, m, leaving, entering);
+
+    SparseLu reference;
+    ASSERT_TRUE(reference.factorize(current.columns(), m, tol::kPivotTolerance, kThreshold));
+
+    std::vector<double> rhs(static_cast<std::size_t>(m));
+    for (double& v : rhs) v = value(rng);
+
+    std::vector<double> a = rhs;
+    lu.solve(a.data());
+    std::vector<double> b = rhs;
+    reference.solve(b.data());
+    worst = std::max(worst, max_difference(a, b));
+
+    std::vector<double> at = rhs;
+    lu.solve_transpose(at.data());
+    std::vector<double> bt = rhs;
+    reference.solve_transpose(bt.data());
+    worst = std::max(worst, max_difference(at, bt));
+  }
+
+  EXPECT_GE(applied, 10) << "the update was rejected too early to test stacking";
+  EXPECT_EQ(lu.eta_count(), applied);
+  EXPECT_LT(worst, 1e-7) << "stacked updates drift from a fresh factorization by " << worst;
+}
+
+TEST(SparseLuUpdate, RejectsAnUnsafePivotInsteadOfDividingByIt) {
+  // alpha[leaving] near zero means the entering column barely moves the basis in the
+  // direction being replaced. Dividing by it is how a product form silently loses accuracy,
+  // so the update refuses and leaves the factorization usable for a caller that refactorizes.
+  constexpr Index m = 4;
+  TestMatrix matrix(m);
+  for (Index i = 0; i < m; ++i) matrix.set(i, i, 1.0);
+
+  SparseLu lu;
+  ASSERT_TRUE(lu.factorize(matrix.columns(), m, tol::kPivotTolerance, kThreshold));
+
+  std::vector<double> alpha(static_cast<std::size_t>(m), 1.0);
+  alpha[2] = 1e-14;
+  EXPECT_FALSE(lu.update(2, alpha.data()));
+  EXPECT_EQ(lu.eta_count(), 0);
+
+  // The factorization is untouched and still solves as it did.
+  std::vector<double> b{1.0, 2.0, 3.0, 4.0};
+  lu.solve(b.data());
+  EXPECT_DOUBLE_EQ(b[0], 1.0);
+  EXPECT_DOUBLE_EQ(b[3], 4.0);
+}
+
+TEST(SparseLuUpdate, AsksToRefactorizeOnceTheEtaFileGrows) {
+  constexpr Index m = 10;
+  std::mt19937 rng(99);
+  const TestMatrix matrix = random_basis(rng, m, 0.3);
+
+  SparseLu lu;
+  ASSERT_TRUE(lu.factorize(matrix.columns(), m, tol::kPivotTolerance, kThreshold));
+  EXPECT_FALSE(lu.should_refactorize()) << "a fresh factorization should not ask immediately";
+
+  std::uniform_real_distribution<double> value(-2.0, 2.0);
+  for (int step = 0; step < 500 && !lu.should_refactorize(); ++step) {
+    const Index leaving = static_cast<Index>(step) % m;
+    std::vector<double> alpha(static_cast<std::size_t>(m));
+    for (Index i = 0; i < m; ++i) {
+      alpha[static_cast<std::size_t>(i)] = value(rng) + (i == leaving ? 8.0 : 0.0);
+    }
+    if (!lu.update(leaving, alpha.data())) break;
+  }
+  EXPECT_TRUE(lu.should_refactorize())
+      << "the eta file grew without bound; the refactorization trigger never fired";
+}
+
 }  // namespace
 }  // namespace sankhya

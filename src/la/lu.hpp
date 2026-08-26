@@ -75,6 +75,52 @@ class SparseLu {
   /// Solve B^T z = b in place. BTRAN.
   void solve_transpose(double* b) const;
 
+  // -------------------------------------------------------------------------------------
+  // Basis update (product form of the inverse)
+  //
+  // Reference: Dantzig & Orchard-Hays, "The product form for the inverse in the simplex
+  // method", Mathematical Tables and Other Aids to Computation 8 (1954).
+  //
+  // A simplex pivot replaces ONE column of the basis. Refactorizing all of it to absorb a
+  // rank-one change is the dominant per-iteration cost once the factorization itself is
+  // sparse. Replacing column p of B with a, and writing alpha = B^-1 a,
+  //
+  //     B_new = B (I + (alpha - e_p) e_p^T) = B E
+  //
+  // so the factorization of B is kept and E is recorded. After k updates
+  // B_k = B_0 E_1 ... E_k, and the two solves follow directly:
+  //
+  //     FTRAN   x = E_k^-1 ... E_1^-1 (B_0^-1 b)     base solve first, etas OLDEST first
+  //     BTRAN   x = B_0^-T (E_1^-T ... E_k^-T b)     etas NEWEST first, then the base solve
+  //
+  // The orders are opposite and neither is symmetric with the other. Getting one backwards
+  // produces a vector of entirely plausible magnitude - see the tests, which check both
+  // against a from-scratch factorization of the updated basis rather than against each
+  // other.
+  //
+  // WHAT THIS COSTS. Refactorizing every iteration had one real virtue: no update error
+  // could accumulate, so any wrong answer was the simplex's fault. Updates reintroduce
+  // drift, which is why update() refuses a numerically unsafe pivot and why
+  // should_refactorize() exists. Both are part of the feature, not optional extras.
+  // -------------------------------------------------------------------------------------
+
+  /// Record that column `leaving_position` of the basis has been replaced, given
+  /// `alpha` = B^-1 a for the entering column a. `alpha` must have `dimension()` entries.
+  ///
+  /// Returns false when the pivot element alpha[leaving_position] is too small relative to
+  /// the rest of the vector for the update to be numerically safe. The caller must then
+  /// refactorize from scratch; the factorization is left untouched and usable.
+  [[nodiscard]] bool update(Index leaving_position, const double* alpha);
+
+  /// Number of updates applied since the last factorize().
+  [[nodiscard]] Index eta_count() const noexcept {
+    return static_cast<Index>(eta_start_.size()) - 1;
+  }
+
+  /// True when the accumulated updates have grown enough that refactorizing is cheaper, or
+  /// enough that drift is a concern. Checked by the simplex once per iteration.
+  [[nodiscard]] bool should_refactorize() const noexcept;
+
   [[nodiscard]] Index dimension() const noexcept { return m_; }
 
   /// Nonzeros in the computed factors, excluding the unit diagonal of L. Compared against
@@ -118,6 +164,17 @@ class SparseLu {
   std::vector<Index> u_start_;  ///< m_ + 1 entries
   std::vector<Index> u_steps_;
   std::vector<double> u_values_;
+
+  /// Eta file: one entry per update, stored sparsely. eta_pivot_position_[k] is the basis
+  /// position that changed, and the (row, value) pairs are the nonzeros of alpha.
+  std::vector<Index> eta_start_;  ///< eta_count() + 1 entries
+  std::vector<Index> eta_rows_;
+  std::vector<double> eta_values_;
+  std::vector<Index> eta_pivot_position_;
+  std::vector<double> eta_pivot_value_;
+
+  /// Nonzeros in the factors at the last factorize(), so growth can be judged against it.
+  Index base_nonzeros_ = 0;
 
   /// Scratch for the solves. Mutable because solve() is logically const: it must not
   /// allocate on a path the simplex takes several hundred times per second.

@@ -63,6 +63,7 @@ mathematics, not transcribed from anyone's implementation.
 | CPLEX LP format | Public CPLEX and Gurobi reference manuals (documentation only) | `src/io/lp_reader.cpp` |
 | Dense LU with partial pivoting; transposed triangular solves | Golub & Van Loan, *Matrix Computations* (4th ed.), sections 3.2 and 3.4 | `src/simplex/dense_lu.cpp` |
 | Sparse LU with Markowitz pivoting and threshold stability | Markowitz, *The elimination form of the inverse and its application to linear programming*, Management Science 3 (1957); Suhl & Suhl, *Computing sparse LU factorizations for large-scale linear programming bases*, ORSA J. Computing 2 (1990); Duff, Erisman & Reid, *Direct Methods for Sparse Matrices* (2nd ed., 2017), ch. 7-8 | `src/la/lu.cpp` |
+| Basis update, product form of the inverse | Dantzig & Orchard-Hays, *The product form for the inverse in the simplex method*, Mathematical Tables and Other Aids to Computation 8 (1954) | `src/la/lu.cpp` |
 | Bounded-variable revised primal simplex | Dantzig, *Linear Programming and Extensions* (1963); Chvátal, *Linear Programming* (1983), ch. 3 and 8 | `src/simplex/primal_simplex.cpp` |
 | Piecewise-linear (composite) phase 1, no artificial variables | Maros, *Computational Techniques of the Simplex Method*, ch. 9 | `src/simplex/primal_simplex.cpp` |
 | Bland's anti-cycling rule | Chvátal, *Linear Programming*, ch. 3 | `src/simplex/primal_simplex.cpp` |

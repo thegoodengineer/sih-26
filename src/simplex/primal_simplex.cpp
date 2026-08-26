@@ -173,6 +173,11 @@ class PrimalSimplex {
 
   /// Reported once per solve, not once per refactorization.
   bool warned_about_threshold_ = false;
+
+  /// Effort counters for the solve log. rejected_updates_ is the interesting one: a basis
+  /// that keeps producing unsafe pivots is badly conditioned, and that is worth seeing.
+  Count refactorizations_ = 0;
+  Count rejected_updates_ = 0;
   std::vector<double> x_basic_;
   std::vector<double> cost_basic_;
   std::vector<double> y_;
@@ -529,6 +534,12 @@ double PrimalSimplex::minimization_objective() const {
 
 Solution PrimalSimplex::finish(SolveStatus status, const std::string& message, Count iterations,
                                double seconds) {
+  // The ratio of refactorizations to iterations is the cheapest available read on how well
+  // the basis update is holding up: a run that refactorizes on most pivots has gained
+  // nothing, and a high rejection count means the bases being produced are ill conditioned.
+  logger_.info("Basis: {} refactorizations over {} iterations, {} update(s) declined as unsafe",
+               refactorizations_, iterations, rejected_updates_);
+
   Solution solution;
   solution.allocate_for(model_);
   solution.status = status;
@@ -733,10 +744,23 @@ Solution PrimalSimplex::run() {
       status_[e] = BasisStatus::kBasic;
       nonbasic_value_[e] = entering_value;
 
-      if (!refactorize()) {
-        return finish(SolveStatus::kNumericalError,
-                      fmt::format("basis became singular at iteration {}", iterations),
-                      iterations, timer.elapsed_seconds());
+      // A pivot changes ONE column of the basis, so the factorization is updated rather than
+      // rebuilt. alpha_ already holds B^-1 a for the entering column - the ratio test needed
+      // it - so the update is free of any extra solve.
+      //
+      // Refactorize when the update declines the pivot as numerically unsafe, or when the
+      // eta file has grown enough that it costs more per solve than fresh factors would.
+      // Both paths matter: refactorizing every iteration was slow but had no accumulated
+      // update error, and that property is only preserved by taking the trigger seriously.
+      const bool updated = lu_.update(ratio.leaving_position, alpha_.data());
+      if (!updated) ++rejected_updates_;
+      if (!updated || lu_.should_refactorize()) {
+        if (!refactorize()) {
+          return finish(SolveStatus::kNumericalError,
+                        fmt::format("basis became singular at iteration {}", iterations),
+                        iterations, timer.elapsed_seconds());
+        }
+        ++refactorizations_;
       }
       compute_basic_values();
     }

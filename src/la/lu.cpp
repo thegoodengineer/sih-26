@@ -65,6 +65,20 @@ constexpr Index kCandidateBudget = 4;
 /// refactorization trigger, and they carry no information.
 constexpr double kDropTolerance = tol::kZeroDrop;
 
+/// A basis update is rejected when its pivot element is small relative to the largest entry
+/// of alpha. This is the update's counterpart to the Markowitz threshold in the
+/// factorization: a tiny pivot divides through every subsequent solve and is how a product
+/// form quietly loses accuracy over a few hundred iterations.
+constexpr double kUpdatePivotThreshold = 1e-7;
+
+/// Refactorize once the eta file reaches this many updates, whatever its size. Bounds the
+/// worst-case drift by bounding how long any single factorization is trusted.
+constexpr Index kMaxEtaCount = 64;
+
+/// Refactorize when the eta file has grown to this multiple of the factors it sits on top
+/// of. Past that point the updates cost more per solve than a fresh factorization would.
+constexpr double kMaxEtaFillRatio = 2.0;
+
 }  // namespace
 
 // =========================================================================================
@@ -142,6 +156,12 @@ bool SparseLu::factorize(const std::vector<LuColumn>& columns, Index m, double p
   u_start_.assign(1, 0);
   u_steps_.clear();
   u_values_.clear();
+  eta_start_.assign(1, 0);
+  eta_rows_.clear();
+  eta_values_.clear();
+  eta_pivot_position_.clear();
+  eta_pivot_value_.clear();
+  base_nonzeros_ = 0;
   work_.assign(static_cast<std::size_t>(m), 0.0);
   smallest_pivot_ = 0.0;
   largest_pivot_ = 0.0;
@@ -182,7 +202,49 @@ bool SparseLu::factorize(const std::vector<LuColumn>& columns, Index m, double p
     if (step < 0) return false;  // a column that was never pivotal: structurally singular
     entry = step;
   }
+  base_nonzeros_ = factor_nonzeros();
   return true;
+}
+
+// =========================================================================================
+// Basis update
+// =========================================================================================
+
+bool SparseLu::update(Index leaving_position, const double* alpha) {
+  if (m_ == 0) return false;
+  if (leaving_position < 0 || leaving_position >= m_) return false;
+
+  const auto pivot_index = static_cast<std::size_t>(leaving_position);
+  const double pivot = alpha[pivot_index];
+
+  // Reject rather than divide by something too small. The factorization is left untouched,
+  // so the caller can refactorize and retry the same pivot on fresh factors.
+  double largest = 0.0;
+  for (Index i = 0; i < m_; ++i) {
+    largest = std::max(largest, std::fabs(alpha[static_cast<std::size_t>(i)]));
+  }
+  if (!std::isfinite(pivot)) return false;
+  if (std::fabs(pivot) < kUpdatePivotThreshold * std::max(1.0, largest)) return false;
+
+  for (Index i = 0; i < m_; ++i) {
+    const double value = alpha[static_cast<std::size_t>(i)];
+    if (i == leaving_position || std::fabs(value) < kDropTolerance) continue;
+    if (!std::isfinite(value)) return false;
+    eta_rows_.push_back(i);
+    eta_values_.push_back(value);
+  }
+  eta_start_.push_back(static_cast<Index>(eta_rows_.size()));
+  eta_pivot_position_.push_back(leaving_position);
+  eta_pivot_value_.push_back(pivot);
+  return true;
+}
+
+bool SparseLu::should_refactorize() const noexcept {
+  const Index etas = eta_count();
+  if (etas >= kMaxEtaCount) return true;
+  const auto eta_nonzeros = static_cast<double>(eta_rows_.size());
+  const double base = std::max(1.0, static_cast<double>(base_nonzeros_));
+  return eta_nonzeros > kMaxEtaFillRatio * base;
 }
 
 bool SparseLu::eliminate(Workspace& w, double pivot_tolerance, double threshold) {
@@ -512,10 +574,43 @@ void SparseLu::solve(double* b) const {
     b[static_cast<std::size_t>(pivot_col_[static_cast<std::size_t>(k)])] =
         work_[static_cast<std::size_t>(k)];
   }
+
+  // Then the recorded updates, OLDEST FIRST: x = E_k^-1 ... E_1^-1 (B_0^-1 b). Applying
+  // E^-1 is z_p = y_p / alpha_p followed by z_i = y_i - alpha_i z_p.
+  const Index etas = eta_count();
+  for (Index k = 0; k < etas; ++k) {
+    const auto uk = static_cast<std::size_t>(k);
+    const auto pivot_index = static_cast<std::size_t>(eta_pivot_position_[uk]);
+    const double scaled = b[pivot_index] / eta_pivot_value_[uk];
+    b[pivot_index] = scaled;
+    if (scaled == 0.0) continue;
+    const Index begin = eta_start_[uk];
+    const Index end = eta_start_[uk + 1];
+    for (Index t = begin; t < end; ++t) {
+      const auto ut = static_cast<std::size_t>(t);
+      b[static_cast<std::size_t>(eta_rows_[ut])] -= eta_values_[ut] * scaled;
+    }
+  }
 }
 
 void SparseLu::solve_transpose(double* b) const {
   if (m_ == 0) return;
+
+  // The updates come FIRST here and in the REVERSE order to FTRAN:
+  // x = B_0^-T (E_1^-T ... E_k^-T b). Applying E^-T touches one component,
+  // v_p <- (v_p - sum_{i != p} alpha_i v_i) / alpha_p, leaving the rest alone.
+  for (Index k = eta_count() - 1; k >= 0; --k) {
+    const auto uk = static_cast<std::size_t>(k);
+    const Index begin = eta_start_[uk];
+    const Index end = eta_start_[uk + 1];
+    double accumulated = 0.0;
+    for (Index t = begin; t < end; ++t) {
+      const auto ut = static_cast<std::size_t>(t);
+      accumulated += eta_values_[ut] * b[static_cast<std::size_t>(eta_rows_[ut])];
+    }
+    const auto pivot_index = static_cast<std::size_t>(eta_pivot_position_[uk]);
+    b[pivot_index] = (b[pivot_index] - accumulated) / eta_pivot_value_[uk];
+  }
 
   // Forward-substitute through U^T in increasing k, in push form. work_ is indexed by step
   // and holds the right-hand side as it is consumed.
