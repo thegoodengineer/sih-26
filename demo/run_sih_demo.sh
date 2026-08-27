@@ -45,10 +45,13 @@ rule() { printf '\n\033[1m%s\033[0m\n%s\n' "$1" "$(printf '=%.0s' $(seq 1 86))";
 ask()  { printf '\n\033[2mPS26119 asks:\033[0m %s\n\n' "$1"; }
 
 # Solve one model quietly and leave stats in $WORK/<tag>.json and the point in <tag>.sol.
+# Extra args, if any, are forwarded to `solve` after the standard ones - e.g. a tighter
+# --option for a case where the default tolerance is not the point being demonstrated.
 solve_case() {
   local tag="$1" path="$2"
+  shift 2
   "$BIN" solve "$path" --option log_to_console=false \
-    --write-sol "$WORK/$tag.sol" --stats "$WORK/$tag.json" >/dev/null
+    --write-sol "$WORK/$tag.sol" --stats "$WORK/$tag.json" "$@" >/dev/null
 }
 
 field() {  # field <tag> <section> <key>
@@ -65,9 +68,47 @@ cat <<'INTRO'
 
 SANKHYA is a mathematical optimization solver core written from scratch in C++20 for
 SIH PS26119, issued by Mangalore Refinery and Petrochemicals. LP and MILP engines are
-implemented and benchmarked, and so is convex QP. This script walks the problem statement in
-its own order. Where we do not have something, it says so rather than changing the subject.
+implemented and benchmarked, and so is convex QP - end to end from an MPS file with a
+QUADOBJ section through to an independently verified answer, demonstrated twice below: a
+small hand-checkable QP right after this intro, and a price-impact variant of the crude
+blend in section 3. What remains open on QP: no QPLIB-format reader or benchmark harness
+yet (only the generic QPS convention any MPS file can carry), and MIQP (integer QP) is
+still refused rather than approximated. This script walks the problem statement in its own
+order. Where we do not have something, it says so rather than changing the subject.
 INTRO
+
+echo
+echo "--- Convex QP, solved for real: demo/qp_blend.mps -----------------------------------"
+echo
+cat <<'QPINTRO'
+    Two streams blending to a fixed 100 kbbl/day pool, with a strictly convex processing
+    cost - illustrative, not a claim about real MRPL economics, but a genuine quadratic
+    objective read from an MPS QUADOBJ section, dispatched by solve() to the Condat-Vu
+    primal-dual QP engine (src/qp/qp_condat_vu.cpp), not an LP relaxation of one.
+QPINTRO
+# qp_tolerance tighter than default: this is a 2-variable, 1-row QP, so the extra iterations
+# cost nothing measurable, and the default 1e-8 leaves a strong-duality relative gap of
+# ~3.5e-09 - just over the independent verifier's 1e-9 threshold below. Per the same
+# reasoning as tolerances.hpp's kDualityGap note: make the solver converge tighter, not the
+# checker looser.
+solve_case qp_blend demo/qp_blend.mps --option qp_tolerance=1e-12
+echo "    SANKHYA: status $(field qp_blend result status), objective $(field qp_blend result objective)"
+echo
+echo "    Checked independently by tools/verify_solution.py, which now reads QUADOBJ itself"
+echo "    and evaluates c'x + 0.5 x'Qx directly - no code shared with the solver:"
+echo
+"$PYTHON" tools/verify_solution.py demo/qp_blend.mps "$WORK/qp_blend.sol" --quiet | sed 's/^/        /'
+echo
+"$PYTHON" - "$WORK/qp_blend.json" <<'PYQP'
+import json, sys
+obj = json.load(open(sys.argv[1]))["result"]["objective"]
+analytic = 200.0 / 3.0
+rel = abs(obj - analytic) / analytic
+print("    analytic optimum (KKT, by hand): {:.6f}".format(analytic))
+print("    relative difference:             {:.3e}".format(rel))
+print("    The two agree." if rel <= 1e-6 else "    THEY DISAGREE - see demo/qp_blend.mps.")
+sys.exit(0 if rel <= 1e-6 else 1)
+PYQP
 
 # ===========================================================================================
 rule "1. Sovereignty: not built on an existing solver"
