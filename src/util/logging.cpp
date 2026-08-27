@@ -146,14 +146,13 @@ void Logger::enable_progress_output(const std::string& path) {
 void Logger::write_progress_iteration(Count iteration_number, double objective,
                                       double seconds) {
   if (progress_stream_ == nullptr) return;
-  const nlohmann::json line = {
-      {"elapsed_s", seconds},
-      {"iterations", iteration_number},
-      {"nodes", nullptr},
-      {"best_bound", objective},
-      {"best_integer", nullptr},
-      {"gap_pct", nullptr},
-  };
+  nlohmann::json line;
+  line["elapsed_s"] = seconds;
+  line["iterations"] = iteration_number;
+  line["nodes"] = nullptr;
+  line["best_bound"] = objective;
+  line["best_integer"] = nullptr;
+  line["gap_pct"] = nullptr;
   const std::string text = line.dump();
   std::fwrite(text.data(), 1, text.size(), progress_stream_);
   std::fputc('\n', progress_stream_);
@@ -167,14 +166,13 @@ void Logger::write_progress_node(Count nodes, double incumbent, double dual_boun
   // negative value or an infinity, matching the console table's own "not tracked" cases.
   const bool have_incumbent = !std::isinf(incumbent);
   const bool have_gap = !std::isinf(relative_gap) && relative_gap >= 0.0;
-  const nlohmann::json line = {
-      {"elapsed_s", seconds},
-      {"iterations", nullptr},
-      {"nodes", nodes},
-      {"best_bound", dual_bound},
-      {"best_integer", have_incumbent ? nlohmann::json(incumbent) : nlohmann::json(nullptr)},
-      {"gap_pct", have_gap ? nlohmann::json(relative_gap * 100.0) : nlohmann::json(nullptr)},
-  };
+  nlohmann::json line;
+  line["elapsed_s"] = seconds;
+  line["iterations"] = nullptr;
+  line["nodes"] = nodes;
+  line["best_bound"] = dual_bound;
+  line["best_integer"] = have_incumbent ? nlohmann::json(incumbent) : nlohmann::json(nullptr);
+  line["gap_pct"] = have_gap ? nlohmann::json(relative_gap * 100.0) : nlohmann::json(nullptr);
   const std::string text = line.dump();
   std::fwrite(text.data(), 1, text.size(), progress_stream_);
   std::fputc('\n', progress_stream_);

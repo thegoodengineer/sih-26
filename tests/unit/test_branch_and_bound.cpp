@@ -418,10 +418,12 @@ TEST(BranchAndBound, ProgressOutWritesReadableJsonlForAMilpSolve) {
     if (!line.empty() && line.back() == '\r') line.pop_back();
     if (line.empty()) continue;
     const nlohmann::json parsed = nlohmann::json::parse(line);
-    for (const char* key : {"elapsed_s", "iterations", "nodes", "best_bound", "best_integer",
-                            "gap_pct"}) {
-      ASSERT_TRUE(parsed.contains(key)) << key;
-    }
+    ASSERT_TRUE(parsed.contains("elapsed_s"));
+    ASSERT_TRUE(parsed.contains("iterations"));
+    ASSERT_TRUE(parsed.contains("nodes"));
+    ASSERT_TRUE(parsed.contains("best_bound"));
+    ASSERT_TRUE(parsed.contains("best_integer"));
+    ASSERT_TRUE(parsed.contains("gap_pct"));
     EXPECT_TRUE(parsed["elapsed_s"].is_number());
     EXPECT_TRUE(parsed["best_bound"].is_number());
     EXPECT_TRUE(parsed["nodes"].is_number() != parsed["iterations"].is_number())
