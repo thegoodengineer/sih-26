@@ -88,6 +88,41 @@ same kind of decision, not a scaled-down version of their actual model.
 
 ---
 
+## Crude blending with price impact — `demo/crude_blend_qp.mps`
+
+### Source
+
+Beale, E.M.L. (1959). "On quadratic programming." *Naval Research Logistics Quarterly*,
+6(3), 227–243.
+
+The blending structure is inherited unchanged from `demo/crude_blend.mps` above (Rigby,
+Lasdon & Waren) — same three crudes, same throughput window, same diesel commitment, same
+sulphur specification. What is added is the term that makes it a QP, and Beale is cited for
+the problem class rather than for this instance: a convex quadratic objective over linear
+constraints, which is what his paper is about.
+
+The quadratic term itself is the standard convexification of a purchasing decision and is
+**not** taken from a specific published instance. Modelling the marginal delivered price of
+a crude as rising linearly in the volume lifted, `price(x) = base + p·x`, makes total spend
+the integral rather than the product — `base·x + 0.5·p·x²` — so the margin loses `0.5·p·x²`
+per crude. In the QPS convention (`c'x + 0.5 x'Qx`, lower triangle only) that is exactly
+`Q_jj = -p_j` with the linear margins unchanged, which is why the file carries no extra
+factor. `Q` is negative definite, so under `OBJSENSE MAXIMIZE` the objective is strictly
+concave and the QP is convex with a unique optimum.
+
+What it simplifies versus a real purchasing model: price impact is per-crude and
+independent, with no cross-terms between grades competing in the same market, and no
+term structure — a single snapshot rather than a forward curve. The off-diagonal machinery
+those cross-terms would need is exercised in the reader's unit tests instead
+(`tests/unit/test_mps_reader.cpp`), not here.
+
+**The price-impact slopes (0.012, 0.020, 0.016 $/bbl per kbbl/day) are invented for this
+repository**, chosen so the quadratic term is large enough to move the answer visibly and
+small enough to leave the problem hand-checkable. As with every other model in this
+directory, none of it is real MRPL data.
+
+---
+
 ## Refinery scheduling — not currently represented
 
 ### Source
@@ -97,6 +132,6 @@ operations." *Computers & Chemical Engineering*, 24(9–10), 2259–2276.
 
 This describes refinery production scheduling (as distinct from the blending decision
 `crude_blend.mps` covers). There is no case study in this repository that implements that
-formulation — `data/casestudies/` and `demo/` currently contain exactly the four models
-above, not a fifth. Recorded here rather than attached to an unrelated `.mps` file, in case
+formulation — `data/casestudies/` and `demo/` currently contain exactly the five models
+above, not a sixth. Recorded here rather than attached to an unrelated `.mps` file, in case
 a scheduling case study is added later.
