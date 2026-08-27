@@ -276,8 +276,16 @@ elif "$PYTHON" -c "import highspy" >/dev/null 2>&1; then
   echo "no HiGHS code is linked into, or read by, SANKHYA. Both sides are timed on solver"
   echo "time only, so neither is charged for interpreter start-up."
   echo
+  # `tail -n +3`, NOT `tail -18`. The intent is to drop compare.py's first two lines -
+  # the local path to our binary and the HiGHS backend string - because the paragraph
+  # above already says what they say, and a demo should not print someone's home
+  # directory. A fixed tail expresses that as "keep the last 18", which silently
+  # depends on the instance count: at eight instances the output was 20 lines and 18
+  # was right; adding a ninth made it 21, so the header's second line was cut and its
+  # continuation was left dangling under nothing. Counting from the FRONT does not
+  # care how many instances run.
   "$PYTHON" bench/runners/compare.py --sankhya-binary "$BIN" --time-limit 60 \
-    --out "$WORK/compare.csv" 2>&1 | tail -18
+    --out "$WORK/compare.csv" 2>&1 | tail -n +3
 else
   echo "highspy is not importable, so the comparison cannot run here."
   echo "    pip install highspy    then re-run this script."
