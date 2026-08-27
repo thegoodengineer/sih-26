@@ -301,7 +301,9 @@ rule "6. What PS26119 asks for that we do NOT yet have"
 # wrong. Deriving it from bench/results/netlib-medium-*.csv removes the failure mode rather
 # than asking the next person to remember. Same reasoning as #53.
 # ===========================================================================================
-cat <<'GAPS' | sed -e "s|@MEDIUM@|${MEDIUM_SUMMARY}|" -e "s|@NCOUNT@|${NETLIB_COUNT}|"
+# The `g` flags matter: @NCOUNT@ appears twice on one line ("not the 9/9 above"), and
+# without them sed substitutes only the first occurrence per line.
+cat <<'GAPS' | sed -e "s|@MEDIUM@|${MEDIUM_SUMMARY}|g" -e "s|@NCOUNT@|${NETLIB_COUNT}|g"
     Stating these is the point. A solver that is vague about its limits is not one an
     industrial user can plan around.
 
@@ -324,16 +326,16 @@ cat <<'GAPS' | sed -e "s|@MEDIUM@|${MEDIUM_SUMMARY}|" -e "s|@NCOUNT@|${NETLIB_CO
                         of Netlib, and NOTHING here supports a claim about the "thousands to
                         millions of variables" the problem statement asks for. On the wider
                         50-instance Netlib medium set we pass @MEDIUM@.
-                        That is issue #34, and it is the honest headline number, not the 8/8
-                        above. Reproduce it with:
+                        That is issue #34, and it is the honest headline number, not the
+                        @NCOUNT@/@NCOUNT@ above. Reproduce it with:
                             python bench/runners/fetch_data.py --set medium
                             python bench/runners/netlib.py --time-limit 60
     Parallelism         Single-threaded today.
 
     On speed against HiGHS, section 5 above prints the measured ratio for this run rather
     than repeating a number here that would go stale - and it is a narrow comparison either
-    way: @NCOUNT@ small instances settle nothing about large models. HiGHS is
-    a decade of specialist work with presolve and a dual simplex, neither of which we have.
+    way: @NCOUNT@ small instances settle nothing about large models. HiGHS is a decade of
+    specialist work with presolve and a dual simplex, neither of which we have.
     The claim we do make is narrower and checkable: on every instance we report as solved,
     the answer matches the published optimum AND survives an independent verifier that
     shares no code with the solver.
