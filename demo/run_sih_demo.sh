@@ -103,6 +103,54 @@ echo
   --out "$WORK/netlib.csv" 2>&1 | tail -14
 
 # ===========================================================================================
+rule "2.5. Scale: an instance orders of magnitude larger than anything committed"
+# ===========================================================================================
+cat <<'SCALE'
+    Section 6 below is honest that the committed Netlib set is small and settles nothing
+    about the "thousands to millions of variables" this project has not yet benchmarked at.
+    This does not close that gap - one instance is not a benchmark suite - but it is a live
+    demonstration at a size none of the case studies above reach, on an LP whose optimum is
+    known before the solver ever sees the file (bench/runners/generate_large_lp.py builds the
+    instance BACKWARDS from a chosen primal-dual pair that already satisfies the KKT
+    conditions, the same construction tests/oracles/lp_generator.cpp uses for the fuzz gate),
+    solved by the GPU-story engine (restarted PDHG, CPU path) with --progress-out streaming
+    live iteration progress to a file, exactly as an operator watching a long solve would use.
+SCALE
+echo
+LARGE="$WORK/large.mps"
+GEN_OUT="$("$PYTHON" bench/runners/generate_large_lp.py --rows 5000 --cols 5000 \
+  --nnz-per-col 5 --seed 42 --out "$LARGE")"
+echo "$GEN_OUT" | sed 's/^/    /'
+ANALYTIC="$(echo "$GEN_OUT" | sed -n 's/.*analytic optimum: //p')"
+
+echo
+"$BIN" solve "$LARGE" --option log_to_console=false --option algorithm=pdhg \
+  --progress-out "$WORK/large_progress.jsonl" --stats "$WORK/large.json" >/dev/null || true
+echo "    SANKHYA: status $(field large result status), objective $(field large result objective),"
+echo "             $(field large effort iterations) PDHG iterations, $(field large effort solve_seconds)s"
+echo
+echo "    --progress-out, tail of $WORK/large_progress.jsonl (one line per 20 iterations,"
+echo "    flushed after every write - what 'tail -f' would show live during the solve above):"
+echo
+tail -3 "$WORK/large_progress.jsonl" | sed 's/^/        /'
+echo
+"$PYTHON" - "$WORK/large.json" "$ANALYTIC" <<'PYSCALE'
+import json, sys
+obj = json.load(open(sys.argv[1]))["result"]["objective"]
+analytic = float(sys.argv[2])
+rel = abs(obj - analytic) / max(1.0, abs(analytic))
+print("    analytic optimum (exact by construction, not measured): {}".format(sys.argv[2]))
+print("    relative difference:                                    {:.3e}".format(rel))
+# 1e-4 is PDHG's OWN default relative tolerance (kPdhgLoose, tolerances.hpp) - the bar this
+# check applies is the one the algorithm targets, not a tighter one picked after the fact.
+if rel <= 1e-4:
+    print("    Within PDHG's own default tolerance. The two agree.")
+else:
+    print("    OUTSIDE PDHG's own default tolerance. That is a bug in our solver.")
+sys.exit(0 if rel <= 1e-4 else 1)
+PYSCALE
+
+# ===========================================================================================
 rule "3. The industrial scope PS26119 names"
 # ===========================================================================================
 ask "'refinery scheduling, crude blending, process optimization, production planning,
