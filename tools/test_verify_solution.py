@@ -187,6 +187,177 @@ def test_known_bad_solution_is_rejected() -> None:
           f"{report.failures} check(s) failed, as expected")
 
 
+QPS_WITH_OFF_DIAGONAL = """NAME          QCONV
+ROWS
+ N  COST
+ G  R1
+COLUMNS
+    X         COST        -1.0   R1           1.0
+    Y         COST        -1.0   R1           1.0
+RHS
+    RHS       R1           0.0
+BOUNDS
+ FR BND       X
+ FR BND       Y
+QUADOBJ
+    X         X            2.0
+    X         Y            1.0
+    Y         Y            2.0
+ENDATA
+"""
+
+
+def test_qps_convention_is_read_as_qps_means_it() -> None:
+    """The 0.5 / lower-triangle convention, pinned on the EVALUATED objective.
+
+    QPS states the objective as c'x + 0.5 x'Qx and lists only the lower triangle of the
+    symmetric Q, so a stored off-diagonal stands for TWO entries of Q. The two ways to get
+    this wrong - halving the off-diagonal, or mirroring it into both triangles - both produce
+    a script that reads the file back plausibly and then certifies the solver's answer to a
+    DIFFERENT problem. Checking a stored number would not catch either; checking the value of
+    the objective at a known point does.
+
+    Q = [[2, 1], [1, 2]], c = (-1, -1). At x = (1, 1):
+        c'x        = -2
+        0.5 x'Qx   = 0.5 * (2 + 1 + 1 + 2) = 3
+        objective  = 1
+    A mirrored reading gives 4 for the quadratic term; a halved one gives 2.5.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "qconv.qps"
+        path.write_text(QPS_WITH_OFF_DIAGONAL)
+        model = vs.parse_mps(path)
+
+        check(len(model.hessian) == 3, "three Hessian entries stored",
+              f"got {len(model.hessian)}")
+        check(model.hessian.get((1, 0)) == 1.0, "the off-diagonal is stored lower-triangular",
+              f"hessian={model.hessian}")
+
+        x = [1.0, 1.0]
+        quadratic = model.quadratic_objective(x)
+        check(abs(quadratic - 3.0) < 1e-12, "0.5 x'Qx at (1, 1)",
+              f"got {quadratic}, expected 3.0 (4.0 would mean mirrored, 2.5 halved)")
+
+        # Qx = (2*1 + 1*1, 1*1 + 2*1) = (3, 3). This is the gradient term every KKT check
+        # below depends on, so it is pinned separately from the objective.
+        qx = model.hessian_times(x)
+        check(qx == [3.0, 3.0], "Qx expands the stored triangle symmetrically", f"got {qx}")
+
+
+def test_qp_optimum_verifies_and_a_wrong_one_does_not() -> None:
+    """The KKT conditions, on the QP above, at the true optimum and at a near miss.
+
+    min -x - y + 0.5(2x^2 + 2xy + 2y^2)  s.t. x + y >= 0, x and y free.
+    Gradient c + Qx vanishes where 2x + y = 1 and x + 2y = 1, i.e. x = y = 1/3. The row is
+    then slack (2/3 > 0) so its multiplier is zero, and the objective is -1/3.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "qconv.qps"
+        path.write_text(QPS_WITH_OFF_DIAGONAL)
+        model = vs.parse_mps(path)
+
+        third = 1.0 / 3.0
+        solution = vs.Solution()
+        solution.header = {"status": "optimal", "objective": repr(-third)}
+        solution.col_value = {"X": third, "Y": third}
+        solution.col_status = {"X": "basic", "Y": "basic"}
+        solution.col_dual = {"X": 0.0, "Y": 0.0}
+        solution.row_activity = {"R1": 2.0 * third}
+        solution.row_dual = {"R1": 0.0}
+
+        report = vs.verify(model, solution, vs.DEFAULT_PRIMAL_TOL, vs.DEFAULT_DUAL_TOL,
+                           vs.DEFAULT_INTEGER_TOL, vs.DEFAULT_DUALITY_TOL)
+        check(report.failures == 0, "the true QP optimum verifies",
+              f"{report.failures} check(s) failed")
+
+        # A point that is primal FEASIBLE and whose objective is reported consistently, but
+        # which is not stationary. Only the quadratic-aware KKT checks can tell the two
+        # apart - to an LP-shaped verifier this point looks exactly as good as the optimum.
+        objective = -1.0 + 0.5 * (2.0 + 2.0 * 0.5 + 2.0 * 0.25)
+        near_miss = vs.Solution()
+        near_miss.header = {"status": "optimal", "objective": repr(objective)}
+        near_miss.col_value = {"X": 1.0, "Y": 0.5}
+        near_miss.col_status = {"X": "basic", "Y": "basic"}
+        near_miss.col_dual = {"X": 0.0, "Y": 0.0}
+        near_miss.row_activity = {"R1": 1.5}
+        near_miss.row_dual = {"R1": 0.0}
+
+        report = vs.verify(model, near_miss, vs.DEFAULT_PRIMAL_TOL, vs.DEFAULT_DUAL_TOL,
+                           vs.DEFAULT_INTEGER_TOL, vs.DEFAULT_DUALITY_TOL)
+        check(report.failures > 0, "a feasible non-stationary point is rejected",
+              f"{report.failures} check(s) failed, as expected")
+
+
+QPS_MAXIMIZE = """NAME          QMAX
+OBJSENSE
+    MAX
+ROWS
+ N  COST
+ L  R1
+COLUMNS
+    X         COST         4.0   R1           1.0
+RHS
+    RHS       R1          10.0
+BOUNDS
+ FR BND       X
+QUADOBJ
+    X         X           -2.0
+ENDATA
+"""
+
+
+def test_quadratic_maximization_keeps_its_sign() -> None:
+    """The sign path, which is where a quadratic objective is easiest to get wrong.
+
+    Every KKT check runs in MINIMIZE space, reached by multiplying through by sigma. The
+    linear cost was already handled that way; the quadratic term has to follow it, and it
+    enters in two places - the gradient c + Qx, and the -0.5 x'Qx the Dorn dual subtracts.
+    Miss sigma on either and a maximization QP is checked against the conditions for its
+    negation, which rejects correct answers and, on a symmetric enough instance, accepts
+    wrong ones.
+
+    max 4x - x^2  s.t. x <= 10, x free. Stored as c = 4 and Q = -2, since the file's
+    objective is c'x + 0.5 x'Qx. The gradient 4 - 2x vanishes at x = 2, the row is slack
+    there (2 < 10) so its multiplier is zero, and the objective is 8 - 4 = 4.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "qmax.qps"
+        path.write_text(QPS_MAXIMIZE)
+        model = vs.parse_mps(path)
+
+        check(model.maximize, "OBJSENSE MAX survives the quadratic section", "")
+        check(model.hessian == {(0, 0): -2.0}, "negative Hessian stored as written",
+              f"got {model.hessian}")
+
+        optimum = vs.Solution()
+        optimum.header = {"status": "optimal", "objective": "4.0"}
+        optimum.col_value = {"X": 2.0}
+        optimum.col_status = {"X": "basic"}
+        optimum.col_dual = {"X": 0.0}
+        optimum.row_activity = {"R1": 2.0}
+        optimum.row_dual = {"R1": 0.0}
+
+        report = vs.verify(model, optimum, vs.DEFAULT_PRIMAL_TOL, vs.DEFAULT_DUAL_TOL,
+                           vs.DEFAULT_INTEGER_TOL, vs.DEFAULT_DUALITY_TOL)
+        check(report.failures == 0, "the true maximum verifies",
+              f"{report.failures} check(s) failed")
+
+        # x = 3 is feasible and its objective is reported correctly (12 - 9 = 3). It is
+        # simply not the maximum. Only a check that knows the gradient is 4 - 2x can say so.
+        near_miss = vs.Solution()
+        near_miss.header = {"status": "optimal", "objective": "3.0"}
+        near_miss.col_value = {"X": 3.0}
+        near_miss.col_status = {"X": "basic"}
+        near_miss.col_dual = {"X": 0.0}
+        near_miss.row_activity = {"R1": 3.0}
+        near_miss.row_dual = {"R1": 0.0}
+
+        report = vs.verify(model, near_miss, vs.DEFAULT_PRIMAL_TOL, vs.DEFAULT_DUAL_TOL,
+                           vs.DEFAULT_INTEGER_TOL, vs.DEFAULT_DUALITY_TOL)
+        check(report.failures > 0, "a feasible non-maximal point is rejected",
+              f"{report.failures} check(s) failed, as expected")
+
+
 def main() -> int:
     print("test_fixed_format_row_name_with_space")
     test_fixed_format_row_name_with_space()
@@ -194,6 +365,12 @@ def main() -> int:
     test_sol_reader_recovers_quoted_names()
     print("test_known_bad_solution_is_rejected")
     test_known_bad_solution_is_rejected()
+    print("test_qps_convention_is_read_as_qps_means_it")
+    test_qps_convention_is_read_as_qps_means_it()
+    print("test_qp_optimum_verifies_and_a_wrong_one_does_not")
+    test_qp_optimum_verifies_and_a_wrong_one_does_not()
+    print("test_quadratic_maximization_keeps_its_sign")
+    test_quadratic_maximization_keeps_its_sign()
     print()
     if FAILURES == 0:
         print("ALL TESTS PASSED")
