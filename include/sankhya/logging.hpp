@@ -12,6 +12,7 @@
 // the wrong moment; passing the sink in now costs nothing and avoids that.
 #pragma once
 
+#include <chrono>
 #include <cstdio>
 #include <string>
 #include <string_view>
@@ -108,12 +109,39 @@ class Logger {
   void node(Count nodes, Count open_nodes, double incumbent, double dual_bound,
             double relative_gap, double seconds);
 
+  // ---- Live progress JSONL (issue #103) ------------------------------------------------
+
+  /// From here on, every iteration() / node() call also appends one JSON line to `path`,
+  /// flushed immediately so `tail -f path` sees it in real time. If `path` cannot be
+  /// opened, logs a warning through this logger and progress output stays disabled - the
+  /// caller does not need to check for failure, the solve continues either way.
+  void enable_progress_output(const std::string& path);
+
+  ~Logger();
+  Logger(const Logger&) = delete;
+  Logger& operator=(const Logger&) = delete;
+
  private:
+  [[nodiscard]] double progress_elapsed() const;
+  void write_progress_iteration(Count iteration_number, double objective);
+  void write_progress_node(Count nodes, double incumbent, double dual_bound,
+                           double relative_gap);
+
   std::FILE* stream_ = nullptr;
   LogLevel level_ = LogLevel::kInfo;
   int header_interval_ = 20;
   int rows_since_header_ = 0;
   bool in_node_table_ = false;
+  std::FILE* progress_stream_ = nullptr;
+
+  /// ONE clock for the whole stream, started when progress output is enabled.
+  ///
+  /// The `seconds` each call site passes is its OWN elapsed time, and a branch and bound
+  /// solves a fresh LP per node - so the simplex's timer restarts on every one of them and
+  /// the stream's `elapsed_s` walks backwards. Measured on lot_sizing: 7 of 14 lines went
+  /// back in time. A stream whose stated purpose is `tail -f` and plotting a gap curve
+  /// cannot have a clock that resets.
+  std::chrono::steady_clock::time_point progress_started_{};
 };
 
 /// A process-wide logger for the CLI and for code paths that have no logger to hand

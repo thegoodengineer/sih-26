@@ -9,11 +9,13 @@
 // second, independent search over the same instance catches it.
 
 #include <cmath>
+#include <fstream>
 #include <random>
 #include <string>
 #include <vector>
 
 #include <gtest/gtest.h>
+#include <nlohmann/json.hpp>
 
 #include "sankhya/model.hpp"
 #include "sankhya/options.hpp"
@@ -21,9 +23,12 @@
 
 #include "oracles/lp_generator.hpp"
 #include "oracles/rational_simplex.hpp"
+#include "support/temp_file.hpp"
 
 namespace sankhya {
 namespace {
+
+using testing::TempFile;
 
 Options mip_options() {
   Options options;
@@ -380,6 +385,54 @@ TEST(BranchAndBound, FuzzAgainstTheExactMilpOracle) {
   EXPECT_GT(agreed_optimal + agreed_infeasible, 300)
       << "too few instances were actually compared for this to mean anything";
   EXPECT_GT(agreed_optimal, 50) << "the generator produced almost no feasible MILPs";
+}
+
+// =========================================================================================
+
+// issue #103: --progress-out, exercised end to end through the real Options -> solve()
+// path (not just the Logger unit), since that is the seam a CLI flag actually reaches.
+TEST(BranchAndBound, ProgressOutWritesReadableJsonlForAMilpSolve) {
+  // Capacity-10 knapsack (see ReportsFeasibleRatherThanOptimalAtTheNodeLimit above): at
+  // capacity 9 the relaxation happens to already be integral and the root closes with no
+  // branch at all, so it never reaches logger_.node(). At 10 the relaxation is genuinely
+  // fractional and the search has to branch, which is what this test needs to exercise.
+  const Model model =
+      make_milp({{5.0, 4.0, 3.0, 2.0}}, {-kInfinity}, {10.0}, {-10.0, -7.0, -4.0, -3.0},
+                {1.0, 1.0, 1.0, 1.0}, {true, true, true, true});
+
+  const TempFile file("", ".jsonl");
+  Options options = mip_options();
+  options.set_string("progress_out", file.path());
+
+  const Solution s = solve(model, options);
+  ASSERT_EQ(s.status, SolveStatus::kOptimal);
+
+  // Every B&B node re-solves an LP relaxation, so the stream interleaves node()'s MILP-shaped
+  // lines (nodes numeric, iterations null) with iteration()'s LP-shaped lines from those
+  // relaxation solves (the reverse) - both are valid rows of the same schema, not a bug.
+  std::ifstream in(file.path());
+  std::string line;
+  int lines_seen = 0;
+  int node_lines_seen = 0;
+  while (std::getline(in, line)) {
+    if (!line.empty() && line.back() == '\r') line.pop_back();
+    if (line.empty()) continue;
+    const nlohmann::json parsed = nlohmann::json::parse(line);
+    ASSERT_TRUE(parsed.contains("elapsed_s"));
+    ASSERT_TRUE(parsed.contains("iterations"));
+    ASSERT_TRUE(parsed.contains("nodes"));
+    ASSERT_TRUE(parsed.contains("best_bound"));
+    ASSERT_TRUE(parsed.contains("best_integer"));
+    ASSERT_TRUE(parsed.contains("gap_pct"));
+    EXPECT_TRUE(parsed["elapsed_s"].is_number());
+    EXPECT_TRUE(parsed["best_bound"].is_number());
+    EXPECT_TRUE(parsed["nodes"].is_number() != parsed["iterations"].is_number())
+        << "exactly one of nodes/iterations identifies which call site wrote this line";
+    if (parsed["nodes"].is_number()) ++node_lines_seen;
+    ++lines_seen;
+  }
+  EXPECT_GT(lines_seen, 0);
+  EXPECT_GT(node_lines_seen, 0) << "the MILP search itself never appeared in the progress log";
 }
 
 }  // namespace

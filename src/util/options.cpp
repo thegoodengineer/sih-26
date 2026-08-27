@@ -245,6 +245,15 @@ const std::vector<OptionSpec>& Options::registry() {
                  0.0,
                  {},
                  "Phase 9"});
+    s.push_back({"progress_out",
+                 OptionType::String,
+                 std::string(""),
+                 "Append live solve progress as JSON lines to this file; empty disables it.",
+                 0.0,
+                 0.0,
+                 {},
+                 /*planned_for=*/std::string(""),
+                 /*case_sensitive=*/true});
     return s;
   }();
   return specs;
@@ -343,7 +352,7 @@ bool Options::set_from_string(const std::string& raw_name, const std::string& ra
       return true;
     }
     case OptionType::String: {
-      const std::string v = to_lower(text);
+      const std::string v = spec.case_sensitive ? text : to_lower(text);
       if (!spec.choices.empty() &&
           std::find(spec.choices.begin(), spec.choices.end(), v) == spec.choices.end()) {
         if (error != nullptr) {
@@ -381,7 +390,8 @@ void Options::set_double(const std::string& name, double value) {
 void Options::set_string(const std::string& name, const std::string& value) {
   OptionValue& slot = mutable_value_of(name);
   assert(std::holds_alternative<std::string>(slot) && "option is not a string");
-  slot = to_lower(value);
+  const OptionSpec* spec = find_spec(name);
+  slot = (spec != nullptr && spec->case_sensitive) ? value : to_lower(value);
 }
 
 bool Options::get_bool(const std::string& name) const {

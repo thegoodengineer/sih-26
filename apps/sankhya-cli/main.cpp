@@ -199,6 +199,9 @@ int main(int argc, char** argv) {
   solve_cmd->add_option("--write-sol", solution_path, "Write the solution to this path");
   std::string stats_path;
   solve_cmd->add_option("--stats", stats_path, "Write a JSON result blob to this path");
+  std::string progress_out_path;
+  solve_cmd->add_option("--progress-out", progress_out_path,
+                        "Append live solve progress as JSON lines to this path");
 
   CLI::App* info_cmd = app.add_subcommand("info", "Report the dimensions of a model file");
   std::string info_path;
@@ -231,6 +234,7 @@ int main(int argc, char** argv) {
   if (solve_cmd->parsed()) {
     sankhya::Model model;
     if (!load_model(model_path, options, &model)) return 3;
+    if (!progress_out_path.empty()) options.set_string("progress_out", progress_out_path);
 
     const sankhya::Solution solution = sankhya::solve(model, options);
 
