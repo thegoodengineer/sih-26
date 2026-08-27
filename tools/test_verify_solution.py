@@ -288,6 +288,76 @@ def test_qp_optimum_verifies_and_a_wrong_one_does_not() -> None:
               f"{report.failures} check(s) failed, as expected")
 
 
+QPS_MAXIMIZE = """NAME          QMAX
+OBJSENSE
+    MAX
+ROWS
+ N  COST
+ L  R1
+COLUMNS
+    X         COST         4.0   R1           1.0
+RHS
+    RHS       R1          10.0
+BOUNDS
+ FR BND       X
+QUADOBJ
+    X         X           -2.0
+ENDATA
+"""
+
+
+def test_quadratic_maximization_keeps_its_sign() -> None:
+    """The sign path, which is where a quadratic objective is easiest to get wrong.
+
+    Every KKT check runs in MINIMIZE space, reached by multiplying through by sigma. The
+    linear cost was already handled that way; the quadratic term has to follow it, and it
+    enters in two places - the gradient c + Qx, and the -0.5 x'Qx the Dorn dual subtracts.
+    Miss sigma on either and a maximization QP is checked against the conditions for its
+    negation, which rejects correct answers and, on a symmetric enough instance, accepts
+    wrong ones.
+
+    max 4x - x^2  s.t. x <= 10, x free. Stored as c = 4 and Q = -2, since the file's
+    objective is c'x + 0.5 x'Qx. The gradient 4 - 2x vanishes at x = 2, the row is slack
+    there (2 < 10) so its multiplier is zero, and the objective is 8 - 4 = 4.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "qmax.qps"
+        path.write_text(QPS_MAXIMIZE)
+        model = vs.parse_mps(path)
+
+        check(model.maximize, "OBJSENSE MAX survives the quadratic section", "")
+        check(model.hessian == {(0, 0): -2.0}, "negative Hessian stored as written",
+              f"got {model.hessian}")
+
+        optimum = vs.Solution()
+        optimum.header = {"status": "optimal", "objective": "4.0"}
+        optimum.col_value = {"X": 2.0}
+        optimum.col_status = {"X": "basic"}
+        optimum.col_dual = {"X": 0.0}
+        optimum.row_activity = {"R1": 2.0}
+        optimum.row_dual = {"R1": 0.0}
+
+        report = vs.verify(model, optimum, vs.DEFAULT_PRIMAL_TOL, vs.DEFAULT_DUAL_TOL,
+                           vs.DEFAULT_INTEGER_TOL, vs.DEFAULT_DUALITY_TOL)
+        check(report.failures == 0, "the true maximum verifies",
+              f"{report.failures} check(s) failed")
+
+        # x = 3 is feasible and its objective is reported correctly (12 - 9 = 3). It is
+        # simply not the maximum. Only a check that knows the gradient is 4 - 2x can say so.
+        near_miss = vs.Solution()
+        near_miss.header = {"status": "optimal", "objective": "3.0"}
+        near_miss.col_value = {"X": 3.0}
+        near_miss.col_status = {"X": "basic"}
+        near_miss.col_dual = {"X": 0.0}
+        near_miss.row_activity = {"R1": 3.0}
+        near_miss.row_dual = {"R1": 0.0}
+
+        report = vs.verify(model, near_miss, vs.DEFAULT_PRIMAL_TOL, vs.DEFAULT_DUAL_TOL,
+                           vs.DEFAULT_INTEGER_TOL, vs.DEFAULT_DUALITY_TOL)
+        check(report.failures > 0, "a feasible non-maximal point is rejected",
+              f"{report.failures} check(s) failed, as expected")
+
+
 def main() -> int:
     print("test_fixed_format_row_name_with_space")
     test_fixed_format_row_name_with_space()
@@ -299,6 +369,8 @@ def main() -> int:
     test_qps_convention_is_read_as_qps_means_it()
     print("test_qp_optimum_verifies_and_a_wrong_one_does_not")
     test_qp_optimum_verifies_and_a_wrong_one_does_not()
+    print("test_quadratic_maximization_keeps_its_sign")
+    test_quadratic_maximization_keeps_its_sign()
     print()
     if FAILURES == 0:
         print("ALL TESTS PASSED")
