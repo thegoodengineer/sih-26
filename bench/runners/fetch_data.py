@@ -42,14 +42,14 @@ NETLIB_BASE = "https://netlib.org/lp/data"
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = REPO_ROOT / "data" / "netlib"
 
-# The Phase 2/3 working set: small, well conditioned, and every one of them has a published
-# optimum. blend is a petroleum blending model, which is why it earns its place in a demo
-# for refinery judges.
+# The Phase 2/3 working set: small, every one of them carrying a published optimum. blend is
+# a petroleum blending model, which is why it earns its place in a demo for refinery judges,
+# and israel is here for the opposite reason - see the note on it in DEFAULT_SET below.
 # Named instance sets. `small` is what CI runs; the other two are for manual evidence runs.
 #
-# The point of naming these is that "8 of 8" reads as full coverage when it is 9% of the set,
-# and the largest instance carried by `small` is 118 rows - nothing that could exercise the
-# degeneracy or ill-conditioning the problem statement asks about. `medium` is the first tier
+# The point of naming these is that "9 of 9" reads as full coverage when it is 10% of the set.
+# `small` used to top out at 118 rows, which could not exercise the ill-conditioning the
+# problem statement asks about; israel now carries that end of it. `medium` is the first tier
 # with instances big enough for the basis factorization to matter, and `full` is the number
 # Phase 6's ">= 95% of Netlib" exit criterion is actually measured against.
 #
@@ -57,7 +57,7 @@ DATA_DIR = REPO_ROOT / "data" / "netlib"
 # does not silently drift as instances are added, and so nobody has to curate it.
 MEDIUM_MAX_ROWS = 500
 
-# Counts as of the current Netlib readme: small 8, medium 50, full 89.
+# Counts as of the current Netlib readme: small 9, medium 50, full 89.
 SET_NAMES = ("small", "medium", "full")
 
 DEFAULT_SET = [
@@ -69,6 +69,24 @@ DEFAULT_SET = [
     "share2b",
     "blend",
     "stocfor1",
+    # israel is the one member of this set that is NOT well conditioned, and it is here for
+    # that reason rather than in spite of it. 175 rows, 2358 nonzeros, and it is the only
+    # instance in the set whose basis goes SINGULAR when scaling is disabled:
+    #
+    #     sankhya solve data/netlib/israel.mps --option scaling=false
+    #     -> numerical_error, "basis became singular at iteration 218"
+    #
+    # while with scaling it solves to a relative duality gap of 3.9e-16. That pair is the
+    # demo's best evidence that the scaling is load-bearing rather than decorative, because
+    # it is a controlled failure: the reduction is turned off deliberately and the solver
+    # reports numerical_error instead of a plausible-looking wrong answer.
+    #
+    # It also has to be IN this list rather than merely committed. fetch_data.py with no
+    # arguments - which is what CI runs - sets instance_set to "small", while the manifest
+    # itself accumulates every instance ever fetched. An israel present in the manifest but
+    # absent from the set therefore produced a 9-instance run labelled `small`, and
+    # make_benchmarks_doc.py captions that label onto the generated table.
+    "israel",
 ]
 
 # Name Rows Cols Nonzeros Bytes [BR flags] Optimal
