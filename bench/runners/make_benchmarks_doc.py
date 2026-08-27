@@ -422,9 +422,18 @@ def milp_section(path: Path | None) -> str:
         f"stopping at a gap target or a limit.",
         "",
         "Those are different claims and are kept apart deliberately. Branch and bound here has "
-        "no cutting planes and only a rounding heuristic, so it finds good incumbents far more "
-        "often than it finishes the proof. Collapsing the two columns would hide exactly the "
-        "thing #23 is meant to improve.",
+        "no cutting planes - a rounding heuristic and a root dive, but nothing that tightens "
+        "the relaxation - so it finds good incumbents far more often than it finishes the "
+        "proof. Collapsing the two columns would hide exactly the thing #23 is meant to "
+        "improve.",
+        "",
+        "**The time limit decides some of these, not the solver.** `enlight8` proves optimality "
+        "in about 55 seconds on an idle machine and misses a 60-second budget when the rest of "
+        "the set is running alongside it - so its row moves with background load rather than "
+        "with anything about the search. Instances close to the limit should be read as "
+        "\"needs more time than we gave it\", not as a capability. The remedy is a longer limit, "
+        "and the reason this table does not already use one is that the full set takes about "
+        "half an hour per run as it stands.",
         "",
         "Instances are the smallest MIPLIB 2017 instances tagged easy that carry a **proven** "
         "optimum (`=opt=` in MIPLIB's own solution file). A `=best=` value is the best anyone "
