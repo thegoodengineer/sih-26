@@ -733,9 +733,10 @@ ReadResult MpsParser::parse(const std::string& path) {
           // be the LP relaxation of a QP reported as optimal. Failing here is the only
           // outcome that does not silently answer a different question. See #55 and #64.
           return ReadResult::failure(reader_.error_at(fmt::format(
-              "'{}' is a quadratic objective section; this model is a QP and SANKHYA has no "
-              "QP engine yet, so it is refused rather than solved as if the quadratic term "
-              "were not there. Tracked as issue #55 (engine) and #64 (QPS reader)",
+              "'{}' is a quadratic objective section. There IS a convex QP engine (#55), but "
+              "no reader that can build a Hessian from this section yet, so the file is "
+              "refused rather than read as the LP relaxation of a quadratic program. The "
+              "engine is reachable through the API in the meantime. Tracked as issue #64",
               to_upper(tok_[0]))));
         }
         if (next == Section::kName) {

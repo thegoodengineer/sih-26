@@ -22,6 +22,7 @@
 #include "sankhya/model.hpp"
 #include "sankhya/options.hpp"
 #include "sankhya/pdhg.hpp"
+#include "sankhya/qp.hpp"
 #include "sankhya/timer.hpp"
 
 #include "../simplex/primal_simplex.hpp"
@@ -226,10 +227,23 @@ Solution solve(const Model& model, const Options& options) {
     return solution;
   }
 
+  if (problem_class == ProblemClass::kQp) {
+    solution = qp::solve_convex_qp(model, options, logger);
+    // check_dual is false: the QP's reduced costs are c + Qx - A'y, which is not the
+    // quantity Solution::recompute_quality() tests, and applying the LP dual rule here
+    // would reject correct answers. Primal feasibility and the status still have to agree.
+    reconcile_status_with_measurement(&solution, options, logger, /*check_dual=*/false);
+    logger.info("Result: {}  objective {:.10g}  {} iterations  {:.3f}s",
+                to_string(solution.status), solution.objective, solution.iterations,
+                solution.solve_seconds);
+    logger.info("Measured primal infeasibility {:.3e}", solution.primal_infeasibility);
+    return solution;
+  }
+
   solution.status = SolveStatus::kNotSolved;
   solution.algorithm = "none";
   solution.message = fmt::format(
-      "no engine is implemented for {} yet; the QP and MIQP engines land in Phase 8. The "
+      "no engine is implemented for {} yet; MIQP needs the QP and MILP engines joined. The "
       "relaxation is deliberately NOT reported as a solution",
       class_name(problem_class));
   logger.warning("{}", solution.message);

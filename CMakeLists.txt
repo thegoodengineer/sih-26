@@ -183,6 +183,8 @@ set(SANKHYA_CORE_SOURCES
   src/io/lp_reader.cpp
   src/io/mps_reader.cpp
   src/io/writer.cpp
+  src/qp/convexity.cpp
+  src/qp/qp_condat_vu.cpp
   src/la/lu.cpp
   src/la/scaling.cpp
   src/la/sparse.cpp

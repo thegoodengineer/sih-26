@@ -214,6 +214,13 @@ const std::vector<OptionSpec>& Options::registry() {
                  0.0,
                  0.0,
                  {}});
+    s.push_back({"qp_tolerance",
+                 OptionType::Double,
+                 1e-8,
+                 "Convex QP primal/dual residual termination tolerance.",
+                 1e-14,
+                 0.1,
+                 {}});
     s.push_back({"pdhg_tolerance",
                  OptionType::Double,
                  tol::kPdhgLoose,
