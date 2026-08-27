@@ -108,12 +108,29 @@ class Logger {
   void node(Count nodes, Count open_nodes, double incumbent, double dual_bound,
             double relative_gap, double seconds);
 
+  // ---- Live progress JSONL (issue #103) ------------------------------------------------
+
+  /// From here on, every iteration() / node() call also appends one JSON line to `path`,
+  /// flushed immediately so `tail -f path` sees it in real time. If `path` cannot be
+  /// opened, logs a warning through this logger and progress output stays disabled - the
+  /// caller does not need to check for failure, the solve continues either way.
+  void enable_progress_output(const std::string& path);
+
+  ~Logger();
+  Logger(const Logger&) = delete;
+  Logger& operator=(const Logger&) = delete;
+
  private:
+  void write_progress_iteration(Count iteration_number, double objective, double seconds);
+  void write_progress_node(Count nodes, double incumbent, double dual_bound,
+                           double relative_gap, double seconds);
+
   std::FILE* stream_ = nullptr;
   LogLevel level_ = LogLevel::kInfo;
   int header_interval_ = 20;
   int rows_since_header_ = 0;
   bool in_node_table_ = false;
+  std::FILE* progress_stream_ = nullptr;
 };
 
 /// A process-wide logger for the CLI and for code paths that have no logger to hand

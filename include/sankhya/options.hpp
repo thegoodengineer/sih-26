@@ -47,6 +47,12 @@ struct OptionSpec {
   /// what changes is that the printed table says so.
   std::string planned_for{};
 
+  /// String options are lowercased on assignment by default, because every existing one
+  /// (log_level, algorithm, ...) is a closed enum where case should not matter. A file path
+  /// is not an enum - lowercasing "Output.jsonl" silently opens a different file than the
+  /// one the caller named - so a path-valued option sets this true to opt out (#103).
+  bool case_sensitive = false;
+
   [[nodiscard]] bool implemented() const { return planned_for.empty(); }
 };
 

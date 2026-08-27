@@ -147,6 +147,8 @@ Solution solve(const Model& model, const Options& options) {
   Logger logger(options.get_bool("log_to_console") ? stdout : nullptr);
   LogLevel level = LogLevel::kInfo;
   if (parse_log_level(options.get_string("log_level"), &level)) logger.set_level(level);
+  const std::string progress_out = options.get_string("progress_out");
+  if (!progress_out.empty()) logger.enable_progress_output(progress_out);
 
   const ProblemClass problem_class = classify(model);
   logger.info("Model {}: {} rows, {} columns, {} nonzeros, {} integer columns",
