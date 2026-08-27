@@ -56,7 +56,7 @@ enum class Section {
   kRhs,
   kRanges,
   kBounds,
-  kQuadratic,  ///< QUADOBJ / QMATRIX / QSECTION - recognised so it can be REFUSED, not read
+  kQuadratic,  ///< QUADOBJ / QMATRIX / QSECTION - the QPS quadratic objective
   kEnd
 };
 
@@ -98,16 +98,11 @@ constexpr FixedField kFixedFields[6] = {{1, 2}, {4, 8}, {14, 8}, {24, 12}, {39, 
     *out = Section::kBounds;
     return true;
   }
-  // QPS quadratic sections. Recognised ONLY so the file can be refused with an accurate
-  // message. Before this, none of these names matched a section, so a QUADOBJ block was
-  // absorbed by whatever section preceded it - a QP written after RHS was read as an extra
-  // RHS vector, the model came back with problem class LP, and the solver returned `optimal`
-  // for the LP RELAXATION of a quadratic program.
-  //
-  // CLAUDE.md names that exact shape - a relaxation reported as optimal - as the single most
-  // damaging thing this codebase can do. solve() already refuses a QP, but that guard reads
-  // Model::has_quadratic_objective(), and a reader that never fills the Hessian means the
-  // guard never fires. The refusal has to happen here, where the evidence is.
+  // QPS quadratic sections, all four spellings in circulation. Before these were
+  // recognised at all, a QUADOBJ block was absorbed by whatever section preceded it - a QP
+  // written after RHS was read as an extra RHS vector, the model came back with problem
+  // class LP, and the solver returned `optimal` for the LP RELAXATION of a quadratic
+  // program. They were then recognised so the file could be REFUSED; now they are read.
   if (k == "QUADOBJ" || k == "QMATRIX" || k == "QSECTION" || k == "QUADS") {
     *out = Section::kQuadratic;
     return true;
@@ -135,6 +130,7 @@ class MpsParser {
   [[nodiscard]] bool do_rhs(std::string* error);
   [[nodiscard]] bool do_ranges(std::string* error);
   [[nodiscard]] bool do_bounds(std::string* error);
+  [[nodiscard]] bool do_quadratic(std::string* error);
 
   // ---- completion ---------------------------------------------------------------------
   [[nodiscard]] bool finish_rows(std::string* error);
@@ -175,6 +171,13 @@ class MpsParser {
   std::vector<double> tri_value_;
   std::unordered_set<std::uint64_t> seen_entries_;
   std::unordered_set<Index> seen_objective_;
+
+  // Hessian triplets, always stored lower-triangular, with the same duplicate guard the
+  // constraint matrix uses. QPS has no accumulate semantics either.
+  std::vector<Index> quad_row_;
+  std::vector<Index> quad_col_;
+  std::vector<double> quad_value_;
+  std::unordered_set<std::uint64_t> seen_quad_entries_;
 
   // Only the first named RHS / RANGES / BOUNDS vector is honoured, which is what every
   // established reader does with a multi-vector file.
@@ -606,6 +609,70 @@ bool MpsParser::do_bounds(std::string* error) {
 
 // ---- completion ---------------------------------------------------------------------
 
+bool MpsParser::do_quadratic(std::string* error) {
+  // QPS QUADOBJ: "colname1 colname2 value", giving one entry of the Hessian of the OBJECTIVE.
+  //
+  // THE CONVENTION, and it is the trap in this section. QPS states the objective as
+  //
+  //     c'x + 0.5 x' Q x
+  //
+  // and lists only the LOWER TRIANGLE of the symmetric Q. A stored off-diagonal entry
+  // therefore stands for TWO entries of Q, and the 0.5 is part of the objective rather than
+  // part of the data. `sankhya::Model` was defined in exactly this convention - see the note
+  // in model.hpp - so entries map across with no transformation at all. A reader that
+  // "helpfully" halved the off-diagonals, or mirrored them into both triangles, would produce
+  // a model that solves cleanly to the optimum of a different problem.
+  //
+  // Files differ on which order the two column names appear in, so the pair is normalised to
+  // (max, min) rather than trusted.
+  if (tok_.size() < 3) {
+    *error = reader_.error_at(fmt::format(
+        "QUADOBJ entry has {} field(s), expected 3 (column, column, value)", tok_.size()));
+    return false;
+  }
+
+  const Index first = find_column(tok_[0]);
+  const Index second = find_column(tok_[1]);
+  if (first < 0 || second < 0) {
+    *error = reader_.error_at(
+        fmt::format("QUADOBJ names column '{}' which never appeared in COLUMNS",
+                    first < 0 ? std::string(tok_[0]) : std::string(tok_[1])));
+    return false;
+  }
+
+  double value = 0.0;
+  if (!parse_double(tok_[2], &value)) {
+    *error = reader_.error_at(fmt::format("'{}' is not a number", tok_[2]));
+    return false;
+  }
+  if (!std::isfinite(value)) {
+    *error = reader_.error_at(fmt::format(
+        "Hessian entry for ('{}', '{}') is {}; it must be finite", tok_[0], tok_[1], value));
+    return false;
+  }
+
+  const Index row = std::max(first, second);
+  const Index col = std::min(first, second);
+  const auto key = (static_cast<std::uint64_t>(static_cast<std::uint32_t>(row)) << 32) |
+                   static_cast<std::uint64_t>(static_cast<std::uint32_t>(col));
+  if (!seen_quad_entries_.insert(key).second) {
+    // A file listing both (i, j) and (j, i) hits this, which is the point: the two name the
+    // same entry of a symmetric matrix, and summing them would double the coefficient.
+    *error = reader_.error_at(fmt::format(
+        "duplicate Hessian entry for columns '{}' and '{}'; QPS lists the lower triangle of a "
+        "symmetric matrix, so each pair may appear only once and has no accumulate semantics",
+        col_names_[static_cast<std::size_t>(row)], col_names_[static_cast<std::size_t>(col)]));
+    return false;
+  }
+
+  if (value != 0.0) {
+    quad_row_.push_back(row);
+    quad_col_.push_back(col);
+    quad_value_.push_back(value);
+  }
+  return true;
+}
+
 bool MpsParser::finish_rows(std::string* error) {
   const std::size_t m = row_type_.size();
   model_->row_lower.assign(m, -kInfinity);
@@ -696,7 +763,13 @@ void MpsParser::finish_model() {
     model_->matrix.add_entry(tri_row_[k], tri_col_[k], tri_value_[k]);
   }
   model_->matrix.finalize();
+  // The Hessian, in the QPS convention the Model already uses: lower triangle, with the 0.5
+  // carried by the objective rather than by the data, so entries need no transformation.
   model_->hessian.reset(n, n);
+  model_->hessian.reserve(quad_row_.size());
+  for (std::size_t k = 0; k < quad_row_.size(); ++k) {
+    model_->hessian.add_entry(quad_row_[k], quad_col_[k], quad_value_[k]);
+  }
   model_->hessian.finalize();
 }
 
@@ -725,19 +798,6 @@ ReadResult MpsParser::parse(const std::string& path) {
         if (next == Section::kEnd) {
           saw_endata = true;
           break;
-        }
-        if (next == Section::kQuadratic) {
-          // REFUSE, rather than skip. Skipping would hand the caller a model that is missing
-          // its quadratic term entirely, and every downstream check would agree it looked
-          // fine: the class would read LP, the simplex would solve it, and the answer would
-          // be the LP relaxation of a QP reported as optimal. Failing here is the only
-          // outcome that does not silently answer a different question. See #55 and #64.
-          return ReadResult::failure(reader_.error_at(fmt::format(
-              "'{}' is a quadratic objective section. There IS a convex QP engine (#55), but "
-              "no reader that can build a Hessian from this section yet, so the file is "
-              "refused rather than read as the LP relaxation of a quadratic program. The "
-              "engine is reachable through the API in the meantime. Tracked as issue #64",
-              to_upper(tok_[0]))));
         }
         if (next == Section::kName) {
           model_->name = tok_.size() >= 2 ? std::string(tok_[1]) : std::string();
@@ -789,12 +849,8 @@ ReadResult MpsParser::parse(const std::string& path) {
         if (!do_bounds(&error)) return ReadResult::failure(error);
         break;
       case Section::kQuadratic:
-        // Unreachable: the header itself returns a failure above, so no data line beneath it
-        // is ever reached. Listed anyway because -Werror=switch requires it, and because
-        // silently falling through to the "before any section header" message would describe
-        // the wrong problem if that ever stopped being true.
-        return ReadResult::failure(
-            reader_.error_at("quadratic objective data is not supported; see issue #55"));
+        if (!do_quadratic(&error)) return ReadResult::failure(error);
+        break;
       case Section::kNone:
       case Section::kName:
       case Section::kObjsense:

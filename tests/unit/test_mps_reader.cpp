@@ -20,6 +20,7 @@
 
 #include "sankhya/io.hpp"
 #include "sankhya/model.hpp"
+#include "sankhya/options.hpp"
 
 #include "support/temp_file.hpp"
 
@@ -832,24 +833,162 @@ TEST(MpsReader, LargeBoundsAreStillInfinityNotAnError) {
 // QPS quadratic sections (#55, #64)
 // =========================================================================================
 
-TEST(MpsReader, RefusesAQuadraticObjectiveSectionRatherThanIgnoringIt) {
-  // BEFORE THIS, none of these names matched a section, so a QUADOBJ block was absorbed by
-  // whatever section preceded it. A QP written after RHS was read as an extra RHS vector,
-  // Model::has_quadratic_objective() stayed false, solve() classified it LP, and the simplex
-  // returned `optimal` - for the LP RELAXATION of a quadratic program.
-  //
-  // That is the shape CLAUDE.md names as the single most damaging outcome available to this
-  // codebase. solve() does refuse a QP, but that guard reads the Hessian, and a reader that
-  // never fills one means the guard never fires. The refusal belongs here, where the
-  // evidence is.
+TEST(MpsReader, ReadsAQuadraticObjectiveSectionUnderEverySpelling) {
+  // Four spellings are in circulation and a file may use any of them. Before any of these
+  // matched a section, a QUADOBJ block was absorbed by whatever section preceded it: a QP
+  // written after RHS was read as an extra RHS vector, has_quadratic_objective() stayed
+  // false, solve() classified the model LP, and the simplex returned `optimal` for the LP
+  // RELAXATION of a quadratic program. They were then recognised so the file could be
+  // refused; this asserts they are now READ.
   for (const char* keyword : {"QUADOBJ", "QMATRIX", "QSECTION", "QUADS"}) {
-    const std::string error = parse_expecting_failure(
+    const Model model = parse_or_fail(
         std::string("NAME          QPTEST\n") + "ROWS\n" + " N  COST\n" + " G  R1\n" +
-        "COLUMNS\n" + "    X         COST         1.0   R1           1.0\n" + "RHS\n" +
+        "COLUMNS\n" + "    X         COST         1.0   R1           1.0\n" +
+        "    Y         COST         1.0   R1           1.0\n" + "RHS\n" +
         "    RHS       R1           2.0\n" + keyword + "\n" +
-        "    X         X            2.0\n" + "ENDATA\n");
-    EXPECT_NE(error.find("quadratic"), std::string::npos) << keyword << ": " << error;
+        "    X         X            2.0\n" + "    Y         Y            4.0\n" + "ENDATA\n");
+    EXPECT_TRUE(model.has_quadratic_objective()) << keyword;
+    EXPECT_EQ(model.hessian.num_nonzeros(), 2) << keyword;
+    EXPECT_DOUBLE_EQ(model.hessian.at(0, 0), 2.0) << keyword;
+    EXPECT_DOUBLE_EQ(model.hessian.at(1, 1), 4.0) << keyword;
+    EXPECT_EQ(model.validate(), "") << keyword;
   }
+}
+
+TEST(MpsReader, TheHessianRoundTripsInTheQpsConvention) {
+  // THE CONVENTION IS THE TRAP. QPS states the objective as c'x + 0.5 x'Qx and lists only the
+  // LOWER TRIANGLE of the symmetric Q, so a stored off-diagonal entry stands for TWO entries
+  // of Q and the 0.5 belongs to the objective rather than to the data. `Model` uses exactly
+  // that convention, so entries map across untransformed.
+  //
+  // A reader that "helpfully" halved the off-diagonal, or mirrored it into both triangles,
+  // would build a model that reads back plausibly and solves cleanly to the optimum of a
+  // DIFFERENT problem. The check below is therefore on the evaluated objective, not on the
+  // stored numbers: it pins the meaning rather than the storage.
+  //
+  // Q = [[2, 1], [1, 2]] stored as (0,0)=2, (1,0)=1, (1,1)=2, with c = 0.
+  // At x = (1, 1):  0.5 x'Qx = 0.5 * (2 + 1 + 1 + 2) = 3.
+  const Model model = parse_or_fail(
+      "NAME          QROUND\n"
+      "ROWS\n"
+      " N  COST\n"
+      " G  R1\n"
+      "COLUMNS\n"
+      "    X         R1           1.0\n"
+      "    Y         R1           1.0\n"
+      "RHS\n"
+      "    RHS       R1           0.0\n"
+      "QUADOBJ\n"
+      "    X         X            2.0\n"
+      "    X         Y            1.0\n"
+      "    Y         Y            2.0\n"
+      "ENDATA\n");
+
+  ASSERT_EQ(model.num_cols(), 2);
+  EXPECT_EQ(model.hessian.num_nonzeros(), 3);
+  // Stored lower-triangular regardless of the order the file named the pair in.
+  EXPECT_DOUBLE_EQ(model.hessian.at(1, 0), 1.0);
+  EXPECT_DOUBLE_EQ(model.hessian.at(0, 1), 0.0);
+
+  const std::vector<double> x = {1.0, 1.0};
+  EXPECT_DOUBLE_EQ(model.evaluate_objective(x.data()), 3.0);
+}
+
+TEST(MpsReader, TheColumnPairMayBeGivenInEitherOrder) {
+  // Files disagree about which of the two names comes first. Both orders denote the same
+  // entry of a symmetric matrix, so both must produce the same model.
+  const char* lower =
+      "NAME          QORDER\n"
+      "ROWS\n"
+      " N  COST\n"
+      "COLUMNS\n"
+      "    X         COST         0.0\n"
+      "    Y         COST         0.0\n"
+      "QUADOBJ\n"
+      "    Y         X            3.0\n"
+      "ENDATA\n";
+  const char* upper =
+      "NAME          QORDER\n"
+      "ROWS\n"
+      " N  COST\n"
+      "COLUMNS\n"
+      "    X         COST         0.0\n"
+      "    Y         COST         0.0\n"
+      "QUADOBJ\n"
+      "    X         Y            3.0\n"
+      "ENDATA\n";
+
+  const Model a = parse_or_fail(lower);
+  const Model b = parse_or_fail(upper);
+  EXPECT_DOUBLE_EQ(a.hessian.at(1, 0), 3.0);
+  EXPECT_DOUBLE_EQ(b.hessian.at(1, 0), 3.0);
+
+  const std::vector<double> x = {2.0, 5.0};
+  EXPECT_DOUBLE_EQ(a.evaluate_objective(x.data()), b.evaluate_objective(x.data()));
+}
+
+TEST(MpsReader, ARepeatedHessianPairIsRejected) {
+  // (i, j) and (j, i) name the same entry of a symmetric matrix. Summing them would double
+  // the coefficient and change the problem, and QPS has no accumulate semantics - the same
+  // rule the constraint matrix already enforces.
+  const std::string error = parse_expecting_failure(
+      "NAME          QDUP\n"
+      "ROWS\n"
+      " N  COST\n"
+      "COLUMNS\n"
+      "    X         COST         0.0\n"
+      "    Y         COST         0.0\n"
+      "QUADOBJ\n"
+      "    X         Y            3.0\n"
+      "    Y         X            3.0\n"
+      "ENDATA\n");
+  EXPECT_NE(error.find("duplicate Hessian entry"), std::string::npos) << error;
+}
+
+TEST(MpsReader, AHessianEntryNamingAnUnknownColumnIsRejected) {
+  const std::string error = parse_expecting_failure(
+      "NAME          QBAD\n"
+      "ROWS\n"
+      " N  COST\n"
+      "COLUMNS\n"
+      "    X         COST         0.0\n"
+      "QUADOBJ\n"
+      "    X         NOSUCH       3.0\n"
+      "ENDATA\n");
+  EXPECT_NE(error.find("never appeared in COLUMNS"), std::string::npos) << error;
+}
+
+TEST(MpsReader, AQpsFileSolvesThroughTheDispatcher) {
+  // End to end: the reader builds a Hessian, solve() classifies the model as a QP, and the
+  // QP engine answers it. Before this the same file could not be loaded at all.
+  //
+  //   min 0.5(2x^2 + 4y^2) - 2x - 8y   ->   x = 1, y = 2, objective -9.
+  const Model model = parse_or_fail(
+      "NAME          QSOLVE\n"
+      "ROWS\n"
+      " N  COST\n"
+      " G  R1\n"
+      "COLUMNS\n"
+      "    X         COST        -2.0   R1           1.0\n"
+      "    Y         COST        -8.0   R1           1.0\n"
+      "RHS\n"
+      "    RHS       R1           0.0\n"
+      "QUADOBJ\n"
+      "    X         X            2.0\n"
+      "    Y         Y            4.0\n"
+      "ENDATA\n");
+
+  Options options;
+  options.set_bool("log_to_console", false);
+  options.set_double("qp_tolerance", 1e-10);
+  options.set_int("iteration_limit", 500000);
+  const Solution solution = solve(model, options);
+
+  ASSERT_EQ(solution.status, SolveStatus::kOptimal) << solution.message;
+  EXPECT_EQ(solution.algorithm, "qp-condat-vu");
+  EXPECT_NEAR(solution.col_value[0], 1.0, 1e-5);
+  EXPECT_NEAR(solution.col_value[1], 2.0, 1e-5);
+  EXPECT_NEAR(solution.objective, -9.0, 1e-5);
 }
 
 TEST(MpsReader, AColumnNamedQuadobjIsStillJustAColumn) {

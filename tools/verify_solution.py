@@ -81,6 +81,32 @@ class Model:
         self.row_upper: list[float] = []
         # Column-wise entries: entries[j] is a list of (row, value).
         self.entries: list[list[tuple[int, float]]] = []
+        # QPS quadratic objective. LOWER TRIANGLE ONLY, keyed (row, col) with row >= col,
+        # holding the objective 0.5 * x'Qx - the same convention the file uses and the same
+        # one sankhya::Model uses. Stored raw: halving or mirroring here would be exactly
+        # the misreading this script exists to catch the solver making.
+        self.hessian: dict[tuple[int, int], float] = {}
+
+    def hessian_times(self, x: list[float]) -> list[float]:
+        """Qx for the FULL symmetric Q, expanded from the stored lower triangle.
+
+        A stored off-diagonal (r, c) stands for TWO entries of Q, so it contributes to both
+        (Qx)[r] and (Qx)[c]. The diagonal contributes once. Getting this wrong is the whole
+        reason the check exists, so it is written out rather than delegated.
+        """
+        out = [0.0] * self.num_cols
+        for (r, c), v in self.hessian.items():
+            out[r] += v * x[c]
+            if r != c:
+                out[c] += v * x[r]
+        return out
+
+    def quadratic_objective(self, x: list[float]) -> float:
+        """0.5 x'Qx - the 0.5 lives in the objective, not in the data."""
+        if not self.hessian:
+            return 0.0
+        qx = self.hessian_times(x)
+        return 0.5 * sum(x[j] * qx[j] for j in range(self.num_cols))
 
     @property
     def num_rows(self) -> int:
@@ -178,6 +204,9 @@ def _parse_mps(path: Path, fixed: bool) -> Model:
                         model.maximize = head[1].upper().startswith("MAX")
                 elif key in ("ROWS", "COLUMNS", "RHS", "RANGES", "BOUNDS"):
                     section = key
+                elif key in ("QUADOBJ", "QMATRIX", "QSECTION", "QUADS"):
+                    # All four spellings are in circulation and denote the same thing.
+                    section = "QUADOBJ"
                 elif key == "ENDATA":
                     break
                 else:
@@ -263,6 +292,24 @@ def _parse_mps(path: Path, fixed: bool) -> Model:
                         row_rhs[i] = value
                     else:
                         row_range[i] = value
+                continue
+
+            if section == "QUADOBJ":
+                # "colname1 colname2 value". The pair is normalised to (max, min) because
+                # files disagree about the order, and both orders name the same entry of a
+                # symmetric matrix. A repeat is an error rather than an accumulation.
+                if len(fields) < 3:
+                    raise ValueError(f"{path}:{lineno}: QUADOBJ entry needs 3 fields")
+                if fields[0] not in model.col_index or fields[1] not in model.col_index:
+                    unknown = fields[0] if fields[0] not in model.col_index else fields[1]
+                    raise ValueError(f"{path}:{lineno}: QUADOBJ names unknown column {unknown}")
+                a = model.col_index[fields[0]]
+                b = model.col_index[fields[1]]
+                key2 = (max(a, b), min(a, b))
+                if key2 in model.hessian:
+                    raise ValueError(f"{path}:{lineno}: duplicate Hessian entry "
+                                     f"{fields[0]} {fields[1]}")
+                model.hessian[key2] = float(fields[2])
                 continue
 
             if section == "BOUNDS":
@@ -545,8 +592,12 @@ def verify(model: Model, solution: Solution, primal_tol: float, dual_tol: float,
                  f"max |ours - solver's| = {worst_activity_gap:.3e}")
 
     # ---- Objective, recomputed -----------------------------------------------------------
-    objective = model.objective_offset + sum(model.col_cost[j] * x[j]
-                                             for j in range(model.num_cols))
+    # c'x + 0.5 x'Qx + offset. Omitting the quadratic term would have this script declare a
+    # correct QP answer wrong - and, worse, declare a solver that ITSELF dropped the term
+    # right, since both sides would then be computing the LP objective.
+    objective = (model.objective_offset
+                 + sum(model.col_cost[j] * x[j] for j in range(model.num_cols))
+                 + model.quadratic_objective(x))
     claimed = solution.header_float("objective")
     if claimed is None:
         report.check(False, "objective", "the .sol file states no objective")
@@ -603,18 +654,37 @@ def verify(model: Model, solution: Solution, primal_tol: float, dual_tol: float,
     # Work in minimize space so one set of sign conventions covers both senses.
     y = [sigma * solution.row_dual[n] for n in model.row_names]
     d = [sigma * solution.col_dual[n] for n in model.col_names]
-    cost = [sigma * c for c in model.col_cost]
+    # For an LP the gradient of the objective IS the cost vector. For a QP it is c + Qx, and
+    # every KKT condition below is stated in terms of the gradient, so making this one
+    # substitution carries dual feasibility, complementary slackness and strong duality over
+    # to the quadratic case unchanged - which is the point: a QP optimum is not a special
+    # kind of optimum, it is the same conditions about a different gradient.
+    gradient = list(model.col_cost)
+    if model.hessian:
+        qx = model.hessian_times(x)
+        gradient = [model.col_cost[j] + qx[j] for j in range(model.num_cols)]
+    cost = [sigma * g for g in gradient]
 
-    # Reduced costs must satisfy d = c - A^T y. Recomputing catches a solver that reports a
-    # dual vector inconsistent with the reduced costs it also reports.
-    worst, where = 0.0, ""
-    for j, name in enumerate(model.col_names):
-        expected = cost[j] - sum(value * y[i] for i, value in model.entries[j])
-        difference = abs(expected - d[j])
-        if difference > worst:
-            worst, where = difference, name
-    report.check(worst <= 1e-6, "reduced costs",
-                 f"max |c - A^T y - d| = {worst:.3e}" + (f" on {where}" if where else ""))
+    if model.hessian:
+        # The QP engine is a first-order method that carries no basis and reports no reduced
+        # costs, so there is nothing of the solver's to cross-check here. d is DERIVED from
+        # (model, x, y) instead - which is strictly the stronger test, since the sign and
+        # complementarity checks below then price against a vector the solver never chose.
+        d = [cost[j] - sum(value * y[i] for i, value in model.entries[j])
+             for j in range(model.num_cols)]
+        report.note("reduced costs",
+                    "derived from c + Qx - A^T y; the QP engine reports none to compare")
+    else:
+        # Reduced costs must satisfy d = c - A^T y. Recomputing catches a solver that reports
+        # a dual vector inconsistent with the reduced costs it also reports.
+        worst, where = 0.0, ""
+        for j, name in enumerate(model.col_names):
+            expected = cost[j] - sum(value * y[i] for i, value in model.entries[j])
+            difference = abs(expected - d[j])
+            if difference > worst:
+                worst, where = difference, name
+        report.check(worst <= 1e-6, "reduced costs",
+                     f"max |c - A^T y - d| = {worst:.3e}" + (f" on {where}" if where else ""))
 
     def sign_violation(multiplier: float, value: float, lower: float, upper: float) -> float:
         """How badly a multiplier's SIGN contradicts the bound it prices against.
@@ -708,7 +778,12 @@ def verify(model: Model, solution: Solution, primal_tol: float, dual_tol: float,
     for j in range(model.num_cols):
         dual_objective_min_space += bound_contribution(
             d[j], model.col_lower[j], model.col_upper[j], dual_tol)
-    dual_objective = sigma * dual_objective_min_space + model.objective_offset
+    # For a QP the bound contributions sum, at a KKT point, to (c + Qx)'x = c'x + x'Qx, which
+    # overshoots the primal objective c'x + 0.5 x'Qx by exactly 0.5 x'Qx. Subtracting it is
+    # the Dorn dual of a convex QP, and it makes the gap below a real optimality test rather
+    # than an identity that would fail by a fixed amount on every quadratic instance.
+    dual_objective = (sigma * dual_objective_min_space + model.objective_offset
+                      - model.quadratic_objective(x))
 
     gap = abs(objective - dual_objective)
     scale = max(1.0, abs(objective))
