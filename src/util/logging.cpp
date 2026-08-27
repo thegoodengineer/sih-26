@@ -147,8 +147,12 @@ void Logger::write_progress_iteration(Count iteration_number, double objective,
                                       double seconds) {
   if (progress_stream_ == nullptr) return;
   const nlohmann::json line = {
-      {"elapsed_s", seconds},   {"iterations", iteration_number}, {"nodes", nullptr},
-      {"best_bound", objective}, {"best_integer", nullptr},        {"gap_pct", nullptr},
+      {"elapsed_s", seconds},
+      {"iterations", iteration_number},
+      {"nodes", nullptr},
+      {"best_bound", objective},
+      {"best_integer", nullptr},
+      {"gap_pct", nullptr},
   };
   const std::string text = line.dump();
   std::fwrite(text.data(), 1, text.size(), progress_stream_);
@@ -169,8 +173,7 @@ void Logger::write_progress_node(Count nodes, double incumbent, double dual_boun
       {"nodes", nodes},
       {"best_bound", dual_bound},
       {"best_integer", have_incumbent ? nlohmann::json(incumbent) : nlohmann::json(nullptr)},
-      {"gap_pct",
-       have_gap ? nlohmann::json(relative_gap * 100.0) : nlohmann::json(nullptr)},
+      {"gap_pct", have_gap ? nlohmann::json(relative_gap * 100.0) : nlohmann::json(nullptr)},
   };
   const std::string text = line.dump();
   std::fwrite(text.data(), 1, text.size(), progress_stream_);
