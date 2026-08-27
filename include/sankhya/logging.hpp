@@ -12,6 +12,7 @@
 // the wrong moment; passing the sink in now costs nothing and avoids that.
 #pragma once
 
+#include <chrono>
 #include <cstdio>
 #include <string>
 #include <string_view>
@@ -121,9 +122,10 @@ class Logger {
   Logger& operator=(const Logger&) = delete;
 
  private:
-  void write_progress_iteration(Count iteration_number, double objective, double seconds);
+  [[nodiscard]] double progress_elapsed() const;
+  void write_progress_iteration(Count iteration_number, double objective);
   void write_progress_node(Count nodes, double incumbent, double dual_bound,
-                           double relative_gap, double seconds);
+                           double relative_gap);
 
   std::FILE* stream_ = nullptr;
   LogLevel level_ = LogLevel::kInfo;
@@ -131,6 +133,15 @@ class Logger {
   int rows_since_header_ = 0;
   bool in_node_table_ = false;
   std::FILE* progress_stream_ = nullptr;
+
+  /// ONE clock for the whole stream, started when progress output is enabled.
+  ///
+  /// The `seconds` each call site passes is its OWN elapsed time, and a branch and bound
+  /// solves a fresh LP per node - so the simplex's timer restarts on every one of them and
+  /// the stream's `elapsed_s` walks backwards. Measured on lot_sizing: 7 of 14 lines went
+  /// back in time. A stream whose stated purpose is `tail -f` and plotting a gap curve
+  /// cannot have a clock that resets.
+  std::chrono::steady_clock::time_point progress_started_{};
 };
 
 /// A process-wide logger for the CLI and for code paths that have no logger to hand

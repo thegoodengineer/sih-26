@@ -189,6 +189,31 @@ TEST(Logging, NodeTableBlanksAnAbsentIncumbent) {
 // Live progress JSONL (issue #103)
 // =========================================================================================
 
+TEST(Logging, ProgressElapsedNeverGoesBackwards) {
+  // The property the stream is actually for. Interleaving node() and iteration() is what a
+  // MILP does - a node line, then the fresh LP solved beneath it - and it is exactly the
+  // interleaving that used to produce a clock running backwards.
+  const TempFile file("", ".jsonl");
+  {
+    Logger logger(nullptr);
+    logger.enable_progress_output(file.path());
+    for (int i = 0; i < 6; ++i) {
+      // Descending `seconds` on purpose: if the caller's value were still being used, this
+      // stream would be strictly decreasing and the test would fail.
+      const double pretend = 1.0 - 0.1 * i;
+      logger.iteration(i, 1.0, 0.0, 0.0, pretend);
+      logger.node(i, 1, 2.0, 1.0, 0.1, pretend);
+    }
+  }
+
+  const std::vector<nlohmann::json> lines = read_jsonl(file.path());
+  ASSERT_EQ(lines.size(), 12u);
+  for (std::size_t i = 1; i < lines.size(); ++i) {
+    EXPECT_GE(lines[i]["elapsed_s"].get<double>(), lines[i - 1]["elapsed_s"].get<double>())
+        << "line " << i << " goes backwards in time";
+  }
+}
+
 TEST(Logging, ProgressOutputWritesOneJsonLinePerIterationCall) {
   const TempFile file("", ".jsonl");
   {
@@ -202,7 +227,13 @@ TEST(Logging, ProgressOutputWritesOneJsonLinePerIterationCall) {
   const std::vector<nlohmann::json> lines = read_jsonl(file.path());
   ASSERT_EQ(lines.size(), 2u);
 
-  EXPECT_DOUBLE_EQ(lines[0]["elapsed_s"].get<double>(), 0.01);
+  // NOT the 0.01 passed to iteration(). elapsed_s is the LOGGER's own clock, started when
+  // progress output was enabled, because the value each call site passes is its own elapsed
+  // time - and a branch and bound solves a fresh LP per node, so the simplex's timer
+  // restarts on every one of them. Measured on lot_sizing before this changed: 7 of 14 lines
+  // walked backwards in time. A stream for `tail -f` and plotting cannot have a clock that
+  // resets, so the caller's number is deliberately ignored.
+  EXPECT_GE(lines[0]["elapsed_s"].get<double>(), 0.0);
   EXPECT_EQ(lines[0]["iterations"].get<int>(), 0);
   EXPECT_TRUE(lines[0]["nodes"].is_null());
   EXPECT_DOUBLE_EQ(lines[0]["best_bound"].get<double>(), 12.5);
