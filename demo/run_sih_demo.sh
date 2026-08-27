@@ -198,7 +198,7 @@ echo "    Measured, not asserted. The matrix is read by verify_solution.py's IND
 echo "    reader, and the rank is computed EXACTLY by elimination over the rationals - no"
 echo "    singular-value threshold to pick, and no SANKHYA code involved:"
 echo
-"$PYTHON" "$CASES/matrix_stats.py" "$CASES/supply_chain.mps" --rank | sed 's/^/        /'
+PYTHONWARNINGS=ignore "$PYTHON" "$CASES/matrix_stats.py" "$CASES/supply_chain.mps" --rank | sed 's/^/        /'
 echo
 echo "    SANKHYA: status $(field supply_chain result status), objective $(field supply_chain result objective), $(field supply_chain effort iterations) iterations, no stall."
 echo "    Anti-cycling is Bland's rule, cited in src/simplex/primal_simplex.cpp."
@@ -217,7 +217,7 @@ solve_case ill_conditioned "$CASES/ill_conditioned.mps"
 echo
 echo "    what the scaling did to the matrix, measured the same independent way:"
 echo
-"$PYTHON" "$CASES/matrix_stats.py" "$CASES/ill_conditioned.mps" --conditioning | sed 's/^/        /'
+PYTHONWARNINGS=ignore "$PYTHON" "$CASES/matrix_stats.py" "$CASES/ill_conditioned.mps" --conditioning | sed 's/^/        /'
 echo
 printf '    %-28s %s\n' "well-scaled supply_chain:" "$(field supply_chain result objective)"
 printf '    %-28s %s\n' "ill-conditioned re-scaling:" "$(field ill_conditioned result objective)"
