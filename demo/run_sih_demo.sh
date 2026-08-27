@@ -65,7 +65,7 @@ cat <<'INTRO'
 
 SANKHYA is a mathematical optimization solver core written from scratch in C++20 for
 SIH PS26119, issued by Mangalore Refinery and Petrochemicals. LP and MILP engines are
-implemented and benchmarked; QP is not yet. This script walks the problem statement in
+implemented and benchmarked, and so is convex QP. This script walks the problem statement in
 its own order. Where we do not have something, it says so rather than changing the subject.
 INTRO
 
@@ -114,6 +114,7 @@ printf '    %s\n' "$(printf -- '-%.0s' $(seq 1 76))"
 
 for entry in \
   "crude_blend:demo/crude_blend.mps:crude blending" \
+  "crude_blend_qp:demo/crude_blend_qp.mps:blending, price impact" \
   "blend_milp:demo/blend_milp.mps:refinery scheduling" \
   "power_dispatch:$CASES/power_dispatch.mps:power dispatch" \
   "supply_chain:$CASES/supply_chain.mps:supply chain" \
@@ -121,7 +122,11 @@ for entry in \
   tag="${entry%%:*}"; rest="${entry#*:}"; path="${rest%%:*}"; label="${rest#*:}"
   solve_case "$tag" "$path"
   ints=$(field "$tag" model integer_columns)
+  # Read the class off the ENGINE the dispatcher picked rather than guessing here.
+  # solve() classifies from the model itself, so this cannot drift from what ran.
+  algo=$(field "$tag" result algorithm)
   klass="LP"; [ "$ints" != "0" ] && klass="MILP"
+  case "$algo" in qp-*) klass="QP" ;; esac
   printf '    %-22s %-6s %6s %6s  %-10s %16.6f\n' \
     "$label" "$klass" "$(field "$tag" model rows)" "$(field "$tag" model columns)" \
     "$(field "$tag" result status)" "$(field "$tag" result objective)"
@@ -134,6 +139,7 @@ echo "reduced costs and the duality gap independently:"
 echo
 for entry in \
   "crude_blend:demo/crude_blend.mps" \
+  "crude_blend_qp:demo/crude_blend_qp.mps" \
   "blend_milp:demo/blend_milp.mps" \
   "power_dispatch:$CASES/power_dispatch.mps" \
   "supply_chain:$CASES/supply_chain.mps" \
@@ -294,9 +300,14 @@ cat <<'GAPS' | sed "s|@MEDIUM@|${MEDIUM_SUMMARY}|"
     Stating these is the point. A solver that is vague about its limits is not one an
     industrial user can plan around.
 
-    QP                  Not implemented. PS26119 names LP, MILP and QP as the initial focus.
-                        The Model already carries the Hessian and solve() refuses a QP with
-                        `not_solved` rather than silently reporting its LP relaxation.
+    MIQP                Not implemented. Convex QP and MILP each work; joining them - integer
+                        variables AND a quadratic objective - needs the QP engine as the node
+                        solver inside branch and bound, which is not written. solve() returns
+                        `not_solved` for a MIQP rather than reporting either relaxation.
+    Non-convex QP       REFUSED, deliberately. src/qp/convexity.cpp decides semidefiniteness
+                        of sense * Q by LDL^T before any arithmetic starts, and returns a
+                        negative pivot as a certificate. A local optimum reported as a global
+                        one is the failure mode we will not ship.
     Interior point      Not implemented. The continuous engines today are revised simplex
                         (exact, gives a basis) and restarted PDHG (first-order, CPU).
     Cutting planes      Branch and bound is plain: no Gomory, MIR or cover cuts yet, no
