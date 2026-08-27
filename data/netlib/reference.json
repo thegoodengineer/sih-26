@@ -45,6 +45,20 @@
       "published_optimal": -30.812149846,
       "published_rows": 75
     },
+    "israel": {
+      "has_bounds": false,
+      "has_ranges": false,
+      "mps_bytes": 81947,
+      "mps_sha256": "96564e1fddcbb6e3d46447fceb54b9d18260b95e95075c3a19f5812f9bf5ceeb",
+      "name": "israel",
+      "optimal_is_approximate": false,
+      "packed_sha256": "8cf3fe7674408837937907493b00086b9a3206d75b1b8e859d90dbbccdbb20d5",
+      "published_bytes": 12109,
+      "published_cols": 142,
+      "published_nonzeros": 2358,
+      "published_optimal": -896644.82186,
+      "published_rows": 175
+    },
     "sc105": {
       "has_bounds": false,
       "has_ranges": false,
