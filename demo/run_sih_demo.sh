@@ -288,6 +288,11 @@ fi
 # reproduction command if none is present, rather than printing a number from nowhere.
 MEDIUM_SUMMARY="$("$PYTHON" bench/runners/latest_result.py "netlib-medium-*.csv" --summary)"
 
+# The instance count in section 6 is READ, not typed. It said "eight" until someone
+# fetched a ninth instance, at which point the closing paragraph contradicted the table
+# printed directly above it. Same reasoning as MEDIUM_SUMMARY.
+NETLIB_COUNT="$("$PYTHON" -c "import json,pathlib;print(len(json.loads(pathlib.Path('data/netlib/reference.json').read_text())['instances']))" 2>/dev/null || echo "the committed")"
+
 rule "6. What PS26119 asks for that we do NOT yet have"
 # THE MEDIUM-TIER FIGURE BELOW IS READ FROM THE COMMITTED CSV, not typed here. The demo does
 # not run that tier - fetching 50 instances takes minutes - so it was hand-written, and it
@@ -296,7 +301,7 @@ rule "6. What PS26119 asks for that we do NOT yet have"
 # wrong. Deriving it from bench/results/netlib-medium-*.csv removes the failure mode rather
 # than asking the next person to remember. Same reasoning as #53.
 # ===========================================================================================
-cat <<'GAPS' | sed "s|@MEDIUM@|${MEDIUM_SUMMARY}|"
+cat <<'GAPS' | sed -e "s|@MEDIUM@|${MEDIUM_SUMMARY}|" -e "s|@NCOUNT@|${NETLIB_COUNT}|"
     Stating these is the point. A solver that is vague about its limits is not one an
     industrial user can plan around.
 
@@ -327,7 +332,7 @@ cat <<'GAPS' | sed "s|@MEDIUM@|${MEDIUM_SUMMARY}|"
 
     On speed against HiGHS, section 5 above prints the measured ratio for this run rather
     than repeating a number here that would go stale - and it is a narrow comparison either
-    way: eight small, well conditioned instances settle nothing about large models. HiGHS is
+    way: @NCOUNT@ small instances settle nothing about large models. HiGHS is
     a decade of specialist work with presolve and a dual simplex, neither of which we have.
     The claim we do make is narrower and checkable: on every instance we report as solved,
     the answer matches the published optimum AND survives an independent verifier that
