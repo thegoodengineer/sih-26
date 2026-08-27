@@ -317,7 +317,8 @@ cat <<'GAPS' | sed "s|@MEDIUM@|${MEDIUM_SUMMARY}|"
     On speed against HiGHS, section 5 above prints the measured ratio for this run rather
     than repeating a number here that would go stale - and it is a narrow comparison either
     way: eight small, well conditioned instances settle nothing about large models. HiGHS is
-    a decade of specialist work with presolve and a dual simplex, neither of which we have.
+    a decade of specialist work, including a mature dual simplex - which we do not have yet.
+    Our own presolve (src/presolve, on by default) is not part of that gap any more.
     The claim we do make is narrower and checkable: on every instance we report as solved,
     the answer matches the published optimum AND survives an independent verifier that
     shares no code with the solver.
