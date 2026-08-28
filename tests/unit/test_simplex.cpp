@@ -76,6 +76,14 @@ Solution run(const Model& model) {
   return solve(model, options);
 }
 
+Solution run_with_pricing(const Model& model, const char* pricing) {
+  Options options;
+  options.set_bool("log_to_console", false);
+  options.set_bool("presolve", false);
+  options.set_string("pricing", pricing);
+  return solve(model, options);
+}
+
 /// Independent optimality certificate. Nothing here reads a quantity the simplex computed
 /// except the primal values and the row duals; everything else is rebuilt from the model.
 void expect_kkt_optimal(const Model& model, const Solution& solution, double tolerance = 1e-7) {
@@ -451,6 +459,100 @@ TEST(PrimalSimplex, SolvesAHighlyDegenerateAssignmentLikeProblem) {
   ASSERT_EQ(solution.status, SolveStatus::kOptimal) << solution.message;
   expect_kkt_optimal(model, solution);
   EXPECT_NEAR(solution.objective, 4.0, 1e-7);
+}
+
+// =========================================================================================
+// Devex pricing (issue #66)
+// =========================================================================================
+
+TEST(PrimalSimplex, DevexAndDantzigReachTheSameOptimum) {
+  // A pricing rule chooses WHICH improving column enters. It cannot change which vertex is
+  // optimal, so the two rules must agree on the objective on every instance where both
+  // terminate - and where they disagree, one of them is wrong about the problem rather than
+  // merely slower. That is the property worth pinning: an entering-variable rule is allowed
+  // to be a bad heuristic, never a different answer.
+  //
+  // The instances are generated around a known feasible point by the same construction
+  // FuzzAgainstTheKktCertificate uses, so neither run may report infeasible.
+  //
+  // What this test deliberately does NOT assert is that devex takes fewer iterations.
+  // Measured across the Netlib medium set it usually does, sometimes dramatically - fit2d
+  // 30210 to 12273, scsd1 534 to 188 - but not always, and an iteration-count assertion on
+  // random small instances would be a flake generator rather than a check.
+  std::mt19937 rng(66);
+  std::uniform_real_distribution<double> coefficient(-4.0, 4.0);
+  std::uniform_real_distribution<double> unit(0.0, 1.0);
+
+  int compared = 0;
+  for (int trial = 0; trial < 200; ++trial) {
+    const Index n = 2 + static_cast<Index>(trial % 7);
+    const Index m = 1 + static_cast<Index>(trial % 5);
+    const auto un = static_cast<std::size_t>(n);
+    const auto um = static_cast<std::size_t>(m);
+
+    std::vector<double> cost(un);
+    for (double& c : cost) c = coefficient(rng);
+
+    // Every column boxed, so the LP is bounded and both runs are expected to reach a vertex.
+    std::vector<double> col_lower(un, 0.0);
+    std::vector<double> col_upper(un, 0.0);
+    std::vector<double> x0(un, 0.0);
+    for (Index j = 0; j < n; ++j) {
+      const auto u = static_cast<std::size_t>(j);
+      const double centre = coefficient(rng);
+      const double half_width = 1.0 + 4.0 * unit(rng);
+      col_lower[u] = centre - half_width;
+      col_upper[u] = centre + half_width;
+      x0[u] = col_lower[u] + unit(rng) * (col_upper[u] - col_lower[u]);
+    }
+
+    std::vector<std::vector<double>> rows(um, std::vector<double>(un, 0.0));
+    std::vector<double> row_lower(um, 0.0);
+    std::vector<double> row_upper(um, 0.0);
+    for (Index i = 0; i < m; ++i) {
+      const auto ui = static_cast<std::size_t>(i);
+      double activity = 0.0;
+      for (Index j = 0; j < n; ++j) {
+        const auto uj = static_cast<std::size_t>(j);
+        rows[ui][uj] = (unit(rng) < 0.6) ? coefficient(rng) : 0.0;
+        activity += rows[ui][uj] * x0[uj];
+      }
+      // Bounds placed around the activity of x0, so x0 is feasible by construction.
+      row_lower[ui] = activity - unit(rng) * 3.0;
+      row_upper[ui] = activity + unit(rng) * 3.0;
+    }
+
+    const Model model = make_model(unit(rng) < 0.5 ? ObjSense::kMinimize : ObjSense::kMaximize,
+                                   cost, col_lower, col_upper, rows, row_lower, row_upper);
+    ASSERT_TRUE(model.validate().empty()) << "trial " << trial;
+
+    const Solution dantzig = run_with_pricing(model, "dantzig");
+    const Solution devex = run_with_pricing(model, "devex");
+
+    ASSERT_NE(dantzig.status, SolveStatus::kInfeasible)
+        << "trial " << trial << " was built around a feasible point: " << dantzig.message;
+    ASSERT_NE(devex.status, SolveStatus::kInfeasible)
+        << "trial " << trial << " was built around a feasible point: " << devex.message;
+
+    if (dantzig.status != SolveStatus::kOptimal || devex.status != SolveStatus::kOptimal) {
+      continue;
+    }
+    ++compared;
+
+    const double scale = std::max(1.0, std::fabs(dantzig.objective));
+    EXPECT_NEAR(devex.objective, dantzig.objective, 1e-6 * scale)
+        << "trial " << trial << ": the pricing rule changed the OPTIMUM, which it cannot do. "
+        << "dantzig " << dantzig.objective << " in " << dantzig.iterations << " iterations, "
+        << "devex " << devex.objective << " in " << devex.iterations;
+
+    // Devex must also produce a genuinely optimal point, not merely one that matches. If
+    // both rules shared a bug the comparison above would pass in silence.
+    expect_kkt_optimal(model, devex, 1e-6);
+  }
+
+  EXPECT_GT(compared, 150) << "too few instances reached optimal under both rules for this "
+                              "comparison to mean anything; only "
+                           << compared << " did";
 }
 
 // =========================================================================================

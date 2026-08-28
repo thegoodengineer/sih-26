@@ -110,6 +110,17 @@ const std::vector<OptionSpec>& Options::registry() {
                  0.0,
                  0.0,
                  {"auto", "simplex", "dual-simplex", "pdhg", "ipm"}});
+    s.push_back({"pricing",
+                 OptionType::String,
+                 std::string("dantzig"),
+                 "Simplex entering-variable rule: dantzig (default) or devex. Devex takes "
+                 "far fewer iterations but is NOT yet numerically safe with the current "
+                 "textbook ratio test - it costs two Netlib medium instances to a singular "
+                 "basis. It needs the Harris two-pass ratio test (#67) before it can be the "
+                 "default; see #66 for the measurements.",
+                 0.0,
+                 0.0,
+                 {"devex", "dantzig"}});
     s.push_back({"mps_format",
                  OptionType::String,
                  std::string("auto"),
