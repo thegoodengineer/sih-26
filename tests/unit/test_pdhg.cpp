@@ -12,17 +12,21 @@
 // where a dense factorization cannot go, and on hardware this suite does not run on.
 
 #include <cmath>
+#include <fstream>
 #include <random>
 #include <string>
 #include <vector>
 
 #include <gtest/gtest.h>
+#include <nlohmann/json.hpp>
 
 #include "sankhya/model.hpp"
 #include "sankhya/options.hpp"
 #include "sankhya/tolerances.hpp"
 
 #include "core/status_guard.hpp"
+
+#include "support/temp_file.hpp"
 
 #include "oracles/lp_generator.hpp"
 #include "oracles/rational_simplex.hpp"
@@ -426,6 +430,83 @@ TEST(SolveStatusGuard, ANonClaimingStatusIsLeftAlone) {
 
   const Solution solution = solve(model, options);
   EXPECT_EQ(solution.status, SolveStatus::kIterationLimit) << solution.message;
+}
+
+// issue #122: the live progress stream reported the objective of whatever model the ENGINE
+// was handed, and presolve hands it a reduced model whose objective_offset absorbs every
+// column presolve eliminated. The final Solution added that offset back; the stream did not.
+// A solve watched through `tail -f` therefore converged to a number the reported result
+// never reached - off by exactly the offset, 365 on the demo's 5000x5000 instance, where
+// the two appeared one under the other in section 2.5.
+//
+// PrimalSimplex::minimization_objective() had this right all along and says why in a
+// comment: the iteration table has to report the same quantity as the final line and the
+// .sol file. This pins that invariant for PDHG too, which is where it was broken.
+TEST(Pdhg, ProgressStreamReportsTheSameObjectiveAsTheResultUnderPresolve) {
+  // x is FIXED at 5 with a cost of 3, so presolve eliminates it and folds 15 into the
+  // reduced model's objective_offset (presolve.cpp:397). Without that offset the stream
+  // would converge to 5 while the result reported 20 - a difference no reader could
+  // attribute to anything, since both numbers are individually plausible.
+  //
+  // Three more columns and two more rows than the offset alone needs, so that presolve
+  // eliminating x still leaves a genuine LP for the engine to iterate on. A model presolve
+  // can finish by itself would let this test keep passing while exercising nothing, since
+  // the stream would then carry a single trivial line.
+  //
+  //   min 3x + y + 2z + w
+  //   s.t.  x + y + z      >= 10
+  //             y      + w >=  4
+  //                 z  + w <=  8
+  //         x == 5,  y, z, w >= 0
+  //
+  // presolve fixes x at 5 and folds 3 * 5 = 15 into the reduced objective_offset.
+  Model model =
+      make_lp({{1.0, 1.0, 1.0, 0.0}, {0.0, 1.0, 0.0, 1.0}, {0.0, 0.0, 1.0, 1.0}},
+              {10.0, 4.0, -kInfinity}, {kInfinity, kInfinity, 8.0}, {3.0, 1.0, 2.0, 1.0});
+  model.col_lower[0] = 5.0;
+  model.col_upper[0] = 5.0;
+  ASSERT_EQ(model.validate(), "");
+
+  for (const bool presolve : {true, false}) {
+    const testing::TempFile file("", ".jsonl");
+    Options options = pdhg_options(1e-10);
+    options.set_bool("presolve", presolve);
+    options.set_string("progress_out", file.path());
+
+    const Solution solution = solve(model, options);
+    ASSERT_EQ(solution.status, SolveStatus::kOptimal) << solution.message;
+
+    // The engine has to have actually run. If presolve ever grows strong enough to finish
+    // this model on its own, that is fine for the solver and fatal for this test, and it
+    // should say so rather than pass silently on an empty stream.
+    EXPECT_GT(solution.iterations, 1)
+        << "presolve=" << presolve << ": the engine did no work, so nothing was exercised";
+
+    // The LAST line of the stream is the iterate the solver stopped on, so it is the one
+    // that has to agree with what the result reports.
+    std::ifstream in(file.path());
+    std::string line;
+    double last_objective = 0.0;
+    int lines = 0;
+    while (std::getline(in, line)) {
+      if (!line.empty() && line.back() == '\r') line.pop_back();
+      if (line.empty()) continue;
+      const nlohmann::json parsed = nlohmann::json::parse(line);
+      ASSERT_TRUE(parsed.contains("best_bound"));
+      if (parsed["best_bound"].is_number()) {
+        last_objective = parsed["best_bound"].get<double>();
+        ++lines;
+      }
+    }
+    ASSERT_GT(lines, 0) << "no progress lines written with presolve=" << presolve;
+
+    // Tolerance is the solver's, not one chosen to make this pass: the stream reports an
+    // iterate and the result reports the accepted point, so they agree to convergence
+    // tolerance rather than exactly. The bug this guards against was off by 15, not 1e-9.
+    EXPECT_NEAR(last_objective, solution.objective, 1e-4)
+        << "presolve=" << presolve << ": the progress stream and the reported objective "
+        << "disagree by " << std::fabs(last_objective - solution.objective);
+  }
 }
 
 }  // namespace
