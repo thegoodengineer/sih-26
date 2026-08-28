@@ -532,8 +532,17 @@ Solution solve_pdhg(const Model& model, const Options& options, Logger& logger) 
       logger.begin_iteration_table();
       logged_table = true;
     }
-    logger.iteration(iteration, sense * better.primal_objective, better.primal, better.dual,
-                     timer.elapsed_seconds());
+    // `+ model.objective_offset`, for the same reason PrimalSimplex::minimization_objective()
+    // adds it: the number in the iteration table and in the --progress-out stream has to be
+    // the same quantity the final line and the .sol file report. Without it this logged the
+    // objective of whatever model the engine was handed, and presolve hands it a model whose
+    // offset absorbs every fixed and empty column it eliminated (presolve.cpp:397). The
+    // final Solution added the offset back at line 660 below; the live stream did not, so a
+    // solve watched through `tail -f` converged to a number the result never reached - off
+    // by exactly the offset, 365 on the demo's 5000x5000 instance. Both are correct with
+    // presolve disabled, which is what made it look like noise rather than a missing term.
+    logger.iteration(iteration, sense * better.primal_objective + model.objective_offset,
+                     better.primal, better.dual, timer.elapsed_seconds());
 
     if (better.meets_request(tolerance)) {
       // Report the point that PASSED, not whichever earlier iterate happened to have the
