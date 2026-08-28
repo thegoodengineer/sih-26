@@ -81,6 +81,12 @@ def main() -> int:
     parser.add_argument("pattern", help='e.g. "netlib-medium-*.csv"')
     parser.add_argument("--summary", action="store_true",
                         help="print 'PASSED, measured on commit SHA' instead of the path")
+    parser.add_argument("--status-counts", action="store_true",
+                        help="print a breakdown of the `status` column instead. --summary "
+                             "counts a `passed` column, which the netlib CSVs carry and the "
+                             "MIPLIB ones do not - asking for --summary there silently "
+                             "reports 0, which reads as a total failure rather than as the "
+                             "wrong question.")
     args = parser.parse_args()
 
     path = latest(args.pattern)
@@ -90,11 +96,27 @@ def main() -> int:
             return 0
         return 1
 
-    if not args.summary:
+    if not args.summary and not args.status_counts:
         print(path)
         return 0
 
     rows = list(csv.DictReader(path.open(newline="", encoding="utf-8")))
+
+    if args.status_counts:
+        # Ordered most-to-least conclusive, so the sentence reads as a claim getting weaker
+        # rather than as an arbitrary tally. Any status not in this list is appended, so a
+        # new one shows up rather than vanishing from the count.
+        commit = rows[0].get("git_commit", "?") if rows else "?"
+        seen: dict[str, int] = {}
+        for row in rows:
+            key = (row.get("status") or "unknown").strip()
+            seen[key] = seen.get(key, 0) + 1
+        preferred = ["optimal", "feasible", "node_limit", "time_limit", "infeasible"]
+        order = [k for k in preferred if k in seen] + sorted(k for k in seen
+                                                            if k not in preferred)
+        parts = [f"{seen[k]} {k.replace('_', ' ')}" for k in order]
+        print(f"{len(rows)} instances: {', '.join(parts)}, measured on commit {commit}")
+        return 0
     passed = sum(1 for row in rows if row.get("passed") == "1")
     commit = rows[0].get("git_commit", "?") if rows else "?"
     print(f"{passed}, measured on commit {commit}")

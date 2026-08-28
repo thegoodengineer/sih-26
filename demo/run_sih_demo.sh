@@ -385,6 +385,11 @@ fi
 # reproduction command if none is present, rather than printing a number from nowhere.
 MEDIUM_SUMMARY="$("$PYTHON" bench/runners/latest_result.py "netlib-medium-*.csv" --summary)"
 
+# MIPLIB, read from its committed CSV for the same reason. --status-counts rather than
+# --summary because the MIPLIB runner writes no `passed` column: there is no published
+# optimum to compare against for most of the set, so the status IS the result.
+MIPLIB_SUMMARY="$("$PYTHON" bench/runners/latest_result.py "miplib-*.csv" --status-counts)"
+
 # The instance count in section 6 is READ, not typed. It said "eight" until someone
 # fetched a ninth instance, at which point the closing paragraph contradicted the table
 # printed directly above it. Same reasoning as MEDIUM_SUMMARY.
@@ -400,7 +405,7 @@ rule "6. What PS26119 asks for that we do NOT yet have"
 # ===========================================================================================
 # The `g` flags matter: @NCOUNT@ appears twice on one line ("not the 9/9 above"), and
 # without them sed substitutes only the first occurrence per line.
-cat <<'GAPS' | sed -e "s|@MEDIUM@|${MEDIUM_SUMMARY}|g" -e "s|@NCOUNT@|${NETLIB_COUNT}|g"
+cat <<'GAPS' | sed -e "s|@MEDIUM@|${MEDIUM_SUMMARY}|g" -e "s|@NCOUNT@|${NETLIB_COUNT}|g" -e "s|@MIPLIB@|${MIPLIB_SUMMARY}|g"
     Stating these is the point. A solver that is vague about its limits is not one an
     industrial user can plan around.
 
@@ -419,20 +424,33 @@ cat <<'GAPS' | sed -e "s|@MEDIUM@|${MEDIUM_SUMMARY}|g" -e "s|@NCOUNT@|${NETLIB_C
     GPU acceleration    NOT WRITTEN. The first-order method it needs exists and runs on CPU;
                         the CUDA backend is issues #16-#19. --gpu today prints a warning and
                         falls back to CPU. We are not claiming a speed-up we have not measured.
-    Scale               Everything above is small. The committed Netlib set is the small end
-                        of Netlib, and NOTHING here supports a claim about the "thousands to
-                        millions of variables" the problem statement asks for. On the wider
+    Scale               Section 2.5 above solves one 5000 x 5000 instance, which is the
+                        largest thing here by two orders of magnitude and is checked against
+                        an optimum known by construction - but ONE generated instance is a
+                        demonstration, not a benchmark, and it says nothing about the sparse
+                        industrial structure real models have. Everything else here is small.
+                        Nothing in this run supports a claim about the "millions of
+                        variables" end of what the problem statement asks for. On the wider
                         50-instance Netlib medium set we pass @MEDIUM@.
                         That is issue #34, and it is the honest headline number, not the
                         @NCOUNT@/@NCOUNT@ above. Reproduce it with:
                             python bench/runners/fetch_data.py --set medium
                             python bench/runners/netlib.py --time-limit 60
+    MIPLIB              PS26119 names MIPLIB before Netlib, and this demo does not run it.
+                        We do have results:
+                            @MIPLIB@
+                        They are the weakest numbers in the project: branch and bound reaches
+                        a feasible incumbent on most of the set but PROVES optimality on few,
+                        because there are no cutting planes (#23) and no pseudocost branching
+                        (#69) to close the bound. Stated here rather than left out - a reader
+                        who opens bench/results/ finds it either way, and #54 is the tracker.
     Parallelism         Single-threaded today.
 
     On speed against HiGHS, section 5 above prints the measured ratio for this run rather
     than repeating a number here that would go stale - and it is a narrow comparison either
     way: @NCOUNT@ small instances settle nothing about large models. HiGHS is a decade of
-    specialist work with presolve and a dual simplex, neither of which we have.
+    specialist work, including a mature dual simplex, which we do not have. Presolve is no
+    longer part of that gap: ours is in src/presolve and runs by default (#43).
     The claim we do make is narrower and checkable: on every instance we report as solved,
     the answer matches the published optimum AND survives an independent verifier that
     shares no code with the solver.
