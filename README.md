@@ -23,16 +23,23 @@ Petrochemicals Limited.
 | 2 | MPS/LP readers, revised primal simplex, CLI | **done** |
 | 3 | Verification spine: rational oracle, independent checker, Netlib harness | **done** |
 | 4 | Restarted PDHG — **CPU done**, CUDA backend not started (no GPU available) | partial |
-| 5 | Branch & bound → MILP | **done** (cuts and MIPLIB deferred, see issues) |
-| 6–10 | Performance, branch & cut, IPM/QP, robustness, packaging | |
+| 5 | Branch & bound → MILP | **done** (cuts still deferred, see #23; MIPLIB now benchmarked) |
+| 6–10 | Performance, branch & cut, IPM/QP, robustness, packaging | convex QP **done** (Phase 8, `src/qp/`); IPM, cuts, packaging remain |
 
-LP is solved by a bounded-variable revised primal simplex. MILP and QP are **refused**, not
-approximated: handing a MILP to the LP engine and reporting its fractional relaxation as
-optimal is the single most damaging thing this dispatcher could do, so it does not — see the
-Evidence rules in [`CLAUDE.md`](CLAUDE.md).
+LP is solved by a bounded-variable revised primal simplex (or restarted PDHG), MILP by
+branch and bound, and convex QP by a Condat-Vu primal-dual method — all end to end from an
+MPS file through to an independently verified answer. Only MIQP (mixed-integer QP) is
+**refused**, not approximated: handing it to the LP or QP engine and reporting a relaxation
+as optimal is the single most damaging thing this dispatcher could do, so it does not — see
+the Evidence rules in [`CLAUDE.md`](CLAUDE.md).
 
-Benchmark results against Netlib are **not** claimed yet. That is Phase 3, and it is gated on
-an open provenance question recorded in [`docs/PROVENANCE.md`](docs/PROVENANCE.md) section 5.
+Benchmark results against Netlib: **8 of 8** on the small set the demo runs, **41 of 50** on
+the medium tier — see [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md), generated from the CSVs in
+`bench/results/` so it cannot drift. MIPLIB 2017 is now benchmarked too: **10 of 30** easy
+instances reach the published optimum, **5 of 30** also prove it (branch and bound has no
+cutting planes yet, see #23) — same source. For scale beyond what Netlib's committed set
+tests (it tops out around 500 rows), `bench/runners/generate_large_lp.py` builds sparse LPs
+of any size with an exactly known analytic optimum.
 
 ## Build
 
@@ -45,7 +52,7 @@ ctest --test-dir build --output-on-failure
 ```
 
 `scripts/configure.sh` picks a C++20-capable compiler rather than trusting PATH order,
-which matters on Windows boxes carrying an old MinGW.
+which matters on Windows boxes carrying an old MinGW. 284 tests, all passing.
 
 ## Use
 
@@ -54,6 +61,7 @@ which matters on Windows boxes carrying an old MinGW.
 ./build/sankhya options
 ./build/sankhya info  demo/crude_blend.mps
 ./build/sankhya solve demo/crude_blend.mps --write-sol blend.sol --stats blend.json
+./build/sankhya solve demo/crude_blend.mps --progress-out progress.jsonl
 ```
 
 `demo/crude_blend.mps` is a small crude-blending LP: three crudes into a diesel pool, with a
@@ -68,6 +76,10 @@ infeasible/unbounded model, `3` the file could not be read, `5` a numerical or m
 Beyond the objective, the solution file carries the **shadow price of every row**. On the
 blending model those are the numbers a refinery planner acts on: what one more unit of
 diesel commitment costs, and what the sulphur specification is worth.
+
+`--progress-out` appends one JSON line per logged iteration or node to a file as the solve
+runs, flushed immediately - an operator can `tail -f` it during a long solve to watch the
+bound close in on the answer without waiting for the final report.
 
 ## Demo
 
@@ -85,12 +97,14 @@ prints comes from a command it just ran.
 include/sankhya/  public headers — Model, Solution, Options, tolerances, sparse containers
 src/core          Model/Solution implementation and the solve() dispatcher
 src/util          logging, timers, arena allocator, option registry
-src/io            MPS + LP readers, solution and JSON writers
+src/io            MPS + LP readers (including QPS QUADOBJ), solution and JSON writers
+src/presolve      reductions + postsolve               (on by default)
 src/simplex       primal revised simplex               (dual simplex: Phase 6)
 src/la            sparse containers, sparse Markowitz LU, dense LU (test oracle only)
 src/pdhg          restarted PDHG, CPU                  (CUDA backend: not started)
-src/mip           branch and bound                     (cutting planes: Phase 7)
-src/ipm src/qp    interior point, convex QP            (Phase 8)
+src/mip           branch and bound + diving heuristic  (cutting planes: Phase 7)
+src/qp            convex QP, Condat-Vu primal-dual     (done)
+src/ipm           interior point                       (Phase 8, not started)
 tests/  bench/  tools/  docs/  demo/
 ```
 
