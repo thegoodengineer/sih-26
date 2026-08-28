@@ -80,6 +80,16 @@ constexpr double kInfeasibilityProofFactor = 1e3;
 /// FTRAN it verifies, so it is amortised over an interval rather than run every pivot.
 constexpr Count kAccuracyCheckInterval = 16;
 
+/// Restart the devex reference framework once any weight passes this.
+///
+/// The weights approximate steepest-edge norms measured from the basis the framework was
+/// last reset in, and they only grow. Large values mean the approximation has drifted far
+/// from what it is approximating, not that the column is genuinely bad, so continuing to
+/// price on them re-creates the problem devex exists to solve. Forrest and Goldfarb restart
+/// on this test; 1e6 is their suggested order and is where a reset costs one sweep of ones
+/// against pivots that are no longer being chosen on meaningful information.
+constexpr double kDevexResetThreshold = 1e6;
+
 /// Tied to kPrimalFeasibility rather than chosen independently, because that is the quantity
 /// this check ultimately protects: factors whose residual is below the feasibility tolerance
 /// cannot corrupt a feasibility judgement made at that tolerance.
@@ -141,6 +151,14 @@ class PrimalSimplex {
 
   /// Choose an entering column. Returns -1 when none is eligible.
   [[nodiscard]] Index price(bool bland, int* direction) const;
+
+  /// Reset every reference weight to 1, restarting the reference framework.
+  void reset_devex();
+
+  /// Fold this pivot into the reference weights. Needs the leaving ROW of B^-1 A, which is
+  /// one BTRAN plus a pass over the nonbasic columns - the same shape as the reduced-cost
+  /// computation, and the price devex pays for not doing a solve per candidate.
+  void update_devex_weights(Index entering, Index leaving_row, double pivot);
 
   void ftran_entering_column(Index entering);
 
@@ -216,6 +234,28 @@ class PrimalSimplex {
   std::vector<double> y_;
   std::vector<double> reduced_cost_;
   std::vector<double> alpha_;
+
+  // ---- Devex pricing -------------------------------------------------------------------
+  //
+  // Forrest, J.J. and Goldfarb, D. (1992), "Steepest-edge simplex algorithms for linear
+  // programming", Mathematical Programming 57, 341-374; the approximation itself is Harris,
+  // P.M.J. (1973), "Pivot selection methods of the Devex LP code", Mathematical Programming
+  // 5, 1-28.
+  //
+  // WHAT DANTZIG GETS WRONG. Pricing on |d_j| alone asks which column improves the objective
+  // fastest PER UNIT STEP IN THAT VARIABLE, but the step actually taken is set by the ratio
+  // test, and that is governed by the size of the FTRAN'd column B^-1 a_j. A column with a
+  // large reduced cost and a large ||B^-1 a_j|| buys almost nothing per pivot, and Dantzig
+  // picks it again and again. Steepest edge divides by that norm exactly, which costs a
+  // solve per candidate. Devex approximates the norm with reference weights updated in O(m)
+  // from vectors this iteration already computes, and prices on d_j^2 / w_j.
+  //
+  // Measured before this landed: 1147 simplex iterations against HiGHS's 531 across the
+  // committed Netlib set, worst 4.21x on blend. See issue #66 for the table.
+  bool devex_ = false;  ///< opt-in until #67 lands; see the option description and #66
+  std::vector<double> devex_weight_;
+  std::vector<double> rho_;  ///< B^-T e_r, scratch: rho . a_j gives the leaving row's alpha_rj
+  Count devex_resets_ = 0;
   double primal_tolerance_ = tol::kPrimalFeasibility;
   double dual_tolerance_ = tol::kDualFeasibility;
 };
@@ -252,6 +292,8 @@ void PrimalSimplex::build_working_problem() {
   y_.assign(static_cast<std::size_t>(m_), 0.0);
   alpha_.assign(static_cast<std::size_t>(m_), 0.0);
   reduced_cost_.assign(static_cast<std::size_t>(total_), 0.0);
+  devex_weight_.assign(static_cast<std::size_t>(total_), 1.0);
+  rho_.assign(static_cast<std::size_t>(m_), 0.0);
 }
 
 void PrimalSimplex::set_initial_basis() {
@@ -424,7 +466,10 @@ void PrimalSimplex::compute_reduced_costs(bool phase_one) {
 
 Index PrimalSimplex::price(bool bland, int* direction) const {
   Index best = -1;
-  double best_magnitude = dual_tolerance_;
+  // Seeded at zero, not at the dual tolerance: eligibility is now tested explicitly against
+  // dual_tolerance_ below, because in devex mode this variable holds d^2 / w and comparing
+  // that against a tolerance on |d| would be comparing two different quantities.
+  double best_score = 0.0;
 
   for (Index k = 0; k < total_; ++k) {
     const auto u = static_cast<std::size_t>(k);
@@ -452,14 +497,75 @@ Index PrimalSimplex::price(bool bland, int* direction) const {
       *direction = candidate_direction;
       return k;
     }
+    // Dantzig compares |d|; devex compares d^2 / w, which is |d| divided by an approximate
+    // edge norm. Both are scored against `best_magnitude`, seeded at the dual tolerance, so
+    // eligibility is decided by |d| in BOTH modes - the weight changes which eligible column
+    // wins, never whether a column is eligible at all. Mixing those two jobs would let a
+    // large weight silently suppress a column that genuinely prices out, which is a
+    // termination bug rather than a slow pivot.
     const double magnitude = std::fabs(d);
-    if (magnitude > best_magnitude) {
-      best_magnitude = magnitude;
+    if (magnitude <= dual_tolerance_) continue;
+    const double score = devex_ ? (magnitude * magnitude) / devex_weight_[u] : magnitude;
+    if (score > best_score) {
+      best_score = score;
       best = k;
       *direction = candidate_direction;
     }
   }
   return best;
+}
+
+void PrimalSimplex::reset_devex() {
+  std::fill(devex_weight_.begin(), devex_weight_.end(), 1.0);
+  ++devex_resets_;
+}
+
+void PrimalSimplex::update_devex_weights(Index entering, Index leaving_row, double pivot) {
+  if (!devex_ || std::fabs(pivot) < tol::kZeroDrop) return;
+
+  const auto q = static_cast<std::size_t>(entering);
+  const double weight_q = devex_weight_[q];
+
+  // rho = B^-T e_r, so that rho . a_j gives alpha_rj, the entry of the leaving row under
+  // column j. One BTRAN, then one dot product per nonbasic column.
+  std::fill(rho_.begin(), rho_.end(), 0.0);
+  rho_[static_cast<std::size_t>(leaving_row)] = 1.0;
+  lu_.solve_transpose(rho_.data());
+
+  const double inverse_pivot = 1.0 / pivot;
+  const double scaled_weight_q = weight_q * inverse_pivot * inverse_pivot;
+
+  double largest = 1.0;
+  for (Index k = 0; k < total_; ++k) {
+    const auto u = static_cast<std::size_t>(k);
+    if (basis_position_[u] >= 0) continue;
+    if (k == entering) continue;
+
+    double alpha_rk = 0.0;
+    for_each_entry(k, [&](Index row, double coefficient) {
+      alpha_rk += rho_[static_cast<std::size_t>(row)] * coefficient;
+    });
+    if (alpha_rk == 0.0) continue;
+
+    // w_j <- max(w_j, (alpha_rj / alpha_rq)^2 * w_q). The weights only ever GROW inside a
+    // reference framework; that monotonicity is what makes the approximation safe to reuse
+    // across pivots, and it is also why the framework has to be reset once they blow up.
+    const double candidate = alpha_rk * alpha_rk * scaled_weight_q;
+    if (candidate > devex_weight_[u]) devex_weight_[u] = candidate;
+    if (devex_weight_[u] > largest) largest = devex_weight_[u];
+  }
+
+  // The variable that just left the basis becomes nonbasic and needs a weight of its own.
+  const double leaving_weight = std::max(scaled_weight_q, 1.0);
+  devex_weight_[static_cast<std::size_t>(basis_[static_cast<std::size_t>(leaving_row)])] =
+      leaving_weight;
+  if (leaving_weight > largest) largest = leaving_weight;
+
+  // A reference weight is an approximation to a steepest-edge norm measured from the
+  // framework the weights were last reset in. The further the basis travels from it the
+  // worse the approximation, and unbounded growth is the symptom. Restarting costs one
+  // sweep and buys back the accuracy; Forrest and Goldfarb restart on exactly this test.
+  if (largest > kDevexResetThreshold) reset_devex();
 }
 
 void PrimalSimplex::ftran_entering_column(Index entering) {
@@ -667,6 +773,35 @@ Solution PrimalSimplex::run() {
   const double time_limit = options_.get_double("time_limit");
   const std::int64_t iteration_limit = options_.get_int("iteration_limit");
 
+  // Dantzig is kept reachable so the before/after in issue #66 can be REGENERATED rather
+  // than quoted from a commit message, and so a suspected pricing bug can be bisected
+  // against the rule this replaced without checking out an old tree.
+  // DEVEX IS NOT THE DEFAULT YET, and the reason is measured rather than cautious. It cuts
+  // iterations substantially - 1147 to 830 on the committed small set, and 52250 to 31618
+  // across the Netlib medium set once d6cube (which fails under both rules) is set aside -
+  // but it also turns grow22 and scsd8 from `optimal` into "basis became singular", taking
+  // the medium pass rate from 41 to 39.
+  //
+  // The two facts are the same fact. Devex chooses a different entering column, and nothing
+  // in the CURRENT ratio test defends the pivot magnitude of that choice: it takes the
+  // tightest bound and accepts whatever pivot comes with it. Dantzig happened to pick
+  // columns whose pivots were survivable; devex does not, and the basis degrades until it
+  // is singular. Both regressions fail EARLIER than the Dantzig run succeeded, which is the
+  // signature of conditioning rather than of a longer search.
+  //
+  // The Harris two-pass ratio test (#67) is what makes this safe: it spends a relaxed bound
+  // tolerance to buy a larger pivot, which is exactly the degree of freedom missing here.
+  // #67 was implemented once, measured as null under Dantzig, and not shipped for that
+  // reason - its value only appears once the pricing rule stops picking safe columns by
+  // accident. Landing devex on by default before it would trade a headline iteration count
+  // for two correct answers, which CLAUDE.md settles: a wrong answer scores zero.
+  const std::string pricing = options_.get_string("pricing");
+  devex_ = pricing == "devex";
+  if (pricing != "devex" && pricing != "dantzig" && !pricing.empty()) {
+    logger_.warning("pricing '{}' is not recognised; using dantzig", pricing);
+    devex_ = false;
+  }
+
   build_working_problem();
   set_initial_basis();
 
@@ -694,6 +829,10 @@ Solution PrimalSimplex::run() {
       logger_.info("Phase 1 complete after {} iterations: primal feasible", iterations);
       degenerate_run = 0;
       bland = false;
+      // The composite phase-1 objective is a different function from the phase-2 one, so
+      // weights accumulated against the first approximate edge norms for an objective that
+      // no longer exists. Carrying them across is not a slow start, it is wrong information.
+      reset_devex();
     }
     was_phase_one = phase_one;
 
@@ -807,6 +946,14 @@ Solution PrimalSimplex::run() {
       const auto slot = static_cast<std::size_t>(ratio.leaving_position);
       const Index leaving = basis_[slot];
       const auto l = static_cast<std::size_t>(leaving);
+
+      // BEFORE the basis changes, and before the factors are updated. The weight update
+      // needs rho = B^-T e_r under the basis this pivot is leaving, and it reads
+      // basis_[leaving_row] to find the departing variable - both are about to be
+      // overwritten. A bound flip never reaches here, which is correct: nothing leaves the
+      // basis, so no edge changes and no weight is stale.
+      update_devex_weights(entering, ratio.leaving_position,
+                           alpha_[static_cast<std::size_t>(ratio.leaving_position)]);
 
       basis_position_[l] = -1;
       // Snap the departing variable exactly onto the bound it hit. Leaving it at the
