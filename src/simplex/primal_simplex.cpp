@@ -227,6 +227,8 @@ class PrimalSimplex {
   /// Effort counters for the solve log. rejected_updates_ is the interesting one: a basis
   /// that keeps producing unsafe pivots is badly conditioned, and that is worth seeing.
   Count refactorizations_ = 0;
+  double worst_basis_pivot_ = 0.0;  ///< smallest pivot over every factorization
+  Count iterations_seen_ = 0;       ///< for the per-refactorization log line only
   Count rejected_updates_ = 0;
   Count accuracy_refactorizations_ = 0;
   std::vector<double> x_basic_;
@@ -381,6 +383,28 @@ bool PrimalSimplex::refactorize() {
             "the basis is poorly scaled and the factors will carry more fill",
             kThresholdLadder[attempt], tol::kMarkowitzThreshold);
       }
+      // BASIS CONDITIONING, RECORDED RATHER THAN INFERRED. The smallest pivot of a fresh
+      // factorization is the cheapest honest read on how close a basis is to singular. The
+      // factorization already computes it; nothing was asking for it.
+      //
+      // The refactorization count does not answer the same question. It confounds
+      // conditioning with FILL - a basis can be perfectly well conditioned and still trigger
+      // the eta-fill rule every other pivot - so a run that refactorizes constantly and one
+      // whose basis is decaying look identical from the outside, and they need opposite
+      // responses.
+      //
+      // Added because #66 could not be settled without it: devex drives grow22 and scsd8 to
+      // "basis became singular" while Dantzig does not, and the ratio test, accumulated
+      // update error and small committed pivots had each been eliminated by experiment.
+      // With this line the answer took one run - the smallest pivot falls to 6.1e-08 and
+      // 1.6e-09 under devex against 1.0e-03 and 4.0e-03 under Dantzig, so the basis really
+      // is decaying rather than failing suddenly.
+      const double pivot = lu_.smallest_pivot();
+      if (pivot > 0.0 && (worst_basis_pivot_ == 0.0 || pivot < worst_basis_pivot_)) {
+        worst_basis_pivot_ = pivot;
+      }
+      logger_.verbose("refactorized at iteration {}: smallest pivot {:.3e}", iterations_seen_,
+                      pivot);
       return true;
     }
   }
@@ -705,8 +729,9 @@ Solution PrimalSimplex::finish(SolveStatus status, const std::string& message, C
   // nothing, and a high rejection count means the bases being produced are ill conditioned.
   logger_.info(
       "Basis: {} refactorizations over {} iterations, {} declined as unsafe, {} forced "
-      "by the accuracy check",
-      refactorizations_, iterations, rejected_updates_, accuracy_refactorizations_);
+      "by the accuracy check; smallest pivot over all factorizations {:.3e}",
+      refactorizations_, iterations, rejected_updates_, accuracy_refactorizations_,
+      worst_basis_pivot_);
 
   Solution solution;
   solution.allocate_for(model_);
@@ -836,6 +861,7 @@ Solution PrimalSimplex::run() {
     }
     was_phase_one = phase_one;
 
+    iterations_seen_ = iterations;
     compute_reduced_costs(phase_one);
 
     if (iterations % 20 == 0) {
