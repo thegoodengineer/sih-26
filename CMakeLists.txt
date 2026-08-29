@@ -177,6 +177,7 @@ endif()
 # -----------------------------------------------------------------------------------------
 
 set(SANKHYA_CORE_SOURCES
+  src/api/c_api.cpp
   src/core/model.cpp
   src/core/solve.cpp
   src/io/line_reader.cpp

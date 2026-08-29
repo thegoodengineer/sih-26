@@ -10,6 +10,7 @@ add_executable(sankhya_tests
   unit/test_sparse.cpp
   unit/test_sparse_vector.cpp
   unit/test_arena.cpp
+  unit/test_c_api.cpp
   unit/test_options.cpp
   unit/test_model.cpp
   unit/test_logging.cpp
