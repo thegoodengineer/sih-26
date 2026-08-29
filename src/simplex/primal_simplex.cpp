@@ -729,9 +729,15 @@ Solution PrimalSimplex::finish(SolveStatus status, const std::string& message, C
   // nothing, and a high rejection count means the bases being produced are ill conditioned.
   logger_.info(
       "Basis: {} refactorizations over {} iterations, {} declined as unsafe, {} forced "
-      "by the accuracy check; smallest pivot over all factorizations {:.3e}",
+      "by the accuracy check; smallest pivot over all factorizations {}",
       refactorizations_, iterations, rejected_updates_, accuracy_refactorizations_,
-      worst_basis_pivot_);
+      // "n/a" and NOT 0.000e+00 when nothing was recorded. A model with no rows factorizes
+      // nothing, and printing a zero there says "the basis was singular" - the strongest
+      // possible claim about conditioning - when what happened is that the question never
+      // arose. This whole line exists to make basis health legible; a plausible-looking
+      // number standing in for absent data is the one way it could mislead.
+      worst_basis_pivot_ > 0.0 ? fmt::format("{:.3e}", worst_basis_pivot_)
+                               : std::string("n/a (nothing was factorized)"));
 
   Solution solution;
   solution.allocate_for(model_);
