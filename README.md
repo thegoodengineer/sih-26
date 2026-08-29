@@ -138,6 +138,7 @@ src/pdhg          restarted PDHG, CPU                  (CUDA backend: not starte
 src/mip           branch and bound + diving heuristic  (cutting planes: Phase 7)
 src/qp            convex QP, Condat-Vu primal-dual     (done)
 src/ipm           interior point                       (Phase 8, not started)
+bindings/python   Python bindings — ctypes over the C API, nothing to compile
 tests/  bench/  tools/  docs/  demo/
 ```
 
