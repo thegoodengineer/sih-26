@@ -90,6 +90,30 @@ constexpr Count kAccuracyCheckInterval = 16;
 /// against pivots that are no longer being chosen on meaningful information.
 constexpr double kDevexResetThreshold = 1e6;
 
+/// Reset the reference framework when the entering column's weight has drifted this far from
+/// its exact steepest-edge norm.
+///
+/// DEVEX'S WEIGHTS ARE A LOWER BOUND: w_j <= gamma_j = 1 + ||B^-1 a_j||^2 always holds if
+/// the update is sound, and the approximation is only useful while it stays near gamma.
+/// Nothing was checking that. The absolute cap above fires at 1e6, which says nothing about
+/// accuracy - a weight of 1e5 is fine beside a gamma of 1e5 and catastrophic beside a gamma
+/// of 1.
+///
+/// MEASURED, by recomputing gamma exactly for every nonbasic column on scsd8 (#66). The
+/// ratio w/gamma starts inside [0.89, 0.96] and climbs to 2.3e+02 by iteration 200 and
+/// 3.7e+03 in the following solve. An inflated weight makes d^2/w rank a good column as a
+/// bad one, so pricing steadily loses the information it is supposed to be using, and the
+/// bases it then chooses are the ones that decay - which is the singular basis #66 was
+/// chasing.
+///
+/// The test is nearly free: the entering column's alpha = B^-1 a_q is already computed for
+/// the ratio test, so gamma_q costs one dot product, and it is checked on one column per
+/// iteration rather than all of them. A factor of 4 is loose enough not to thrash the
+/// A factor of 1.5 is what the measurement chose: at 2.0 and above scsd8 still fails,
+/// at 1.5 and 1.05 it solves, and the committed small set costs 828 iterations either
+/// way against 830 without the check - so the tighter test is free on healthy models.
+constexpr double kDevexAccuracyFactor = 1.5;
+
 /// Tied to kPrimalFeasibility rather than chosen independently, because that is the quantity
 /// this check ultimately protects: factors whose residual is below the feasibility tolerance
 /// cannot corrupt a feasibility judgement made at that tolerance.
@@ -910,6 +934,22 @@ Solution PrimalSimplex::run() {
     }
 
     ftran_entering_column(entering);
+
+    // DOES THE WEIGHT STILL APPROXIMATE ANYTHING? alpha is B^-1 a_q, so the exact
+    // steepest-edge norm of the column just chosen is one dot product away, and devex
+    // guarantees w_q <= gamma_q. A weight that has climbed above gamma is not a slightly
+    // stale estimate, it is wrong in the direction that makes pricing avoid good columns.
+    // Checking the entering column alone, once per iteration, is enough to notice: it is
+    // the column whose weight the ranking just acted on.
+    if (devex_) {
+      double gamma = 1.0;
+      for (Index slot = 0; slot < m_; ++slot) {
+        const double v = alpha_[static_cast<std::size_t>(slot)];
+        gamma += v * v;
+      }
+      const double weight = devex_weight_[static_cast<std::size_t>(entering)];
+      if (weight > kDevexAccuracyFactor * gamma) reset_devex();
+    }
 
     // Periodically ask whether the updated factors still represent the basis, and rebuild
     // them when they do not. This measures the property that matters rather than guessing at
