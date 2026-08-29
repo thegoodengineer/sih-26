@@ -126,6 +126,8 @@ Microsoft Store stub; `scripts/preflight.sh` tells you whether it is.
 
 ```
 include/sankhya/  public headers — Model, Solution, Options, tolerances, sparse containers
+                  plus sankhya.h, the C API
+src/api           C API — an FFI-safe surface over the core, no C++ types crossing
 src/core          Model/Solution implementation and the solve() dispatcher
 src/util          logging, timers, arena allocator, option registry
 src/io            MPS + LP readers (including QPS QUADOBJ), solution and JSON writers
