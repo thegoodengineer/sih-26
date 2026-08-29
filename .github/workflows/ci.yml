@@ -71,6 +71,16 @@ jobs:
       # changed underneath them. This step is what makes that a build failure rather than a
       # discovery made by whoever next imports the package.
       - name: Python bindings
+        # RELEASE ONLY, and not because the bindings are less important under a sanitizer.
+        # ASan cannot instrument a library that is dlopen'd into an uninstrumented process:
+        # "ASan runtime does not come first in initial library list". Making it work would
+        # mean LD_PRELOADing the runtime into python3, which puts CPython itself under leak
+        # detection and reports its interpreter allocations as failures.
+        #
+        # Nothing is lost. The bindings are pure Python over ctypes - there is no C++ here
+        # for a sanitizer to check - and the C API they call IS covered under ASan, by
+        # tests/unit/test_c_api.cpp in this same job.
+        if: matrix.name == 'Release'
         run: PYTHONPATH=bindings/python python3 bindings/python/test_bindings.py
 
       # Every other check in this job is a unit test. Without this step the command line
