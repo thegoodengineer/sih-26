@@ -23,6 +23,8 @@
 
 #include "sankhya/mip.hpp"
 
+#include "cuts.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -730,7 +732,21 @@ Solution BranchAndBound::run() {
 }  // namespace
 
 Solution solve_branch_and_bound(const Model& model, const Options& options, Logger& logger) {
-  BranchAndBound search(model, options, logger);
+  // ROOT CUTS, applied once before the search rather than per node.
+  //
+  // Integer rounding tightens a row IN PLACE, so unlike a generated cut it adds no row, grows
+  // no basis, and costs the search nothing per node - every node LP simply starts from a
+  // tighter relaxation. Applying it at the root is therefore all that is needed; re-applying
+  // it deeper would find nothing new, because branching changes column bounds and not the row
+  // coefficients this reads.
+  //
+  // It runs on a COPY. The caller's model is an input, and a solver that silently rewrites
+  // the model it was handed makes a second solve of the "same" model mean something different
+  // from the first.
+  Model tightened = model;
+  const RowTightening effect = tighten_integral_rows(&tightened, logger);
+
+  BranchAndBound search(effect.rows_tightened > 0 ? tightened : model, options, logger);
   return search.run();
 }
 
