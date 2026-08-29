@@ -1,0 +1,182 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# SANKHYA - regenerate every claim this repository makes, from a fresh clone, in one command.
+#
+# WHAT THIS PROTECTS. Everything here rests on a promise that a reader can reproduce our
+# numbers. Until this script existed that promise required knowing which of eight scripts to
+# run, in which order, with which flags - which is a treasure hunt, not reproducibility
+# (issue #73).
+#
+# IT RUNS OFFLINE BY DEFAULT. Nine Netlib instances are committed to data/netlib/ with their
+# published optima, so the headline benchmark needs no network. That matters more than it
+# sounds: the one occasion this has to work without fail is a demonstration on someone
+# else's machine, on conference wifi. Pass --fetch-medium to additionally download and run
+# the 50-instance medium tier, which is where the honest pass rate lives.
+#
+# IT SAYS WHAT IT SKIPPED. A step that cannot run prints why and the pipeline continues; the
+# summary at the end lists every skip. A reproduction script that silently produces fewer
+# results than the README claims is worse than one that fails loudly.
+#
+# Usage: scripts/reproduce.sh [--fetch-medium] [--debug] [--build-dir DIR]
+#
+#   --fetch-medium  also download and run the 50-instance medium tier (needs network)
+#   --debug         build Debug instead of Release. This is the Windows Smart App Control
+#                   escape hatch: different bytes, different hash, so it can run where a
+#                   blocked Release binary cannot. Same answers; the timing comparison is
+#                   skipped under it because it would no longer mean anything.
+#   --build-dir     build somewhere other than build/
+set -uo pipefail
+
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+BUILD_DIR="build"
+BUILD_TYPE="Release"
+FETCH_MEDIUM=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --fetch-medium) FETCH_MEDIUM=1 ;;
+    # Debug exists here as the Smart App Control escape hatch, not as a developer
+    # convenience: it produces different bytes, so it can run where a blocked Release
+    # binary cannot. Answers and iteration counts are identical; only timings change.
+    --debug) BUILD_TYPE="Debug" ;;
+    --build-dir) BUILD_DIR="${2:?--build-dir needs a directory}"; shift ;;
+    -h|--help) sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) printf 'unknown argument: %s\n' "$1" >&2; exit 2 ;;
+  esac
+  shift
+done
+
+SKIPPED=()
+STEP=0
+
+rule() { STEP=$((STEP + 1)); printf '\n\033[1m[%d] %s\033[0m\n%s\n' "$STEP" "$1" \
+         "$(printf '%.0s-' $(seq 1 78))"; }
+skip() { printf '\n  \033[33mSKIPPED: %s\033[0m\n  %s\n' "$1" "$2"; SKIPPED+=("$1"); }
+
+START=$(date +%s)
+printf '\n\033[1mSANKHYA - reproducing every claim\033[0m\n'
+printf 'commit %s\n' "$(git rev-parse --short HEAD 2>/dev/null || echo 'not a git checkout')"
+
+# ---- 0. Preflight -------------------------------------------------------------------------
+rule "Preflight: can this machine build and run at all?"
+if ! bash scripts/preflight.sh; then
+  printf '\n\033[31mStopping: preflight found a blocker.\033[0m Nothing below would produce a\n'
+  printf 'trustworthy number on this machine.\n\n'
+  exit 1
+fi
+
+# Pick the interpreter preflight validated, rather than trusting python3 (see preflight.sh
+# for why that name is not safe on Windows).
+PYTHON="${PYTHON:-}"
+if [ -z "$PYTHON" ]; then
+  for candidate in python3 python py; do
+    command -v "$candidate" >/dev/null 2>&1 || continue
+    "$candidate" -c "import sys" >/dev/null 2>&1 && { PYTHON="$candidate"; break; }
+  done
+fi
+
+# ---- 1. Build -----------------------------------------------------------------------------
+rule "Build ($BUILD_TYPE)"
+if ! bash scripts/configure.sh "$BUILD_DIR" "$BUILD_TYPE" >/dev/null; then
+  printf '\033[31mconfigure failed\033[0m\n'; exit 1
+fi
+if ! cmake --build "$BUILD_DIR" -j; then
+  printf '\033[31mbuild failed\033[0m\n'; exit 1
+fi
+
+BIN="$BUILD_DIR/sankhya.exe"
+[ -x "$BIN" ] || BIN="$BUILD_DIR/sankhya"
+if ! "$BIN" version >/dev/null 2>&1; then
+  # Re-checked HERE and not only in preflight, because the binary that matters is the one
+  # this run just linked - and on Windows that is exactly the one Smart App Control blocks.
+  printf '\n\033[31mThe binary built but will not execute.\033[0m\n\n'
+  printf 'On Windows 11 this is Smart App Control: it blocks unsigned executables that have\n'
+  printf 'no reputation, and one you just linked has none.\n\n'
+  printf 'There is no reliable fix from inside this repository, and it would be dishonest to\n'
+  printf 'print one. Rebuilding into a new directory changes the bytes and therefore the\n'
+  printf 'hash, and that SOMETIMES clears it - but measured on this project, two Debug\n'
+  printf 'builds of the same commit minutes apart gave opposite results, one running and one\n'
+  printf 'blocked. Treat a retry as worth one attempt, not as a procedure:\n\n'
+  printf '    scripts/reproduce.sh --build-dir build-retry\n\n'
+  printf 'If that fails too, the realistic options are a machine without Smart App Control\n'
+  printf '(CI builds and runs this on Linux every push), or a decision about Smart App\n'
+  printf 'Control that is yours to make and not one a script should make for you. Turning it\n'
+  printf 'off on Windows 11 is one-way and cannot be undone without reinstalling.\n\n'
+  printf 'THE PRACTICAL LESSON, which costs nothing to follow: the trust is per-binary. A\n'
+  printf 'build/ that has been working stops working the moment you rebuild it. Do not\n'
+  printf 'rebuild before a demonstration - keep the binary that already runs.\n\n'
+  exit 1
+fi
+"$BIN" version
+
+# ---- 2. Tests -----------------------------------------------------------------------------
+rule "Test suite, including the rational-arithmetic oracle"
+if ! ctest --test-dir "$BUILD_DIR" --output-on-failure; then
+  printf '\n\033[31mTests failed. Every number below would be suspect, so stopping.\033[0m\n\n'
+  exit 1
+fi
+
+# ---- 3. Netlib ----------------------------------------------------------------------------
+rule "Netlib: our answers against the optima published by netlib.org"
+if [ "$FETCH_MEDIUM" = 1 ]; then
+  printf 'Fetching the 50-instance medium tier (needs network)...\n'
+  "$PYTHON" bench/runners/fetch_data.py --set medium || \
+    skip "medium-tier fetch" "network unavailable; the committed set below still ran"
+fi
+printf 'Solving %s committed instance(s), each answer checked by tools/verify_solution.py\n' \
+  "$(ls data/netlib/*.mps 2>/dev/null | wc -l | tr -d ' ')"
+printf 'which shares no code with the solver.\n\n'
+# A DEBUG RUN MUST NOT WRITE INTO bench/results/. The runner records wall time per instance,
+# make_benchmarks_doc.py regenerates docs/BENCHMARKS.md from the newest matching CSV, and it
+# PREFERS the netlib-small-*.csv glob - so one --debug reproduction would silently republish
+# the documented timings as those of an unoptimised build. Correctness is identical either
+# way; the numbers that would become documentation are not.
+NETLIB_OUT=()
+if [ "$BUILD_TYPE" != "Release" ]; then
+  NETLIB_OUT=(--out "${TMPDIR:-/tmp}/netlib-$BUILD_TYPE-scratch.csv")
+  printf '(%s build: results go to a scratch file, not bench/results/)\n\n' "$BUILD_TYPE"
+fi
+"$PYTHON" bench/runners/netlib.py --binary "$BIN" --time-limit 60 \
+  ${NETLIB_OUT[@]+"${NETLIB_OUT[@]}"} || skip "Netlib benchmark" "see the output above"
+
+# ---- 4. Comparison against an established solver -------------------------------------------
+rule "Compared against HiGHS, as PS26119 requires"
+if [ "$BUILD_TYPE" != "Release" ]; then
+  skip "HiGHS comparison" "this is a $BUILD_TYPE build. The objectives would still
+  agree, but the timings would be measuring our missing optimiser rather than our
+  solver, and a number that unfair to us is still a number someone could quote. Build
+  Release for the comparison."
+elif "$PYTHON" -c "import highspy" >/dev/null 2>&1; then
+  "$PYTHON" bench/runners/compare.py --sankhya-binary "$BIN" --time-limit 60 || \
+    skip "HiGHS comparison" "see the output above"
+else
+  skip "HiGHS comparison" "highspy not installed.  pip install highspy   - it runs as a
+  separate process and is never linked into SANKHYA, so it does not touch the sovereignty
+  claim that section 1 of the demo prints live."
+fi
+
+# ---- 5. The walkthrough --------------------------------------------------------------------
+rule "The PS26119 walkthrough"
+printf 'Everything above, in the problem statement order, plus the case studies, the\n'
+printf 'robustness hazards, and the list of what we do NOT have.\n'
+# SANKHYA_BIN, not just PYTHON. The demo searches the usual build locations on its own, so
+# without this a run with --build-dir would test the binary this script just built and then
+# demonstrate a DIFFERENT one - or, as happened here, find a stale build/ that Smart App
+# Control had blocked and skip the whole walkthrough for a reason unrelated to the run.
+SANKHYA_BIN="$(cd "$(dirname "$BIN")" && pwd)/$(basename "$BIN")" PYTHON="$PYTHON" \
+  bash demo/run_sih_demo.sh || skip "demo" "see the output above"
+
+# ---- Summary --------------------------------------------------------------------------------
+ELAPSED=$(( $(date +%s) - START ))
+printf '\n%s\n' "$(printf '%.0s=' $(seq 1 78))"
+printf '\033[1mReproduction complete in %dm %ds\033[0m\n' $((ELAPSED / 60)) $((ELAPSED % 60))
+if [ ${#SKIPPED[@]} -eq 0 ]; then
+  printf 'Nothing was skipped. Every claim above was regenerated on this machine.\n'
+else
+  printf '\n\033[33m%d step(s) skipped:\033[0m\n' "${#SKIPPED[@]}"
+  for s in "${SKIPPED[@]}"; do printf '  - %s\n' "$s"; done
+  printf '\nThe results above are real; they are simply not the complete set. Anything the\n'
+  printf 'README claims that is not printed above was NOT reproduced in this run.\n'
+fi
+printf '\nWhat we do not have is in demo/run_sih_demo.sh section 6 and in issue #54, which\n'
+printf 'tracks every PS26119 requirement against what exists on main.\n\n'

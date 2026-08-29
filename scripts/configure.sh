@@ -54,8 +54,44 @@ command -v cmake >/dev/null 2>&1 || {
   exit 1
 }
 
+# REUSE DEPENDENCY SOURCES FROM ANY EXISTING BUILD TREE.
+#
+# FetchContent clones fmt, CLI11, nlohmann_json, googletest and sometimes zlib into
+# <build>/_deps - about 209 MB, and several minutes on a slow link. That cost is paid again
+# for every new build directory, which would be a footnote except that creating a new build
+# directory is the standard remedy for Windows Smart App Control blocking a freshly linked
+# binary by hash. The recovery path a teammate needs on a demo day should not be the one that
+# takes ten minutes and a network.
+#
+# Only the SOURCE directories are shared. They are configuration-independent - the same tag
+# checked out from the same repository - so a Release tree and a Debug tree can read the same
+# checkout safely. The per-dependency build outputs stay inside each tree, which is why this
+# uses FETCHCONTENT_SOURCE_DIR_<name> rather than FETCHCONTENT_BASE_DIR: pointing the base
+# directory at a shared location would also share the build trees, and Release and Debug
+# would then fight over them.
+FETCH_ARGS=()
+for existing in "$(dirname "$BUILD_DIR")"/*/_deps; do
+  [ -d "$existing" ] || continue
+  [ "$existing" = "${BUILD_DIR%/}/_deps" ] && continue
+  for src in "$existing"/*-src; do
+    [ -d "$src" ] || continue
+    name="$(basename "$src")"; name="${name%-src}"
+    # CMake upper-cases the declared name for this variable.
+    upper="$(printf '%s' "$name" | tr '[:lower:]' '[:upper:]')"
+    already=0
+    for arg in ${FETCH_ARGS[@]+"${FETCH_ARGS[@]}"}; do
+      case "$arg" in "-DFETCHCONTENT_SOURCE_DIR_${upper}="*) already=1 ;; esac
+    done
+    [ "$already" = 1 ] && continue
+    FETCH_ARGS+=("-DFETCHCONTENT_SOURCE_DIR_${upper}=$(cd "$src" && pwd)")
+  done
+done
+if [ "${#FETCH_ARGS[@]}" -gt 0 ]; then
+  echo "sankhya: reusing ${#FETCH_ARGS[@]} dependency source(s) already on disk"
+fi
+
 CC="$CC_BIN" CXX="$CXX_BIN" cmake -G Ninja -B "$BUILD_DIR" \
-  -DCMAKE_BUILD_TYPE="$BUILD_TYPE" "$@"
+  -DCMAKE_BUILD_TYPE="$BUILD_TYPE" ${FETCH_ARGS[@]+"${FETCH_ARGS[@]}"} "$@"
 
 echo "sankhya: configured ${BUILD_DIR} (${BUILD_TYPE})"
 echo "         build with: cmake --build ${BUILD_DIR} -j"
