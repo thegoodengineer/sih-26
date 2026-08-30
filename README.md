@@ -33,7 +33,7 @@ MPS file through to an independently verified answer. Only MIQP (mixed-integer Q
 as optimal is the single most damaging thing this dispatcher could do, so it does not — see
 the Evidence rules in [`CLAUDE.md`](CLAUDE.md).
 
-Benchmark results against Netlib: **9 of 9** on the small set the demo runs, **41 of 50** on
+Benchmark results against Netlib: **9 of 9** on the small set the demo runs, **43 of 50** on
 the medium tier — see [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md), generated from the CSVs in
 `bench/results/` so it cannot drift. MIPLIB 2017 is now benchmarked too: **10 of 30** easy
 instances reach the published optimum, **5 of 30** also prove it (branch and bound has no
