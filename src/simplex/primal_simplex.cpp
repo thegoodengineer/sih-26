@@ -41,6 +41,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <iterator>
 #include <limits>
 #include <string>
@@ -61,6 +62,33 @@ namespace {
 /// times the Bland switch threshold: long enough that no honest degenerate plateau trips
 /// it, short enough that a genuine cycle is reported in under a second.
 constexpr int kStallLimit = 20 * tol::kBlandSwitchIterations;
+
+/// Largest amount a bound is relaxed by while escaping a degenerate stall (#51).
+///
+/// MUST STAY WELL UNDER kPrimalFeasibility. Relaxing a bound outward means a point feasible
+/// for the perturbed problem can violate the TRUE bound by up to this much, and the
+/// perturbation is removed before optimality is reported - so what matters is that the
+/// leftover violation is below the tolerance the answer is judged against. At 1e-9 against a
+/// 1e-7 feasibility tolerance there are two orders of margin, and phase 1 does not even
+/// re-engage on the restored bounds.
+constexpr double kPerturbationSize = 1e-9;
+constexpr int kPerturbationTrigger = kStallLimit / 2;
+
+/// Deterministic per-variable shift in (0, kPerturbationSize].
+///
+/// Deterministic and not random: CLAUDE.md's evidence rules are worth nothing if a rerun of
+/// the same commit on the same instance can take a different path. A fixed hash of the index
+/// gives every variable a DIFFERENT shift, which is the property that actually breaks the
+/// ties, without making the run irreproducible.
+[[nodiscard]] double perturbation_for(Index k) noexcept {
+  // UINT64_C and not a ULL suffix: uint64_t is unsigned long on Linux and unsigned long long
+  // on Windows, and mixing the two trips -Werror=sign-conversion on one platform only. CI is
+  // the authority on -Werror cleanliness, and it duly said so.
+  const auto mixed =
+      static_cast<std::uint64_t>(k) * UINT64_C(2654435761) + UINT64_C(1013904223);
+  const double unit = static_cast<double>(mixed % UINT64_C(1000003)) / 1000003.0;
+  return kPerturbationSize * (0.25 + 0.75 * unit);
+}
 
 /// How far above the feasibility tolerance a phase-1 stall has to sit before it is reported
 /// as a genuine infeasibility rather than a numerical stall.
@@ -154,6 +182,12 @@ class PrimalSimplex {
   /// Rebuild and refactorize the basis matrix from scratch. Returns false when singular.
   [[nodiscard]] bool refactorize();
 
+  /// Relax every finite bound slightly, so a degenerate vertex stops being degenerate.
+  void perturb_bounds();
+
+  /// Put the true bounds back. Called before optimality can be reported.
+  void remove_perturbation();
+
   /// x_B = B^{-1} (-N x_N). Recomputed from the bounds every iteration rather than updated,
   /// so no round-off accumulates across pivots.
   void compute_basic_values();
@@ -232,6 +266,22 @@ class PrimalSimplex {
   std::vector<Index> basis_position_;  ///< -1 when nonbasic
   std::vector<BasisStatus> status_;
   std::vector<double> nonbasic_value_;
+
+  /// PERTURBATION FOR DEGENERACY (#51; Maros, "Computational Techniques of the Simplex
+  /// Method", ch. 9, and the bound-shifting scheme every production code uses).
+  ///
+  /// A degenerate vertex has more active constraints than dimensions, so the ratio test ties
+  /// and the step is zero. Anti-cycling rules ARBITRATE those ties; perturbation REMOVES
+  /// them, by moving each bound a different tiny amount so no two can be active at once.
+  ///
+  /// Measured on tuff, which is why this exists: it does not terminate under Bland's rule at
+  /// 1000, 10000, 50000 or 200001 consecutive degenerate iterations. Implementing Bland
+  /// correctly - lowest index on the LEAVING variable too, which our ratio test does not do -
+  /// breaks the cycle and produces a singular basis instead, and takes wood1p down with it.
+  /// The two properties a tie-break must supply, termination and conditioning, want opposite
+  /// things from the same choice. Perturbation sidesteps the conflict.
+  bool perturbed_ = false;
+  Count perturbations_ = 0;
 
   SparseLu lu_;
 
@@ -433,6 +483,50 @@ bool PrimalSimplex::refactorize() {
     }
   }
   return false;
+}
+
+void PrimalSimplex::perturb_bounds() {
+  if (perturbed_) return;
+  for (Index k = 0; k < total_; ++k) {
+    const auto u = static_cast<std::size_t>(k);
+    // A FIXED variable is left exactly alone. Widening lower == upper would turn a variable
+    // the model pins to one value into one with a range, which is a different problem rather
+    // than a nudged one.
+    if (lower_[u] == upper_[u]) continue;
+    const double shift = perturbation_for(k);
+    if (is_finite_bound(lower_[u])) lower_[u] -= shift;
+    if (is_finite_bound(upper_[u])) upper_[u] += shift;
+  }
+  perturbed_ = true;
+  ++perturbations_;
+}
+
+void PrimalSimplex::remove_perturbation() {
+  if (!perturbed_) return;
+  for (Index k = 0; k < n_; ++k) {
+    const auto u = static_cast<std::size_t>(k);
+    lower_[u] = model_.col_lower[u];
+    upper_[u] = model_.col_upper[u];
+  }
+  for (Index i = 0; i < m_; ++i) {
+    const auto u = static_cast<std::size_t>(n_ + i);
+    const auto r = static_cast<std::size_t>(i);
+    lower_[u] = model_.row_lower[r];
+    upper_[u] = model_.row_upper[r];
+  }
+  // A nonbasic variable was parked on a RELAXED bound and must be moved back onto the true
+  // one, or the basic values recomputed from it are wrong by the shift.
+  for (Index k = 0; k < total_; ++k) {
+    const auto u = static_cast<std::size_t>(k);
+    if (basis_position_[u] >= 0) continue;
+    if (status_[u] == BasisStatus::kAtLower && is_finite_bound(lower_[u])) {
+      nonbasic_value_[u] = lower_[u];
+    } else if (status_[u] == BasisStatus::kAtUpper && is_finite_bound(upper_[u])) {
+      nonbasic_value_[u] = upper_[u];
+    }
+  }
+  perturbed_ = false;
+  compute_basic_values();
 }
 
 void PrimalSimplex::compute_basic_values() {
@@ -748,6 +842,18 @@ double PrimalSimplex::minimization_objective() const {
 
 Solution PrimalSimplex::finish(SolveStatus status, const std::string& message, Count iterations,
                                double seconds) {
+  // EVERY EXIT, not just the optimal one. The perturbation relaxes bounds, so any point
+  // reported while it is active belongs to a problem whose feasible region is slightly
+  // larger than the caller's. The optimal path already restores them before returning - it
+  // has to, since it goes on iterating - but there are ten other ways out of that loop:
+  // iteration limit, time limit, unbounded, infeasible, and six numerical failures.
+  //
+  // A point returned through any of those would be feasible for the relaxed bounds and
+  // violate the true ones by up to kPerturbationSize. At 1e-9 that is two orders under the
+  // feasibility tolerance, so nothing downstream would flag it and the answer would be
+  // quietly, slightly wrong - which is the failure mode this codebase treats as the worst
+  // one available. Restoring here, at the single choke point, means no exit can miss it.
+  remove_perturbation();
   // The ratio of refactorizations to iterations is the cheapest available read on how well
   // the basis update is holding up: a run that refactorizes on most pivots has gained
   // nothing, and a high rejection count means the bases being produced are ill conditioned.
@@ -930,6 +1036,18 @@ Solution PrimalSimplex::run() {
                         infeasibility, primal_tolerance_),
             iterations, timer.elapsed_seconds());
       }
+      // OPTIMAL FOR THE PERTURBED PROBLEM IS NOT OPTIMAL. The bounds were relaxed to break
+      // a stall; reporting this point would answer a question nobody asked, and the answer
+      // would be feasible-looking and slightly wrong. Restore the true bounds and keep
+      // going - the basis is retained, so the clean finish is usually a handful of pivots.
+      if (perturbed_) {
+        logger_.verbose("optimal under perturbation; restoring exact bounds at iteration {}",
+                        iterations);
+        remove_perturbation();
+        bland = false;
+        degenerate_run = 0;
+        continue;
+      }
       return finish(SolveStatus::kOptimal, {}, iterations, timer.elapsed_seconds());
     }
 
@@ -985,6 +1103,19 @@ Solution PrimalSimplex::run() {
     const double step = ratio.step;
     if (step <= tol::kRatioTestFeasibility) {
       ++degenerate_run;
+      // PERTURB BEFORE FALLING BACK TO BLAND. Bland is a termination guarantee bought with
+      // arithmetic quality; perturbation removes the ties that caused the stall instead of
+      // arbitrating them, and costs nothing when it works. Bland remains below as the
+      // last resort for a stall perturbation did not clear.
+      if (!perturbed_ && degenerate_run > kPerturbationTrigger) {
+        logger_.verbose("{} consecutive degenerate iterations: perturbing bounds by up to {:g}",
+                        degenerate_run, kPerturbationSize);
+        perturb_bounds();
+        compute_basic_values();
+        degenerate_run = 0;
+        continue;
+      }
+
       if (!bland && degenerate_run > tol::kBlandSwitchIterations) {
         logger_.verbose("{} consecutive degenerate iterations: switching to Bland's rule",
                         degenerate_run);
