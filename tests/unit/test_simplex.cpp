@@ -84,6 +84,14 @@ Solution run_with_pricing(const Model& model, const char* pricing) {
   return solve(model, options);
 }
 
+Solution run_with_ratio_test(const Model& model, const char* ratio_test) {
+  Options options;
+  options.set_bool("log_to_console", false);
+  options.set_bool("presolve", false);
+  options.set_string("ratio_test", ratio_test);
+  return solve(model, options);
+}
+
 /// Independent optimality certificate. Nothing here reads a quantity the simplex computed
 /// except the primal values and the row duals; everything else is rebuilt from the model.
 void expect_kkt_optimal(const Model& model, const Solution& solution, double tolerance = 1e-7) {
@@ -548,6 +556,85 @@ TEST(PrimalSimplex, DevexAndDantzigReachTheSameOptimum) {
     // Devex must also produce a genuinely optimal point, not merely one that matches. If
     // both rules shared a bug the comparison above would pass in silence.
     expect_kkt_optimal(model, devex, 1e-6);
+  }
+
+  EXPECT_GT(compared, 150) << "too few instances reached optimal under both rules for this "
+                              "comparison to mean anything; only "
+                           << compared << " did";
+}
+
+TEST(PrimalSimplex, HarrisAndTextbookRatioTestReachTheSameOptimum) {
+  // Same property as DevexAndDantzigReachTheSameOptimum, for the OTHER axis issue #67 makes
+  // selectable: which row leaves cannot change which vertex is optimal, whether it is chosen
+  // by the textbook rule (default) or by Harris's two-pass test with long-step bound
+  // flipping. Both instances are generated the same way as that test.
+  std::mt19937 rng(670670);
+  std::uniform_real_distribution<double> coefficient(-4.0, 4.0);
+  std::uniform_real_distribution<double> unit(0.0, 1.0);
+
+  int compared = 0;
+  for (int trial = 0; trial < 200; ++trial) {
+    const Index n = 2 + static_cast<Index>(trial % 7);
+    const Index m = 1 + static_cast<Index>(trial % 5);
+    const auto un = static_cast<std::size_t>(n);
+    const auto um = static_cast<std::size_t>(m);
+
+    std::vector<double> cost(un);
+    for (double& c : cost) c = coefficient(rng);
+
+    std::vector<double> col_lower(un, 0.0);
+    std::vector<double> col_upper(un, 0.0);
+    std::vector<double> x0(un, 0.0);
+    for (Index j = 0; j < n; ++j) {
+      const auto u = static_cast<std::size_t>(j);
+      const double centre = coefficient(rng);
+      const double half_width = 1.0 + 4.0 * unit(rng);
+      col_lower[u] = centre - half_width;
+      col_upper[u] = centre + half_width;
+      x0[u] = col_lower[u] + unit(rng) * (col_upper[u] - col_lower[u]);
+    }
+
+    std::vector<std::vector<double>> rows(um, std::vector<double>(un, 0.0));
+    std::vector<double> row_lower(um, 0.0);
+    std::vector<double> row_upper(um, 0.0);
+    for (Index i = 0; i < m; ++i) {
+      const auto ui = static_cast<std::size_t>(i);
+      double activity = 0.0;
+      for (Index j = 0; j < n; ++j) {
+        const auto uj = static_cast<std::size_t>(j);
+        rows[ui][uj] = (unit(rng) < 0.6) ? coefficient(rng) : 0.0;
+        activity += rows[ui][uj] * x0[uj];
+      }
+      row_lower[ui] = activity - unit(rng) * 3.0;
+      row_upper[ui] = activity + unit(rng) * 3.0;
+    }
+
+    const Model model = make_model(unit(rng) < 0.5 ? ObjSense::kMinimize : ObjSense::kMaximize,
+                                   cost, col_lower, col_upper, rows, row_lower, row_upper);
+    ASSERT_TRUE(model.validate().empty()) << "trial " << trial;
+
+    const Solution textbook = run_with_ratio_test(model, "textbook");
+    const Solution harris = run_with_ratio_test(model, "harris");
+
+    ASSERT_NE(textbook.status, SolveStatus::kInfeasible)
+        << "trial " << trial << " was built around a feasible point: " << textbook.message;
+    ASSERT_NE(harris.status, SolveStatus::kInfeasible)
+        << "trial " << trial << " was built around a feasible point: " << harris.message;
+
+    if (textbook.status != SolveStatus::kOptimal || harris.status != SolveStatus::kOptimal) {
+      continue;
+    }
+    ++compared;
+
+    const double scale = std::max(1.0, std::fabs(textbook.objective));
+    EXPECT_NEAR(harris.objective, textbook.objective, 1e-6 * scale)
+        << "trial " << trial << ": the ratio test changed the OPTIMUM, which it cannot do. "
+        << "textbook " << textbook.objective << " in " << textbook.iterations
+        << " iterations, harris " << harris.objective << " in " << harris.iterations;
+
+    // Harris deliberately allows a bounded amount of infeasibility (kHarrisRelaxation), so
+    // the KKT check needs a tolerance that admits it rather than the tight default.
+    expect_kkt_optimal(model, harris, 1e-6);
   }
 
   EXPECT_GT(compared, 150) << "too few instances reached optimal under both rules for this "

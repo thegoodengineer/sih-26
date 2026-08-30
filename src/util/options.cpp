@@ -114,13 +114,25 @@ const std::vector<OptionSpec>& Options::registry() {
                  OptionType::String,
                  std::string("dantzig"),
                  "Simplex entering-variable rule: dantzig (default) or devex. Devex takes "
-                 "far fewer iterations but is NOT yet numerically safe with the current "
-                 "textbook ratio test - it costs two Netlib medium instances to a singular "
-                 "basis. It needs the Harris two-pass ratio test (#67) before it can be the "
-                 "default; see #66 for the measurements.",
+                 "far fewer iterations but is NOT yet numerically safe - it costs two Netlib "
+                 "medium instances to a singular basis under either ratio test. Measured "
+                 "against the Harris two-pass ratio test (#67) and unchanged; see #66 for "
+                 "both sets of numbers.",
                  0.0,
                  0.0,
                  {"devex", "dantzig"}});
+    s.push_back({"ratio_test",
+                 OptionType::String,
+                 std::string("textbook"),
+                 "Simplex leaving-variable rule: textbook (default) or harris. Harris (#67) "
+                 "relaxes bounds by a controlled amount to pick a larger, more stable pivot "
+                 "and adds long-step bound flipping, but measured on the Netlib medium tier "
+                 "under Dantzig pricing it trades one instance (grow22) for no reduction in "
+                 "singular-basis failures, so it is not the default; see the citation in "
+                 "primal_simplex.cpp for the numbers.",
+                 0.0,
+                 0.0,
+                 {"harris", "textbook"}});
     s.push_back({"mps_format",
                  OptionType::String,
                  std::string("auto"),

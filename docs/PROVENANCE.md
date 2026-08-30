@@ -67,6 +67,8 @@ mathematics, not transcribed from anyone's implementation.
 | Bounded-variable revised primal simplex | Dantzig, *Linear Programming and Extensions* (1963); Chvátal, *Linear Programming* (1983), ch. 3 and 8 | `src/simplex/primal_simplex.cpp` |
 | Piecewise-linear (composite) phase 1, no artificial variables | Maros, *Computational Techniques of the Simplex Method*, ch. 9 | `src/simplex/primal_simplex.cpp` |
 | Bland's anti-cycling rule | Chvátal, *Linear Programming*, ch. 3 | `src/simplex/primal_simplex.cpp` |
+| Devex pricing (opt-in; `--option pricing=devex`, #66) | Forrest & Goldfarb, *Steepest-edge simplex algorithms for linear programming*, Mathematical Programming 57 (1992); the approximation is Harris (1973), below | `src/simplex/primal_simplex.cpp` |
+| Harris two-pass ratio test, long-step bound flipping (opt-in; `--option ratio_test=harris`, #67) | Harris, P.M.J., *Pivot selection methods of the Devex LP code*, Mathematical Programming 5 (1973), 1-28; long-step generalises the piecewise-linear phase 1 already cited to Maros below | `src/simplex/primal_simplex.cpp` |
 | Exact rational tableau simplex (test oracle) | Chvátal, *Linear Programming*, ch. 2–3 | `tests/oracles/rational_simplex.cpp` |
 | Primal-dual hybrid gradient (the base iteration) | Chambolle & Pock, *A first-order primal-dual algorithm for convex problems with applications to imaging*, JMIV 40(1), 2011, Algorithm 1 | `src/pdhg/pdhg.cpp` |
 | Adaptive step size, primal weight, restarts | Applegate et al., *Practical Large-Scale Linear Programming using Primal-Dual Hybrid Gradient* (PDLP), NeurIPS 2021, sections 3.1, 3.2, 4.3 | `src/pdhg/pdhg.cpp` |
@@ -81,11 +83,11 @@ mathematics, not transcribed from anyone's implementation.
 | Shifted geometric mean benchmark reporting | Mittelmann, plato.asu.edu benchmark methodology | `bench/runners/make_benchmarks_doc.py` |
 | LP duality checks (feasibility, complementary slackness, strong duality) | Chvátal, *Linear Programming*, ch. 5 | `tools/verify_solution.py` |
 
-Phases 6 onwards add: dual revised simplex (Maros; Huangfu & Hall), Forrest–Tomlin
-update (Forrest & Tomlin 1972), Devex pricing (Forrest & Goldfarb 1992), Harris two-pass
-ratio test (Harris 1973), restarted PDHG (Applegate et al.; Lu & Yang, arXiv:2311.12180;
+Phases 6 onwards add: dual revised simplex (Maros; Huangfu & Hall), Forrest–Tomlin update
+(Forrest & Tomlin 1972), restarted PDHG (Applegate et al.; Lu & Yang, arXiv:2311.12180;
 arXiv:2507.14051), Mehrotra predictor–corrector (Nocedal & Wright; Gondzio), Gomory MIR and
-cover cuts (Marchand & Wolsey; Wolsey), and branch-and-cut search (Achterberg).
+cover cuts (Marchand & Wolsey; Wolsey), and branch-and-cut search (Achterberg). Devex pricing
+and the Harris ratio test (#66, #67) have landed early, both opt-in - see the table above.
 
 ---
 

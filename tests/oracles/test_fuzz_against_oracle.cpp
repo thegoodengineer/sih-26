@@ -45,14 +45,18 @@ struct Tally {
   }
 };
 
-Solution solve_float(const Model& model) {
+Solution solve_float(const Model& model, const std::string& ratio_test = "textbook") {
   Options options;
   options.set_bool("log_to_console", false);
+  std::string error;
+  if (ratio_test != "textbook") {
+    EXPECT_TRUE(options.set_from_string("ratio_test", ratio_test, &error)) << error;
+  }
   return solve(model, options);
 }
 
 /// Compare one instance. Returns true when the two engines agree.
-bool compare(const GeneratedLp& lp, Tally* tally) {
+bool compare(const GeneratedLp& lp, Tally* tally, const std::string& ratio_test = "textbook") {
   const OracleResult exact = solve_exact(lp);
   if (exact.status == OracleStatus::kOverflow ||
       exact.status == OracleStatus::kIterationLimit) {
@@ -61,7 +65,7 @@ bool compare(const GeneratedLp& lp, Tally* tally) {
   }
 
   const Model model = to_model(lp);
-  const Solution approximate = solve_float(model);
+  const Solution approximate = solve_float(model, ratio_test);
 
   const auto disagree = [&](const std::string& why) {
     ++tally->mismatched;
@@ -160,6 +164,28 @@ TEST(FuzzAgainstOracle, DegenerateInstances) {
   EXPECT_EQ(tally.mismatched, 0);
   EXPECT_GT(tally.compared(), 800);
   EXPECT_GT(tally.optimal_agreed, 400) << "degenerate instances should mostly be feasible";
+}
+
+TEST(FuzzAgainstOracle, HarrisRatioTestAgainstOracle) {
+  // The textbook ratio test is the default (issue #67: Harris measured no net win on the
+  // Netlib medium tier, so it stayed opt-in), but a selectable code path that only the
+  // default path is fuzzed against the exact oracle is a gap this project's own evidence
+  // rules would flag. Same generators, same trial counts as RandomInstances and
+  // DegenerateInstances, --option ratio_test=harris throughout.
+  std::mt19937_64 rng(674100674);
+  GeneratorConfig config;
+  Tally tally;
+
+  for (int trial = 0; trial < 1000; ++trial) {
+    compare(random_lp(rng, config), &tally, "harris");
+  }
+  for (int trial = 0; trial < 1000; ++trial) {
+    compare(degenerate_lp(rng, config), &tally, "harris");
+  }
+
+  report("2000 instances (random + degenerate) under ratio_test=harris", tally);
+  EXPECT_EQ(tally.mismatched, 0);
+  EXPECT_GT(tally.compared(), 1600) << "the oracle abstained too often to prove anything";
 }
 
 TEST(FuzzAgainstOracle, KktInstancesAgainstTheAnalyticOptimum) {
