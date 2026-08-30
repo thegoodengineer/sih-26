@@ -60,7 +60,7 @@ namespace {
 /// Consecutive zero-length steps tolerated before the solve is declared stalled. Twenty
 /// times the Bland switch threshold: long enough that no honest degenerate plateau trips
 /// it, short enough that a genuine cycle is reported in under a second.
-constexpr int kStallLimit = 20 * tol::kBlandSwitchIterations;
+constexpr int kStallLimit = 200 * tol::kBlandSwitchIterations;
 
 /// How far above the feasibility tolerance a phase-1 stall has to sit before it is reported
 /// as a genuine infeasibility rather than a numerical stall.
