@@ -1121,23 +1121,63 @@ Solution solve_primal_simplex(const Model& model, const Options& options, Logger
   //
   // Markowitz threshold pivoting (issue #22) helped, but it only chooses among the pivots
   // available; scaling changes which pivots exist at all. See issue #49.
-  if (!options.get_bool("scaling")) {
-    PrimalSimplex simplex(model, options, logger);
-    return simplex.run();
-  }
+  return solve_primal_simplex(model, options, logger, build_node_scaling(model, options));
+}
 
+NodeScaling build_node_scaling(const Model& model, const Options& options) {
+  NodeScaling cache;
+  if (!options.get_bool("scaling")) return cache;  // invalid, and deliberately so
   // Cost is passed in the ORIGINAL sense, not minimise space. build_scaling only multiplies
   // it by the column multipliers, and the multipliers themselves come from matrix norms, so
   // the sense never enters; folding it in here would mean unfolding it again below.
-  const Scaling scaling = build_scaling(model, model.col_cost, kRuizIterations);
+  cache.scaling = build_scaling(model, model.col_cost, kRuizIterations);
+  cache.valid = true;
+  return cache;
+}
+
+Solution solve_primal_simplex(const Model& model, const Options& options, Logger& logger,
+                              const NodeScaling& cache) {
+  if (!cache.valid) {
+    PrimalSimplex simplex(model, options, logger);
+    return simplex.run();
+  }
+  const Scaling& scaling = cache.scaling;
 
   Model scaled = model;
   scaled.matrix = scaling.matrix;
   scaled.col_cost = scaling.cost;
-  scaled.col_lower = scaling.col_lower;
-  scaled.col_upper = scaling.col_upper;
-  scaled.row_lower = scaling.row_lower;
-  scaled.row_upper = scaling.row_upper;
+  // BOUNDS ARE RESCALED HERE, not taken from the cache. The cache carries the bounds of the
+  // model it was built from, and the whole point of reusing it is that branching has changed
+  // them since. Taking scaling.col_lower would solve the ROOT relaxation at every node - a
+  // search that explores thousands of nodes and returns the root answer, with nothing in the
+  // output to say so.
+  //
+  // x = Dc xhat, so a bound on x becomes bound / dc on xhat, which is what build_scaling
+  // does; this is the same transformation applied to whichever bounds this node holds.
+  const Index cols = model.num_cols();
+  const Index rows_count = model.num_rows();
+  scaled.col_lower.resize(static_cast<std::size_t>(cols));
+  scaled.col_upper.resize(static_cast<std::size_t>(cols));
+  for (Index j = 0; j < cols; ++j) {
+    const auto u = static_cast<std::size_t>(j);
+    const double dc = scaling.column[u];
+    scaled.col_lower[u] =
+        is_finite_bound(model.col_lower[u]) ? model.col_lower[u] / dc : model.col_lower[u];
+    scaled.col_upper[u] =
+        is_finite_bound(model.col_upper[u]) ? model.col_upper[u] / dc : model.col_upper[u];
+  }
+  // Row bounds are rescaled the same way rather than reused, for the same reason: nothing
+  // guarantees a caller has not changed them, and the cost is one pass over m doubles.
+  scaled.row_lower.resize(static_cast<std::size_t>(rows_count));
+  scaled.row_upper.resize(static_cast<std::size_t>(rows_count));
+  for (Index i = 0; i < rows_count; ++i) {
+    const auto u = static_cast<std::size_t>(i);
+    const double dr = scaling.row[u];
+    scaled.row_lower[u] =
+        is_finite_bound(model.row_lower[u]) ? model.row_lower[u] * dr : model.row_lower[u];
+    scaled.row_upper[u] =
+        is_finite_bound(model.row_upper[u]) ? model.row_upper[u] * dr : model.row_upper[u];
+  }
   // sense, objective_offset, col_type and the names are carried unchanged: a diagonal change
   // of variable leaves the objective VALUE alone, so no offset correction is needed.
 
