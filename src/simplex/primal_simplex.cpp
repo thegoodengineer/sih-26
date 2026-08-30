@@ -842,6 +842,18 @@ double PrimalSimplex::minimization_objective() const {
 
 Solution PrimalSimplex::finish(SolveStatus status, const std::string& message, Count iterations,
                                double seconds) {
+  // EVERY EXIT, not just the optimal one. The perturbation relaxes bounds, so any point
+  // reported while it is active belongs to a problem whose feasible region is slightly
+  // larger than the caller's. The optimal path already restores them before returning - it
+  // has to, since it goes on iterating - but there are ten other ways out of that loop:
+  // iteration limit, time limit, unbounded, infeasible, and six numerical failures.
+  //
+  // A point returned through any of those would be feasible for the relaxed bounds and
+  // violate the true ones by up to kPerturbationSize. At 1e-9 that is two orders under the
+  // feasibility tolerance, so nothing downstream would flag it and the answer would be
+  // quietly, slightly wrong - which is the failure mode this codebase treats as the worst
+  // one available. Restoring here, at the single choke point, means no exit can miss it.
+  remove_perturbation();
   // The ratio of refactorizations to iterations is the cheapest available read on how well
   // the basis update is holding up: a run that refactorizes on most pivots has gained
   // nothing, and a high rejection count means the bases being produced are ill conditioned.
