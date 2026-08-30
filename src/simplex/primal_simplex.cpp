@@ -1141,6 +1141,26 @@ Solution solve_primal_simplex(const Model& model, const Options& options, Logger
     PrimalSimplex simplex(model, options, logger);
     return simplex.run();
   }
+
+  // THE CACHE'S PRECONDITION, CHECKED RATHER THAN TRUSTED. The multipliers are indexed by
+  // column and row, so a cache built from a model of different dimensions would read past
+  // the end of them - undefined behaviour, reached through a header comment being ignored.
+  // The dimensions are the cheap half of the contract; a caller that changed the matrix
+  // WITHOUT changing its shape is still on its honour, and the header says so.
+  //
+  // Rebuilding is the right response rather than refusing: the answer stays correct, only
+  // the saving is lost, and a warning says why.
+  const bool shape_matches =
+      cache.scaling.column.size() == static_cast<std::size_t>(model.num_cols()) &&
+      cache.scaling.row.size() == static_cast<std::size_t>(model.num_rows());
+  if (!shape_matches) {
+    logger.warning(
+        "the scaling cache was built for a {}x{} model but this one is {}x{}; rebuilding it",
+        cache.scaling.row.size(), cache.scaling.column.size(), model.num_rows(),
+        model.num_cols());
+    return solve_primal_simplex(model, options, logger, build_node_scaling(model, options));
+  }
+
   const Scaling& scaling = cache.scaling;
 
   Model scaled = model;
