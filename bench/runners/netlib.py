@@ -242,6 +242,7 @@ def main() -> int:
         blob = run_one(binary, mps, args.time_limit, not args.no_verify)
         status = blob["status"]
         ours = blob.get("objective")
+        verified = blob.get("verified")
         gap = None if ours is None else abs(ours - published) / max(1.0, abs(published))
         matches = bool(status == "optimal" and gap is not None
                        and gap <= PASS_RELATIVE_TOLERANCE)
@@ -263,10 +264,15 @@ def main() -> int:
         offset = blob.get("objective_offset") or 0.0
         offset_gap = (None if ours is None or not offset else
                       abs((ours - offset) - published) / max(1.0, abs(published)))
+        # `verified is not False` is part of the test and not an afterthought. The whole
+        # justification for not calling this a failure is that our point is PROVABLY optimal
+        # for the model as read - which is a claim tools/verify_solution.py makes, not one
+        # the arithmetic above establishes. If the independent checker rejects the answer,
+        # a gap that happens to equal the objective constant is a coincidence rather than an
+        # explanation, and the row belongs in the failure list.
         explained_by_offset = bool(
             not matches and status == "optimal" and offset_gap is not None
-            and offset_gap <= PASS_RELATIVE_TOLERANCE)
-        verified = blob.get("verified")
+            and offset_gap <= PASS_RELATIVE_TOLERANCE and verified is not False)
         # A pass needs BOTH: the right number, and a solution that survives independent
         # re-derivation. Either one alone can be satisfied by a solver that is wrong.
         passed = matches and (verified is not False)
