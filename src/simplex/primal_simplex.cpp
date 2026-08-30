@@ -41,6 +41,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <iterator>
 #include <limits>
 #include <string>
@@ -80,8 +81,12 @@ constexpr int kPerturbationTrigger = kStallLimit / 2;
 /// gives every variable a DIFFERENT shift, which is the property that actually breaks the
 /// ties, without making the run irreproducible.
 [[nodiscard]] double perturbation_for(Index k) noexcept {
-  const auto mixed = static_cast<std::uint64_t>(k) * 2654435761ULL + 1013904223ULL;
-  const double unit = static_cast<double>(mixed % 1000003ULL) / 1000003.0;
+  // UINT64_C and not a ULL suffix: uint64_t is unsigned long on Linux and unsigned long long
+  // on Windows, and mixing the two trips -Werror=sign-conversion on one platform only. CI is
+  // the authority on -Werror cleanliness, and it duly said so.
+  const auto mixed =
+      static_cast<std::uint64_t>(k) * UINT64_C(2654435761) + UINT64_C(1013904223);
+  const double unit = static_cast<double>(mixed % UINT64_C(1000003)) / 1000003.0;
   return kPerturbationSize * (0.25 + 0.75 * unit);
 }
 
