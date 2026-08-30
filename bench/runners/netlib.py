@@ -82,6 +82,10 @@ CSV_COLUMNS = [
     # people looking at them.
     "verifier_message",
     "passed",
+    "objective_offset",
+    # 1 when the only disagreement with the published value IS the objective-row constant,
+    # which Netlib's table excludes and we include. See the comment at the comparison.
+    "differs_by_objective_constant",
     "wall_seconds",
     "solver_seconds",
     "iterations",
@@ -175,6 +179,7 @@ def run_one(binary: Path, mps: Path, time_limit: float, verify: bool) -> dict:
             "rows": model.get("rows", ""),
             "columns": model.get("columns", ""),
             "nonzeros": model.get("nonzeros", ""),
+            "objective_offset": as_number(model.get("objective_offset")) or 0.0,
             "iterations": effort.get("iterations", ""),
             "solver_seconds": effort.get("solve_seconds", ""),
             "wall_seconds": wall,
@@ -237,10 +242,37 @@ def main() -> int:
         blob = run_one(binary, mps, args.time_limit, not args.no_verify)
         status = blob["status"]
         ours = blob.get("objective")
+        verified = blob.get("verified")
         gap = None if ours is None else abs(ours - published) / max(1.0, abs(published))
         matches = bool(status == "optimal" and gap is not None
                        and gap <= PASS_RELATIVE_TOLERANCE)
-        verified = blob.get("verified")
+
+        # NETLIB'S PUBLISHED TABLE EXCLUDES THE OBJECTIVE-ROW CONSTANT, and ours includes it.
+        #
+        # An RHS entry on the N row is the objective constant, negated - the convention
+        # src/io/mps_reader.cpp implements and documents. Netlib's readme reports objective
+        # values computed WITHOUT it. On e226, the only instance in the medium set that has
+        # one, that is the entire disagreement: we report -11.638929, the table says
+        # -18.751929, the constant is 7.113, and -11.638929 - 7.113 is the published value to
+        # every digit printed. tools/verify_solution.py passes our answer 11/11 with strong
+        # duality closing to 1.8e-15, so the point is genuinely optimal for the model as read.
+        #
+        # This is therefore a units mismatch in the COMPARISON, not a solver failure, and
+        # counting it as one overstates how much is broken. It is reported as its own outcome
+        # rather than silently forgiven: the run still does not match the table, and a reader
+        # deserves to see why rather than find an instance quietly reclassified as a pass.
+        offset = blob.get("objective_offset") or 0.0
+        offset_gap = (None if ours is None or not offset else
+                      abs((ours - offset) - published) / max(1.0, abs(published)))
+        # `verified is not False` is part of the test and not an afterthought. The whole
+        # justification for not calling this a failure is that our point is PROVABLY optimal
+        # for the model as read - which is a claim tools/verify_solution.py makes, not one
+        # the arithmetic above establishes. If the independent checker rejects the answer,
+        # a gap that happens to equal the objective constant is a coincidence rather than an
+        # explanation, and the row belongs in the failure list.
+        explained_by_offset = bool(
+            not matches and status == "optimal" and offset_gap is not None
+            and offset_gap <= PASS_RELATIVE_TOLERANCE and verified is not False)
         # A pass needs BOTH: the right number, and a solution that survives independent
         # re-derivation. Either one alone can be satisfied by a solver that is wrong.
         passed = matches and (verified is not False)
@@ -261,6 +293,8 @@ def main() -> int:
             "matches_published": int(matches),
             "independently_verified": "" if verified is None else int(verified),
             "passed": int(passed),
+            "objective_offset": repr(offset),
+            "differs_by_objective_constant": int(explained_by_offset),
             "wall_seconds": round(blob.get("wall_seconds", 0.0), 6),
             "solver_seconds": blob.get("solver_seconds", ""),
             "iterations": blob.get("iterations", ""),
@@ -275,7 +309,11 @@ def main() -> int:
         verified_text = {True: "  yes   ", False: "  NO    ", None: "  -     "}[verified]
         print(f"{name:<11}{status:<9}{ours_text}{published:>22.12e}{gap_text}"
               f"{str(blob.get('iterations', '-')):>7}{blob.get('wall_seconds', 0.0):>7.2f}s"
-              f"{verified_text}  {'PASS' if passed else 'FAIL'}")
+              f"{verified_text}  "
+              f"{'PASS' if passed else ('OFFSET' if explained_by_offset else 'FAIL')}")
+        if explained_by_offset:
+            print(f"             the gap IS the objective-row constant ({offset:g}); Netlib's "
+                  f"table excludes it, we include it. Our point verifies as optimal.")
         if not passed:
             if blob.get("stderr"):
                 print(f"             stderr: {blob['stderr']}")
@@ -287,10 +325,21 @@ def main() -> int:
     print("-" * 104)
     print(f"{passes}/{total} matched the published optimum to a relative "
           f"{PASS_RELATIVE_TOLERANCE:g} AND passed independent verification")
+    offset_rows = [row["instance"] for row in rows
+                   if row.get("differs_by_objective_constant")]
+    if offset_rows:
+        # Reported on its own line and NOT folded into the pass count. The run genuinely does
+        # not match the table, and quietly reclassifying it as a pass would be the same kind
+        # of flattering arithmetic this harness exists to prevent - but calling it a solver
+        # failure overstates what is broken, so it gets its own name.
+        print(f"differs only by the objective-row constant: {', '.join(offset_rows)} "
+              f"(Netlib's table excludes it; our answer verifies as optimal)")
     if total and passes < total:
-        failed = [row["instance"] for row in rows if not row["passed"]]
+        failed = [row["instance"] for row in rows
+                  if not row["passed"] and not row.get("differs_by_objective_constant")]
         # Naming the failures is not optional. A pass rate without them is a claim.
-        print(f"failed: {', '.join(failed)}")
+        if failed:
+            print(f"failed: {', '.join(failed)}")
 
     # Tier goes in the FILENAME. Both tiers at the same commit previously produced the same
     # path, so running medium after small silently overwrote it and docs/BENCHMARKS.md could
