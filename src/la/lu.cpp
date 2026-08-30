@@ -165,6 +165,8 @@ bool SparseLu::factorize(const std::vector<LuColumn>& columns, Index m, double p
   work_.assign(static_cast<std::size_t>(m), 0.0);
   smallest_pivot_ = 0.0;
   largest_pivot_ = 0.0;
+  dependent_positions_.clear();
+  uncovered_rows_.clear();
 
   if (m == 0) return true;
   if (static_cast<Index>(columns.size()) != m) return false;
@@ -372,7 +374,95 @@ bool SparseLu::eliminate(Workspace& w, double pivot_tolerance, double threshold)
       }
     }
 
-    if (best_row < 0) return false;  // singular to working precision
+    // BUDGETED SEARCH FAILURE IS NOT PROOF OF SINGULARITY (issue #143). kCandidateBudget
+    // bounds the search to a handful of low-count buckets for speed, which is the right
+    // trade on a healthy basis - but on THIS step it just means none of the columns and rows
+    // LOOKED AT had an admissible entry, not that none exists anywhere in the active
+    // submatrix. Bailing out here at the first such step is exactly the bug: the entire
+    // REMAINING m - step columns get reported as "the singular set" when almost all of them
+    // were never actually examined. Measured on grow15/pilot4/25fv47/perold/d6cube, that
+    // inflated the reported defect from a handful of genuinely dependent columns to 33-94%
+    // of the whole basis.
+    //
+    // So before concluding anything, fall back to an EXHAUSTIVE scan of every active column
+    // still standing, unbounded by the budget. If that finds an admissible pivot, the
+    // budgeted search merely got unlucky with bucket order and this step proceeds normally.
+    // Only when the exhaustive scan ALSO finds nothing is the active submatrix genuinely
+    // singular to working precision - every remaining entry is below pivot_tolerance or
+    // below threshold * its column's max, which is the asserted condition below, not an
+    // assumed one.
+    if (best_row < 0) {
+      for (Index j = 0; j < m; ++j) {
+        const auto uj = static_cast<std::size_t>(j);
+        if (w.col_active[uj] == 0) continue;
+
+        double column_max = 0.0;
+        for (std::size_t t = 0; t < w.col_rows[uj].size(); ++t) {
+          if (w.row_active[static_cast<std::size_t>(w.col_rows[uj][t])] == 0) continue;
+          column_max = std::max(column_max, std::fabs(w.col_values[uj][t]));
+        }
+        if (column_max < pivot_tolerance) continue;
+
+        for (std::size_t t = 0; t < w.col_rows[uj].size(); ++t) {
+          const Index i = w.col_rows[uj][t];
+          const auto ui = static_cast<std::size_t>(i);
+          if (w.row_active[ui] == 0) continue;
+          const double value = w.col_values[uj][t];
+          if (std::fabs(value) < pivot_tolerance) continue;
+          if (std::fabs(value) < threshold * column_max) continue;
+          const Index cost = (w.row_count[ui] - 1) * (w.col_count[uj] - 1);
+          if (cost < best_cost) {
+            best_cost = cost;
+            best_row = i;
+            best_col = j;
+            best_value = value;
+            if (cost == 0) break;
+          }
+        }
+        if (best_cost == 0) break;
+      }
+    }
+
+    if (best_row < 0) {
+      // GENUINELY SINGULAR, not a search artefact: assert the condition this conclusion
+      // rests on rather than assume it, exactly because "continuing must not turn singular
+      // into silently wrong" (issue #143). Every active entry must fail admissibility for
+      // SOME reason - too small outright, or too small relative to its own column's max - and
+      // this recomputes both per column to check it directly, rather than trusting that the
+      // exhaustive scan above could not itself have a bug that skipped a live entry.
+#ifndef NDEBUG
+      for (Index j = 0; j < m; ++j) {
+        const auto uj = static_cast<std::size_t>(j);
+        if (w.col_active[uj] == 0) continue;
+        double column_max = 0.0;
+        for (std::size_t t = 0; t < w.col_rows[uj].size(); ++t) {
+          if (w.row_active[static_cast<std::size_t>(w.col_rows[uj][t])] == 0) continue;
+          column_max = std::max(column_max, std::fabs(w.col_values[uj][t]));
+        }
+        for (std::size_t t = 0; t < w.col_rows[uj].size(); ++t) {
+          if (w.row_active[static_cast<std::size_t>(w.col_rows[uj][t])] == 0) continue;
+          const double magnitude = std::fabs(w.col_values[uj][t]);
+          assert((magnitude < pivot_tolerance || magnitude < threshold * column_max) &&
+                 "eliminate() declared the active submatrix singular but an admissible pivot "
+                 "was still present - the exhaustive fallback scan has a bug");
+        }
+      }
+#endif
+
+      // The residual: every row and column still active is exactly the rank defect the
+      // repair (elsewhere) needs to know about, reported by POSITION in the original
+      // `columns` array factorize() was given, and by original row index - not by
+      // elimination step, because these columns never reached one.
+      dependent_positions_.clear();
+      uncovered_rows_.clear();
+      for (Index j = 0; j < m; ++j) {
+        if (w.col_active[static_cast<std::size_t>(j)] != 0) dependent_positions_.push_back(j);
+      }
+      for (Index i = 0; i < m; ++i) {
+        if (w.row_active[static_cast<std::size_t>(i)] != 0) uncovered_rows_.push_back(i);
+      }
+      return false;
+    }
 
     const auto pivot_r = static_cast<std::size_t>(best_row);
     const auto pivot_c = static_cast<std::size_t>(best_col);
