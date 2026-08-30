@@ -240,12 +240,31 @@ Solution solve(const Model& model, const Options& options) {
     return solution;
   }
 
+  if (problem_class == ProblemClass::kMiqp) {
+    // MIQP is branch and bound over QP node relaxations - the two engines joined, which is
+    // exactly what the message this replaces said was missing. The QP engine refuses a
+    // non-convex Hessian before any arithmetic starts, so a non-convex MIQP is still refused
+    // rather than solved to a local point; that check now happens at the first node.
+    //
+    // check_dual stays false for the same reason it is false for a MILP: the reduced costs
+    // belong to a node whose bounds branching tightened, and for a QP they are c + Qx - A'y
+    // rather than the quantity recompute_quality() measures. Integrality and primal
+    // feasibility are what distinguish an MIQP answer from its relaxation, and both are
+    // checked.
+    solution = mip::solve_branch_and_bound(model, options, logger);
+    reconcile_status_with_measurement(&solution, options, logger, /*check_dual=*/false);
+    logger.info("Result: {}  objective {:.10g}  bound {:.10g}  {} nodes  {:.3f}s",
+                to_string(solution.status), solution.objective, solution.dual_bound,
+                solution.nodes, solution.solve_seconds);
+    logger.info("Measured integrality violation {:.3e}, primal infeasibility {:.3e}",
+                solution.integrality_violation, solution.primal_infeasibility);
+    return solution;
+  }
+
   solution.status = SolveStatus::kNotSolved;
   solution.algorithm = "none";
-  solution.message = fmt::format(
-      "no engine is implemented for {} yet; MIQP needs the QP and MILP engines joined. The "
-      "relaxation is deliberately NOT reported as a solution",
-      class_name(problem_class));
+  solution.message =
+      fmt::format("no engine is implemented for {} yet", class_name(problem_class));
   logger.warning("{}", solution.message);
 
   solution.solve_seconds = timer.elapsed_seconds();

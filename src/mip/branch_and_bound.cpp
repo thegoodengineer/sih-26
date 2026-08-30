@@ -22,11 +22,13 @@
 // plain, correct search working first is what makes those additions checkable.
 
 #include "sankhya/mip.hpp"
+#include "sankhya/qp.hpp"
 
 #include "cuts.hpp"
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <limits>
 #include <string>
 #include <vector>
@@ -59,6 +61,19 @@ struct TreeNode {
   Index depth = 0;
 };
 
+/// Convergence tolerance for a QP node relaxation in an MIQP search.
+///
+/// Deliberately far tighter than the gap targets the search compares bounds against. The
+/// bound a first-order method reports is only accurate to its own tolerance, and branch and
+/// bound FATHOMS on that bound - so the error has to be small enough that widening
+/// can_prune()'s margin by it does not stop the search closing.
+constexpr double kMiqpNodeTolerance = 1e-10;
+
+/// Iteration cap for one node QP. Condat-Vu has no warm start, so every node pays a cold
+/// solve; this keeps a single pathological node from consuming the whole time limit while
+/// still being generous enough to reach kMiqpNodeTolerance on the node sizes this handles.
+constexpr std::int64_t kMiqpNodeIterationLimit = 2000000;
+
 /// Distance from the nearest integer.
 double fractionality(double value) {
   return std::fabs(value - std::round(value));
@@ -81,6 +96,24 @@ class BranchAndBound {
     // hundred simplex iteration tables.
     node_options_ = options;
     node_options_.set_bool("log_to_console", false);
+
+    // MIQP: the node relaxation is a QP rather than an LP (#58 names MIQP as the class this
+    // dispatcher refused). The Hessian is a property of the model, not of a node - branching
+    // only moves bounds - so this is decided once here.
+    quadratic_ = model.has_quadratic_objective();
+    if (quadratic_) {
+      // A NODE BOUND FROM A FIRST-ORDER METHOD IS NOT EXACT, and branch and bound prunes on
+      // it. The simplex returns a vertex whose objective is exact to rounding; Condat-Vu
+      // returns a point converged to a tolerance, so a node bound can be optimistic by about
+      // that much - and an optimistic bound can fathom the subtree containing the true
+      // optimum, which is the one error this search must never make.
+      //
+      // Two things follow. The node tolerance is tightened well below the gap targets the
+      // search compares against, and can_prune() widens its margin by that tolerance so a
+      // node is only fathomed when it loses by more than the bound could be wrong by.
+      node_options_.set_double("qp_tolerance", kMiqpNodeTolerance);
+      node_options_.set_int("iteration_limit", kMiqpNodeIterationLimit);
+    }
 
     for (Index j = 0; j < model.num_cols(); ++j) {
       if (model.col_type[static_cast<std::size_t>(j)] == VarType::kInteger) {
@@ -136,11 +169,54 @@ class BranchAndBound {
   bool offer_incumbent(const std::vector<double>& x);
 
   /// Is a bound worth exploring given the incumbent?
+  /// Solve the current node's relaxation with whichever engine the model calls for.
+  ///
+  /// Both engines take the same Model and return the same Solution, which is what makes this
+  /// a one-line choice rather than a second search. The QP path carries no basis, so nothing
+  /// downstream may assume one - the diving heuristic and the branching rule both read
+  /// col_value only, which they already did.
+  [[nodiscard]] Solution solve_node() {
+    if (quadratic_) return qp::solve_convex_qp(working_, node_options_, logger_);
+    return solve_primal_simplex(working_, node_options_, logger_, scaling_);
+  }
+
   [[nodiscard]] bool can_prune(double bound) const {
     if (!have_incumbent_) return false;
     // Minimise space throughout: a node whose bound is no better than the incumbent, to
     // within the absolute gap target, cannot contain an improving solution.
-    return bound >= incumbent_internal_ - absolute_gap_target_;
+    // The margin is widened for a QP node by the tolerance its bound is only accurate to.
+    // Pruning too little costs nodes; pruning too much loses the optimum silently.
+    const double margin =
+        quadratic_ ? std::max(absolute_gap_target_, kMiqpNodeTolerance) : absolute_gap_target_;
+    return bound >= incumbent_internal_ - margin;
+  }
+
+  /// Objective at `x` in minimise space, excluding the offset.
+  ///
+  /// THE NODE BOUND AND THE INCUMBENT MUST BE THE SAME QUANTITY. Both used to be computed
+  /// from col_cost alone, which is the whole objective for a MILP and only part of it for an
+  /// MIQP - so with a Hessian present the search compared a linear bound against a quadratic
+  /// incumbent and pruned on the difference. Measured on min x^2 - 3x, x integer in [0, 10]:
+  /// the root bound came out -6 (the linear term at x = 2) against a true relaxation value of
+  /// -2.25, an "optimistic" bound that is not a bound at all.
+  ///
+  /// The quadratic term is delegated to Model::evaluate_objective rather than rewritten here,
+  /// because the lower-triangular storage convention it implements - stored off-diagonals
+  /// standing for two entries of the symmetric matrix, the diagonal for one - is exactly the
+  /// kind of detail that drifts when it exists in two places.
+  [[nodiscard]] double internal_objective(const std::vector<double>& x) const {
+    // The LP path keeps its own exact loop. Routing it through evaluate_objective would add
+    // the offset and subtract it again, which is not an identity in floating point, and this
+    // value decides pruning across the whole MIPLIB set.
+    if (!quadratic_) {
+      double value = 0.0;
+      for (Index j = 0; j < original_.num_cols(); ++j) {
+        const auto u = static_cast<std::size_t>(j);
+        value += sense_ * original_.col_cost[u] * x[u];
+      }
+      return value;
+    }
+    return sense_ * (original_.evaluate_objective(x.data()) - original_.objective_offset);
   }
 
   [[nodiscard]] double reported(double internal) const {
@@ -170,6 +246,8 @@ class BranchAndBound {
   ///
   /// The bounds are still scaled per node by solve_primal_simplex, because those are exactly
   /// what branching changes. Only the reusable part is cached.
+  bool quadratic_ = false;  ///< the node relaxation is a QP, not an LP
+
   NodeScaling scaling_;
 
   std::vector<TreeNode> nodes_;
@@ -374,11 +452,7 @@ bool BranchAndBound::offer_incumbent(const std::vector<double>& x) {
     }
   }
 
-  double objective = 0.0;
-  for (Index j = 0; j < original_.num_cols(); ++j) {
-    const auto u = static_cast<std::size_t>(j);
-    objective += sense_ * original_.col_cost[u] * x[u];
-  }
+  const double objective = internal_objective(x);
   if (have_incumbent_ && objective >= incumbent_internal_ - 1e-12) return false;
 
   have_incumbent_ = true;
@@ -456,7 +530,7 @@ void BranchAndBound::dive_from_root(const std::vector<double>& start_x) {
     tighten_upper(u, std::round(x[u]));
     ++depth;
 
-    const Solution probe = solve_primal_simplex(working_, node_options_, logger_, scaling_);
+    const Solution probe = solve_node();
     ++lp_resolves;
     if (probe.status != SolveStatus::kOptimal) return;  // dive dead-ends: infeasible or worse
     x = probe.col_value;
@@ -578,8 +652,7 @@ Solution BranchAndBound::run() {
       continue;
     }
 
-    const Solution relaxation =
-        solve_primal_simplex(working_, node_options_, logger_, scaling_);
+    const Solution relaxation = solve_node();
 
     if (relaxation.status == SolveStatus::kInfeasible) {
       leave();
@@ -605,11 +678,7 @@ Solution BranchAndBound::run() {
     }
 
     // Node bound in minimise space, excluding the offset (added back on report).
-    double node_bound = 0.0;
-    for (Index j = 0; j < original_.num_cols(); ++j) {
-      const auto u = static_cast<std::size_t>(j);
-      node_bound += sense_ * original_.col_cost[u] * relaxation.col_value[u];
-    }
+    const double node_bound = internal_objective(relaxation.col_value);
 
     if (can_prune(node_bound)) {
       leave();

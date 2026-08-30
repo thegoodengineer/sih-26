@@ -72,8 +72,9 @@ implemented and benchmarked, and so is convex QP - end to end from an MPS file w
 QUADOBJ section through to an independently verified answer, demonstrated twice below: a
 small hand-checkable QP right after this intro, and a price-impact variant of the crude
 blend in section 3. What remains open on QP: no QPLIB-format reader or benchmark harness
-yet (only the generic QPS convention any MPS file can carry), and MIQP (integer QP) is
-still refused rather than approximated. This script walks the problem statement in its own
+yet (only the generic QPS convention any MPS file can carry). MIQP - a quadratic objective
+WITH integer variables - is now solved too, by branch and bound over QP relaxations, with
+the bound caveat set out in section 6. This script walks the problem statement in its own
 order. Where we do not have something, it says so rather than changing the subject.
 INTRO
 
@@ -109,6 +110,59 @@ print("    relative difference:             {:.3e}".format(rel))
 print("    The two agree." if rel <= 1e-6 else "    THEY DISAGREE - see demo/qp_blend.mps.")
 sys.exit(0 if rel <= 1e-6 else 1)
 PYQP
+
+echo
+echo "--- Convex MIQP, solved for real: demo/miqp_blend.mps --------------------------------"
+echo
+cat <<'MIQPINTRO'
+    The same blend, scheduled in WHOLE units. A refinery does not run a stream at 66.667
+    kbbl/day because the arithmetic says so - it runs an integer number of batches, tanks or
+    campaign days - and the moment that is written down the problem is neither a QP nor a
+    MILP but both at once, which is the class PS26119 names as MIQP.
+
+    Nothing new solves it. It is branch and bound (src/mip/branch_and_bound.cpp) with the
+    convex QP engine as the node relaxation instead of the simplex.
+
+    The gap targets are set to ZERO below, so the run has to close the bound rather than
+    stop once it is close enough. That is the harder thing to do and the only one worth
+    demonstrating: finding 66.67 is easy, PROVING nothing better exists is the search.
+MIQPINTRO
+solve_case miqp_blend demo/miqp_blend.mps --option mip_relative_gap=0 --option mip_absolute_gap=0
+# The GAP is the point, not the objective: a MIP reports an objective the moment it finds any
+# incumbent, and 66.67 would print just the same if the search had given up right after. A
+# relative gap of 0 is the part that says nothing better exists.
+echo "    SANKHYA: status $(field miqp_blend result status), objective $(field miqp_blend result objective), bound $(field miqp_blend result dual_bound), relative gap $(field miqp_blend result relative_gap)"
+echo
+echo "    Checked independently by tools/verify_solution.py - no code shared with the solver:"
+echo
+"$PYTHON" tools/verify_solution.py demo/miqp_blend.mps "$WORK/miqp_blend.sol" --quiet | sed 's/^/        /'
+echo
+"$PYTHON" - "$WORK/miqp_blend.json" <<'PYMIQP'
+import json, sys
+obj = json.load(open(sys.argv[1]))["result"]["objective"]
+
+# The hand check from the header of demo/miqp_blend.mps, recomputed here rather than quoted,
+# so the demo cannot drift away from the instance it is describing. The equality leaves one
+# degree of freedom, so the whole problem is a parabola over the integers and the optimum is
+# found by ENUMERATION - the one method that needs no solver and no theory to trust.
+def f(t):
+    return 0.01 * t * t + 0.02 * (100 - t) ** 2
+
+best = min(range(101), key=f)
+print("    integer optimum by enumeration:  LN = {}, HN = {}, objective {:.5f}"
+      .format(best, 100 - best, f(best)))
+print("    continuous relaxation (200/3):   {:.5f}".format(200.0 / 3.0))
+print("    SANKHYA:                         {:.5f}".format(obj))
+
+rel = abs(obj - f(best)) / abs(f(best))
+print("    relative difference:             {:.3e}".format(rel))
+# The relaxation is a DIFFERENT number, 66.66667 against 66.67, which is what makes this
+# check meaningful: a solver that quietly dropped integrality would land on the relaxation
+# and this line would catch it rather than agreeing with it.
+print("    The two agree, and they are not the relaxation."
+      if rel <= 1e-6 else "    THEY DISAGREE - see demo/miqp_blend.mps.")
+sys.exit(0 if rel <= 1e-6 else 1)
+PYMIQP
 
 # ===========================================================================================
 rule "1. Sovereignty: not built on an existing solver"
@@ -390,6 +444,13 @@ MEDIUM_SUMMARY="$("$PYTHON" bench/runners/latest_result.py "netlib-medium-*.csv"
 # optimum to compare against for most of the set, so the status IS the result.
 MIPLIB_SUMMARY="$("$PYTHON" bench/runners/latest_result.py "miplib-*.csv" --status-counts)"
 
+# The FULL tier, same treatment. This is the figure section 6's own text calls the one the
+# Phase 6 exit criterion is measured against, so it belongs in the demo rather than in a CSV
+# nobody opens - and it is the LOWER number of the two, because `medium` is defined by a row
+# cap and is therefore the easier half by construction. Reporting the easier half as the
+# headline is the kind of thing this section exists to not do.
+FULL_SUMMARY="$("$PYTHON" bench/runners/latest_result.py "netlib-full-*.csv" --summary)"
+
 # The instance count in section 6 is READ, not typed. It said "eight" until someone
 # fetched a ninth instance, at which point the closing paragraph contradicted the table
 # printed directly above it. Same reasoning as MEDIUM_SUMMARY.
@@ -405,14 +466,22 @@ rule "6. What PS26119 asks for that we do NOT yet have"
 # ===========================================================================================
 # The `g` flags matter: @NCOUNT@ appears twice on one line ("not the 9/9 above"), and
 # without them sed substitutes only the first occurrence per line.
-cat <<'GAPS' | sed -e "s|@MEDIUM@|${MEDIUM_SUMMARY}|g" -e "s|@NCOUNT@|${NETLIB_COUNT}|g" -e "s|@MIPLIB@|${MIPLIB_SUMMARY}|g"
+cat <<'GAPS' | sed -e "s|@FULL@|${FULL_SUMMARY}|g" -e "s|@MEDIUM@|${MEDIUM_SUMMARY}|g" -e "s|@NCOUNT@|${NETLIB_COUNT}|g" -e "s|@MIPLIB@|${MIPLIB_SUMMARY}|g"
     Stating these is the point. A solver that is vague about its limits is not one an
     industrial user can plan around.
 
-    MIQP                Not implemented. Convex QP and MILP each work; joining them - integer
-                        variables AND a quadratic objective - needs the QP engine as the node
-                        solver inside branch and bound, which is not written. solve() returns
-                        `not_solved` for a MIQP rather than reporting either relaxation.
+    MIQP                Implemented: branch and bound with the convex QP engine as the node
+                        solver. The caveat is the BOUND, and it is worth stating because it
+                        is what limits the class. A simplex node bound is a vertex objective,
+                        exact to rounding; a first-order QP node bound is only accurate to
+                        the tolerance it converged to. Since branch and bound PRUNES on that
+                        bound, and an optimistic bound can fathom the subtree holding the
+                        optimum, the node tolerance is tightened to 1e-10 and the pruning
+                        margin widened by the same amount rather than pruning on the
+                        optimistic side. That is the safe direction and it costs nodes. With
+                        no cuts (#23) to close the bound either, expect MIQP to show the same
+                        weakness the MIPLIB line below reports: incumbents found, optimality
+                        proved on fewer.
     Non-convex QP       REFUSED, deliberately. src/qp/convexity.cpp decides semidefiniteness
                         of sense * Q by LDL^T before any arithmetic starts, and returns a
                         negative pivot as a certificate. A local optimum reported as a global
@@ -430,12 +499,40 @@ cat <<'GAPS' | sed -e "s|@MEDIUM@|${MEDIUM_SUMMARY}|g" -e "s|@NCOUNT@|${NETLIB_C
                         demonstration, not a benchmark, and it says nothing about the sparse
                         industrial structure real models have. Everything else here is small.
                         Nothing in this run supports a claim about the "millions of
-                        variables" end of what the problem statement asks for. On the wider
-                        50-instance Netlib medium set we pass @MEDIUM@.
-                        That is issue #34, and it is the honest headline number, not the
-                        @NCOUNT@/@NCOUNT@ above. Reproduce it with:
-                            python bench/runners/fetch_data.py --set medium
-                            python bench/runners/netlib.py --time-limit 60
+                        variables" end of what the problem statement asks for.
+
+                        THE HONEST HEADLINE IS THE FULL NETLIB SET - not the @NCOUNT@ solved
+                        live above, and not the medium tier either:
+
+                            full set, 89 instances:    @FULL@
+                            medium tier, 50 instances: @MEDIUM@
+
+                        Both counts are instances we solve AND independently verify, so they
+                        are answers checked by something that shares no code with the solver,
+                        not just runs that exited zero. As a RATE the medium tier looks the
+                        better of the two, and that is exactly why it is not the headline:
+                        the tier is defined by a 500-row cap, so it is the easier half by
+                        construction, and quoting it would be choosing the denominator that
+                        flatters us.
+
+                        What the other 24 are is worth stating, because they are not scattered
+                        breakage - they are one problem and two small ones:
+
+                            15  numerical_error   the basis factorization fails on the
+                                                  ill-conditioned instances (pilot, greenbea,
+                                                  dfl001 and their relatives)
+                             5  wrong objective   converges, disagrees with the published
+                                                  optimum past 1e-6
+                             3  time limit        no answer inside 120s
+                             1  feasible only
+
+                        On size, the largest we solve is fit2d at 25 x 10500 with 129018
+                        nonzeros in 9.0s, and degen3 at 1503 x 1818 takes 123.6s - which is
+                        the honest shape of it: we are correct more often than we are fast,
+                        and both curves bend well before "millions of variables". That is
+                        issue #34. Reproduce with:
+                            python bench/runners/fetch_data.py --set full
+                            python bench/runners/netlib.py --time-limit 120
     MIPLIB              PS26119 names MIPLIB before Netlib, and this demo does not run it.
                         We do have results:
                             @MIPLIB@
