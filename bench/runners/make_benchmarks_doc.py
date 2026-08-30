@@ -67,8 +67,14 @@ def coverage_note(run_count: int, set_name: str | None = None) -> str:
             f"publishes an optimal value for")
     if set_name and set_name != "explicit":
         note += f" (set `{set_name}`, selected by `fetch_data.py --set {set_name}`)"
-    note += (". Phase 6's \"full Netlib >= 95%\" exit criterion is measured against the "
-             "full set, not against this one.")
+    # The exit-criterion sentence has to change on the full set, where "measured against the
+    # full set, not against this one" would be talking about the table it is printed under.
+    if set_name == "full":
+        note += (". Phase 6's \"full Netlib >= 95%\" exit criterion is measured against this "
+                 "set.")
+    else:
+        note += (". Phase 6's \"full Netlib >= 95%\" exit criterion is measured against the "
+                 "full set, not against this one.")
     return note
 OUTPUT = REPO_ROOT / "docs" / "BENCHMARKS.md"
 
@@ -384,6 +390,27 @@ def medium_section(path: Path | None) -> str:
     return netlib_section(path)
 
 
+def full_section(path: Path | None) -> str:
+    """The whole of Netlib, which is the number the exit criterion is measured against.
+
+    Added for the same reason issue #53 split the small set from the medium tier, one level
+    further out. `medium` is defined by a published row count of 500 or fewer, so quoting it
+    as the headline reports the easier half of the library and calls it the library. The full
+    set is lower and it is the one Phase 6's ">= 95% of Netlib" target is actually about.
+    """
+    if path is None:
+        return chr(10).join([
+            "Not yet run at this commit. Reproduce with:",
+            "",
+            "```",
+            "python bench/runners/fetch_data.py --set full",
+            "python bench/runners/netlib.py --time-limit 120",
+            "```",
+            "",
+        ])
+    return netlib_section(path)
+
+
 def milp_section(path: Path | None) -> str:
     """MIPLIB, where TWO questions have to be answered separately.
 
@@ -478,6 +505,7 @@ def main() -> int:
     # misleading, which CLAUDE.md's evidence rules treat as the same thing as false.
     small_csv = newest("netlib-small-*.csv")
     medium_csv = newest("netlib-medium-*.csv")
+    full_csv = newest("netlib-full-*.csv")
     milp_csv = newest("miplib-*.csv")
     compare_small_csv = newest("compare-highs-small-*.csv")
     compare_medium_csv = newest("compare-highs-medium-*.csv")
@@ -520,12 +548,19 @@ Netlib's own `readme`. None of these values was typed from memory.
 
 Eight instances, committed to the repository so a fresh clone can reproduce this with no
 network. **This is the set `demo/run_demo.sh` lets a judge pick from, and it is the easy end
-of Netlib.** Its pass rate is not the headline; section 1b is.
+of Netlib.** Its pass rate is not the headline; section 1c is.
 
 {netlib_section(netlib_csv)}
-### 1b. The medium tier — the honest headline
+### 1b. The medium tier — instances up to 500 rows
 
 {medium_section(medium_csv)}
+### 1c. The full set — the honest headline
+
+Every instance in Netlib's summary table. Both tiers above are defined by a row cap, which
+makes them the easier half of the library by construction; this is the number Phase 6's
+">= 95% of Netlib" exit criterion is measured against, and the one the README quotes.
+
+{full_section(full_csv)}
 ---
 
 ## 2. MIPLIB — the mixed-integer side

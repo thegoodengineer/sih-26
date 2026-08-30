@@ -27,19 +27,32 @@ Petrochemicals Limited.
 | 6–10 | Performance, branch & cut, IPM/QP, robustness, packaging | convex QP **done** (Phase 8, `src/qp/`); IPM, cuts, packaging remain |
 
 LP is solved by a bounded-variable revised primal simplex (or restarted PDHG), MILP by
-branch and bound, and convex QP by a Condat-Vu primal-dual method — all end to end from an
-MPS file through to an independently verified answer. Only MIQP (mixed-integer QP) is
-**refused**, not approximated: handing it to the LP or QP engine and reporting a relaxation
-as optimal is the single most damaging thing this dispatcher could do, so it does not — see
-the Evidence rules in [`CLAUDE.md`](CLAUDE.md).
+branch and bound, and convex QP by a Condat-Vu primal-dual method — and MIQP by branch and
+bound over QP relaxations — all end to end from an MPS file through to an independently
+verified answer. **Non-convex** QP is the one class still refused, and refused deliberately
+rather than approximated: it is decided by an LDL^T semidefiniteness test before any
+arithmetic starts, and a negative pivot is returned as the certificate. Reporting a local
+optimum as a global one is the single most damaging thing this dispatcher could do, so it
+does not — see the Evidence rules in [`CLAUDE.md`](CLAUDE.md).
 
-Benchmark results against Netlib: **9 of 9** on the small set the demo runs, **43 of 50** on
-the medium tier — see [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md), generated from the CSVs in
-`bench/results/` so it cannot drift. MIPLIB 2017 is now benchmarked too: **10 of 30** easy
-instances reach the published optimum, **5 of 30** also prove it (branch and bound has no
-cutting planes yet, see #23) — same source. For scale beyond what Netlib's committed set
-tests (it tops out around 500 rows), `bench/runners/generate_large_lp.py` builds sparse LPs
-of any size with an exactly known analytic optimum.
+Benchmark results against Netlib, headline first: **65 of 89** on the full set — matched to
+the published optimum to a relative 1e-6 *and* passed independent verification. The narrower
+tiers read higher (**43 of 50** on the medium tier, **9 of 9** on the small set the demo
+runs) because both are defined by a row cap, which makes them the easier half by
+construction; the full set is the number Phase 6's ">= 95% of Netlib" criterion is measured
+against, so it is the one quoted here. See [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md),
+generated from the CSVs in `bench/results/` so it cannot drift.
+
+The 24 failures are worth naming, because they are not scattered: **15 are one root cause**,
+the basis factorization losing accuracy on ill-conditioned instances (the `pilot` family
+alone is 5 of them); 5 more converge to an objective that disagrees past 1e-6; 3 hit the time
+limit; 1 finds a feasible point without proving it optimal.
+
+MIPLIB 2017 is benchmarked too: **11 of 30** easy instances reach the published optimum,
+**6 of 30** also prove it — branch and bound has no cutting planes yet (#23), so it finds
+good incumbents far more often than it closes the bound. For scale beyond what Netlib tests,
+`bench/runners/generate_large_lp.py` builds sparse LPs of any size with an exactly known
+analytic optimum.
 
 ## Reproduce everything
 
@@ -52,8 +65,10 @@ scripts/reproduce.sh
 ```
 
 It runs **offline**: the Netlib instances it benchmarks are committed, with their published
-optima. Add `--fetch-medium` to also download and run the 50-instance medium tier, which is
-where the honest pass rate lives. Any step that cannot run on your machine prints why and is
+optima. Add `--fetch-medium` to also download and run the 50-instance medium tier; the
+full 89-instance set, where the headline number above comes from, is
+`bench/runners/fetch_data.py --set full` followed by
+`bench/runners/netlib.py --time-limit 120`. Any step that cannot run on your machine prints why and is
 listed again in the summary, so a shorter run is never mistaken for a passing one.
 
 To check the machine without running anything:
@@ -152,11 +167,11 @@ tracks every PS26119 requirement against what exists on `main`; section 6 of
 | not implemented | note |
 |---|---|
 | **GPU acceleration** | The first-order method it needs exists and runs on CPU. The CUDA backend is unwritten (#16-#19); `--gpu` warns and falls back. No speed-up is claimed. |
-| **Scale** | One generated 5000x5000 instance is demonstrated with an optimum known by construction. Nothing here supports the *"millions of variables"* end of the problem statement. |
+| **Scale** | The largest real instance solved is `fit2d`, 25x10500 with 129018 nonzeros, in 9.0s; `degen3` at 1503x1818 takes 123.6s. A generated 5000x5000 instance is also demonstrated against an optimum known by construction. Nothing here supports the *"millions of variables"* end of the problem statement. |
 | **Interior point** | Not started (#56). The continuous engines are revised simplex and restarted PDHG. |
 | **Cutting planes** | Branch and bound is plain - no Gomory, MIR or cover cuts, no pseudocost branching (#23). This is why MIPLIB proves few optima. |
-| **MIQP** | Convex QP and MILP each work; joining them is not written. `solve()` returns `not_solved` rather than reporting either relaxation. |
 | **Non-convex QP** | Refused deliberately, with an LDL^T certificate. A local optimum reported as a global one is not something this solver will do. |
+| **MIQP bound quality** | MIQP is implemented, but its node bound comes from a first-order method and is only accurate to the tolerance it converged to, so pruning is deliberately kept on the conservative side and costs nodes. With no cuts either, expect incumbents more often than proofs. |
 | **Parallelism** | Single-threaded. |
 
 On speed against HiGHS: on the committed instances the two are **indistinguishable**, not
