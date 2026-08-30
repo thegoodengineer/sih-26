@@ -182,6 +182,7 @@ set(SANKHYA_CORE_SOURCES
   src/core/solve.cpp
   src/io/line_reader.cpp
   src/io/lp_reader.cpp
+  src/io/mps_bounds.cpp
   src/io/mps_reader.cpp
   src/io/writer.cpp
   src/qp/convexity.cpp
