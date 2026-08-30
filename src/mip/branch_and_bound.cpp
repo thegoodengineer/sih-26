@@ -161,6 +161,17 @@ class BranchAndBound {
   double sense_ = 1.0;
 
   std::vector<Index> integer_columns_;
+  /// EQUILIBRATION, COMPUTED ONCE (#76). The tree does not copy the model - one working
+  /// Model is built up front and nodes differ ONLY in variable bounds - so the constraint
+  /// matrix, and therefore the row and column multipliers, are identical at every node.
+  /// Rebuilding them per node was ten Ruiz passes plus a Pock-Chambolle pass over a full copy
+  /// of the matrix, discarded and repeated at the next node. Measured on the case studies
+  /// that was 5-10x of the whole solve; on a MILP with thousands of nodes it would dominate.
+  ///
+  /// The bounds are still scaled per node by solve_primal_simplex, because those are exactly
+  /// what branching changes. Only the reusable part is cached.
+  NodeScaling scaling_;
+
   std::vector<TreeNode> nodes_;
   std::vector<Index> open_;
 
@@ -445,7 +456,7 @@ void BranchAndBound::dive_from_root(const std::vector<double>& start_x) {
     tighten_upper(u, std::round(x[u]));
     ++depth;
 
-    const Solution probe = solve_primal_simplex(working_, node_options_, logger_);
+    const Solution probe = solve_primal_simplex(working_, node_options_, logger_, scaling_);
     ++lp_resolves;
     if (probe.status != SolveStatus::kOptimal) return;  // dive dead-ends: infeasible or worse
     x = probe.col_value;
@@ -467,6 +478,11 @@ Solution BranchAndBound::run() {
     solution.message = problem;
     return solution;
   }
+
+  // Once, here, and not once per node (#76). Built from working_ before any branching has
+  // touched its bounds, though it would not matter if it had: only the matrix, the cost and
+  // the row bounds feed the multipliers, and branching changes none of them.
+  scaling_ = build_node_scaling(working_, node_options_);
 
   logger_.info("Branch and bound: {} rows, {} columns, {} integer columns",
                original_.num_rows(), original_.num_cols(), integer_columns_.size());
@@ -562,7 +578,8 @@ Solution BranchAndBound::run() {
       continue;
     }
 
-    const Solution relaxation = solve_primal_simplex(working_, node_options_, logger_);
+    const Solution relaxation =
+        solve_primal_simplex(working_, node_options_, logger_, scaling_);
 
     if (relaxation.status == SolveStatus::kInfeasible) {
       leave();
