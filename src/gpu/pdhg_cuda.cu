@@ -52,6 +52,10 @@ struct PdhgCudaContext {
   // [0] = ||dx||^2, [1] = ||dy||^2, [2] = dy^T (A * dx)
   double* d_scalars = nullptr;
   double* h_scalars = nullptr;
+
+  // Batched execution result buffers
+  PdhgBatchResult* d_batch_result = nullptr;
+  PdhgBatchResult* h_batch_result = nullptr;
 };
 
 namespace {
@@ -284,6 +288,246 @@ __global__ void compute_average_kernel(
   }
 }
 
+// Batch step kernel: runs multiple PDHG candidate steps on device without host round-trips
+__global__ void pdhg_step_batch_kernel(
+    std::size_t cols,
+    std::size_t rows,
+    const std::int32_t* column_starts,
+    const std::int32_t* row_indices,
+    const double* values,
+    const std::int32_t* row_starts,
+    const std::int32_t* col_indices,
+    const double* csr_values,
+    const double* cost,
+    const double* col_lower,
+    const double* col_upper,
+    const double* row_lower,
+    const double* row_upper,
+    double* x,
+    double* y,
+    double* x_next,
+    double* y_next,
+    double* dx,
+    double* dy,
+    double* x_bar,
+    double* x_sum,
+    double* y_sum,
+    double initial_eta,
+    double omega,
+    double eta_ceiling,
+    std::int64_t initial_iteration,
+    std::int64_t initial_averaged,
+    std::int64_t iteration_limit,
+    int max_accepted_in_batch,
+    PdhgBatchResult* d_result) {
+  constexpr int kBatchBlockSize = 512;
+  __shared__ double sdata[kBatchBlockSize];
+  __shared__ double s_dx_norm_sq;
+  __shared__ double s_dy_norm_sq;
+  __shared__ double s_interaction;
+  __shared__ double s_eta;
+  __shared__ std::int64_t s_iteration;
+  __shared__ std::int64_t s_averaged;
+  __shared__ int s_accepted_count;
+  __shared__ bool s_accepted;
+  __shared__ bool s_no_information;
+  __shared__ bool s_should_stop;
+
+  const unsigned int tid = threadIdx.x;
+
+  if (tid == 0) {
+    s_eta = initial_eta;
+    s_iteration = initial_iteration;
+    s_averaged = initial_averaged;
+    s_accepted_count = 0;
+    s_no_information = false;
+    s_should_stop = false;
+  }
+  __syncthreads();
+
+  const int max_candidates = max_accepted_in_batch * 100 + 10;
+  int total_candidates = 0;
+
+  while (true) {
+    const double current_eta = s_eta;
+    const double tau = current_eta / omega;
+    const double sigma = current_eta * omega;
+
+    // 1. Primal step
+    double local_dx_sq = 0.0;
+    for (std::size_t j = tid; j < cols; j += blockDim.x) {
+      const std::int32_t begin = column_starts[j];
+      const std::int32_t end = column_starts[j + 1];
+
+      double at_y = 0.0;
+      for (std::int32_t k = begin; k < end; ++k) {
+        at_y += values[k] * y[row_indices[k]];
+      }
+
+      const double grad = cost[j] + at_y;
+      const double cur_x = x[j];
+      const double next_x = project_device(cur_x - tau * grad, col_lower[j], col_upper[j]);
+
+      x_next[j] = next_x;
+      const double diff = next_x - cur_x;
+      dx[j] = diff;
+      x_bar[j] = 2.0 * next_x - cur_x;
+
+      local_dx_sq += diff * diff;
+    }
+
+    sdata[tid] = local_dx_sq;
+    __syncthreads();
+    for (unsigned int s = kBatchBlockSize / 2; s > 0; s >>= 1) {
+      if (tid < s) {
+        sdata[tid] += sdata[tid + s];
+      }
+      __syncthreads();
+    }
+    if (tid == 0) {
+      s_dx_norm_sq = sdata[0];
+    }
+    __syncthreads();
+
+    // 2. Dual step
+    double local_dy_sq = 0.0;
+    for (std::size_t i = tid; i < rows; i += blockDim.x) {
+      const std::int32_t begin = row_starts[i];
+      const std::int32_t end = row_starts[i + 1];
+
+      double ax_bar = 0.0;
+      for (std::int32_t k = begin; k < end; ++k) {
+        ax_bar += csr_values[k] * x_bar[col_indices[k]];
+      }
+
+      const double cur_y = y[i];
+      const double v = cur_y + sigma * ax_bar;
+      const double next_y = v - sigma * project_device(v / sigma, row_lower[i], row_upper[i]);
+
+      y_next[i] = next_y;
+      const double diff = next_y - cur_y;
+      dy[i] = diff;
+
+      local_dy_sq += diff * diff;
+    }
+
+    sdata[tid] = local_dy_sq;
+    __syncthreads();
+    for (unsigned int s = kBatchBlockSize / 2; s > 0; s >>= 1) {
+      if (tid < s) {
+        sdata[tid] += sdata[tid + s];
+      }
+      __syncthreads();
+    }
+    if (tid == 0) {
+      s_dy_norm_sq = sdata[0];
+    }
+    __syncthreads();
+
+    // 3. Interaction step
+    double local_interaction = 0.0;
+    if (rows > 0) {
+      for (std::size_t i = tid; i < rows; i += blockDim.x) {
+        const std::int32_t begin = row_starts[i];
+        const std::int32_t end = row_starts[i + 1];
+
+        double adx = 0.0;
+        for (std::int32_t k = begin; k < end; ++k) {
+          adx += csr_values[k] * dx[col_indices[k]];
+        }
+
+        local_interaction += dy[i] * adx;
+      }
+    }
+
+    sdata[tid] = local_interaction;
+    __syncthreads();
+    for (unsigned int s = kBatchBlockSize / 2; s > 0; s >>= 1) {
+      if (tid < s) {
+        sdata[tid] += sdata[tid + s];
+      }
+      __syncthreads();
+    }
+    if (tid == 0) {
+      s_interaction = fabs(sdata[0]);
+    }
+    __syncthreads();
+
+    // 4. Step evaluation in thread 0
+    if (tid == 0) {
+      const double movement = 0.5 * omega * s_dx_norm_sq + 0.5 * s_dy_norm_sq / omega;
+      const double interaction = s_interaction;
+      const bool no_information = (interaction <= 0.0);
+      s_no_information = no_information;
+
+      const double limit = no_information ? 1e300 : (movement / interaction);
+      const double exponent = static_cast<double>(s_iteration + 1 > 2 ? s_iteration + 1 : 2);
+      const double shrink = 1.0 - pow(exponent, -0.3);
+      const double grow = 1.0 + pow(exponent, -0.6);
+      const double proposed = fmin(shrink * limit, grow * s_eta);
+
+      if (s_eta <= limit) {
+        s_accepted = true;
+        s_averaged++;
+        s_iteration++;
+        s_accepted_count++;
+      } else {
+        s_accepted = false;
+      }
+
+      if (!no_information) {
+        double new_eta = proposed;
+        if (new_eta < 1e-12) new_eta = 1e-12;
+        if (new_eta > eta_ceiling) new_eta = eta_ceiling;
+        s_eta = new_eta;
+      }
+
+      total_candidates++;
+      if (s_accepted_count >= max_accepted_in_batch ||
+          s_no_information ||
+          s_iteration >= iteration_limit ||
+          total_candidates >= max_candidates) {
+        s_should_stop = true;
+      } else {
+        s_should_stop = false;
+      }
+    }
+    __syncthreads();
+
+    // 5. Commit accepted iterate
+    if (s_accepted) {
+      for (std::size_t j = tid; j < cols; j += blockDim.x) {
+        const double vx = x_next[j];
+        x[j] = vx;
+        if (x_sum != nullptr) {
+          x_sum[j] += vx;
+        }
+      }
+      for (std::size_t i = tid; i < rows; i += blockDim.x) {
+        const double vy = y_next[i];
+        y[i] = vy;
+        if (y_sum != nullptr) {
+          y_sum[i] += vy;
+        }
+      }
+    }
+    __syncthreads();
+
+    if (s_should_stop) {
+      break;
+    }
+  }
+
+  // 6. Write output result
+  if (tid == 0 && d_result != nullptr) {
+    d_result->eta = s_eta;
+    d_result->iteration = s_iteration;
+    d_result->averaged = s_averaged;
+    d_result->no_information = s_no_information;
+    d_result->accepted_count = s_accepted_count;
+  }
+}
+
 }  // namespace
 
 PdhgCudaContext* pdhg_cuda_create(
@@ -401,6 +645,13 @@ PdhgCudaContext* pdhg_cuda_create(
       !check_cuda(cudaHostAlloc(
           reinterpret_cast<void**>(&context->h_scalars),
           3 * sizeof(double),
+          cudaHostAllocDefault)) ||
+      !check_cuda(cudaMalloc(
+          reinterpret_cast<void**>(&context->d_batch_result),
+          sizeof(PdhgBatchResult))) ||
+      !check_cuda(cudaHostAlloc(
+          reinterpret_cast<void**>(&context->h_batch_result),
+          sizeof(PdhgBatchResult),
           cudaHostAllocDefault))) {
     pdhg_cuda_destroy(context);
     return nullptr;
@@ -621,6 +872,67 @@ bool pdhg_cuda_step(
   return true;
 }
 
+bool pdhg_cuda_step_batch(
+    PdhgCudaContext* context,
+    double eta,
+    double omega,
+    double spectral_norm,
+    std::int64_t iteration,
+    std::int64_t averaged,
+    std::int64_t iteration_limit,
+    int max_accepted,
+    PdhgBatchResult* result) {
+  if (context == nullptr || result == nullptr || max_accepted <= 0) {
+    return false;
+  }
+
+  const double eta_ceiling =
+      1.0e3 / std::max(spectral_norm, 1e-12);
+
+  pdhg_step_batch_kernel<<<1, 512>>>(
+      context->cols,
+      context->rows,
+      context->d_column_starts,
+      context->d_row_indices,
+      context->d_values,
+      context->d_row_starts,
+      context->d_col_indices,
+      context->d_csr_values,
+      context->d_cost,
+      context->d_col_lower,
+      context->d_col_upper,
+      context->d_row_lower,
+      context->d_row_upper,
+      context->d_x,
+      context->d_y,
+      context->d_x_next,
+      context->d_y_next,
+      context->d_dx,
+      context->d_dy,
+      context->d_x_bar,
+      context->d_x_sum,
+      context->d_y_sum,
+      eta,
+      omega,
+      eta_ceiling,
+      iteration,
+      averaged,
+      iteration_limit,
+      max_accepted,
+      context->d_batch_result);
+
+  if (!check_cuda(cudaMemcpy(
+          context->h_batch_result,
+          context->d_batch_result,
+          sizeof(PdhgBatchResult),
+          cudaMemcpyDeviceToHost))) {
+    return false;
+  }
+
+  *result = *context->h_batch_result;
+  return true;
+}
+
 bool pdhg_cuda_accept_step(
     PdhgCudaContext* context) {
   if (context == nullptr) {
@@ -790,6 +1102,9 @@ void pdhg_cuda_destroy(
   if (context->h_scalars != nullptr) {
     cudaFreeHost(context->h_scalars);
   }
+  if (context->h_batch_result != nullptr) {
+    cudaFreeHost(context->h_batch_result);
+  }
 
   cudaFree(context->d_column_starts);
   cudaFree(context->d_row_indices);
@@ -816,6 +1131,7 @@ void pdhg_cuda_destroy(
   cudaFree(context->d_x_sum);
   cudaFree(context->d_y_sum);
   cudaFree(context->d_scalars);
+  cudaFree(context->d_batch_result);
 
   delete context;
 }

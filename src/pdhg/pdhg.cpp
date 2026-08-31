@@ -443,38 +443,49 @@ Solution solve_pdhg(
   gpu::PdhgCudaContext* cuda_context = nullptr;
   bool use_cuda = false;
 
+  constexpr std::size_t kCudaMinNnz = 20000;
+
   if (options.get_bool("gpu")) {
-    cuda_context =
-        gpu::pdhg_cuda_create(
-            static_cast<std::size_t>(rows),
-            static_cast<std::size_t>(cols),
-            static_cast<std::size_t>(
-                scaling.matrix.num_nonzeros()),
-            scaling.matrix.column_starts().data(),
-            scaling.matrix.row_indices().data(),
-            scaling.matrix.values().data());
+    const auto post_presolve_nnz =
+        static_cast<std::size_t>(scaling.matrix.num_nonzeros());
 
-    if (cuda_context != nullptr) {
-      if (gpu::pdhg_cuda_upload_problem_data(
-              cuda_context,
-              scaling.cost.data(),
-              scaling.col_lower.data(),
-              scaling.col_upper.data(),
-              scaling.row_lower.data(),
-              scaling.row_upper.data())) {
-        use_cuda = true;
+    if (post_presolve_nnz < kCudaMinNnz) {
+      logger.info(
+          "PDHG: problem has {} nonzeros (< {} threshold); using CPU for performance",
+          post_presolve_nnz,
+          kCudaMinNnz);
+    } else {
+      cuda_context =
+          gpu::pdhg_cuda_create(
+              static_cast<std::size_t>(rows),
+              static_cast<std::size_t>(cols),
+              post_presolve_nnz,
+              scaling.matrix.column_starts().data(),
+              scaling.matrix.row_indices().data(),
+              scaling.matrix.values().data());
 
-        logger.info(
-            "PDHG CUDA backend enabled");
+      if (cuda_context != nullptr) {
+        if (gpu::pdhg_cuda_upload_problem_data(
+                cuda_context,
+                scaling.cost.data(),
+                scaling.col_lower.data(),
+                scaling.col_upper.data(),
+                scaling.row_lower.data(),
+                scaling.row_upper.data())) {
+          use_cuda = true;
+
+          logger.info(
+              "PDHG CUDA backend enabled");
+        } else {
+          logger.warning(
+              "CUDA problem data upload failed; running on CPU");
+          gpu::pdhg_cuda_destroy(cuda_context);
+          cuda_context = nullptr;
+        }
       } else {
         logger.warning(
-            "CUDA problem data upload failed; running on CPU");
-        gpu::pdhg_cuda_destroy(cuda_context);
-        cuda_context = nullptr;
+            "PDHG CUDA backend initialization failed; running on CPU");
       }
-    } else {
-      logger.warning(
-          "PDHG CUDA backend initialization failed; running on CPU");
     }
   }
 #else
@@ -640,32 +651,52 @@ Solution solve_pdhg(
       break;
     }
 
-    // ---- One PDHG step, [CP11] Algorithm 1 with step sizes tau = eta/omega, sigma =
-    // eta*omega.
-    const double tau =
-        eta / omega;
-
-    const double sigma =
-        eta * omega;
-
-    double movement = 0.0;
-    double interaction = 0.0;
+    bool no_information = false;
 
 #ifdef SANKHYA_ENABLE_CUDA
     if (use_cuda) {
-      if (!gpu::pdhg_cuda_step(cuda_context, tau, sigma, omega, &movement, &interaction)) {
+      const Count remaining_in_eval =
+          static_cast<Count>(kEvaluationInterval) - (iteration % kEvaluationInterval);
+      const Count remaining_in_limit = iteration_limit - iteration;
+      const int max_batch =
+          static_cast<int>(std::min(remaining_in_eval, remaining_in_limit));
+
+      gpu::PdhgBatchResult batch_result;
+      if (!gpu::pdhg_cuda_step_batch(
+              cuda_context,
+              eta,
+              omega,
+              spectral_norm,
+              iteration,
+              averaged,
+              iteration_limit,
+              max_batch,
+              &batch_result)) {
         logger.warning(
-            "CUDA PDHG step failed; falling back to CPU");
+            "CUDA PDHG step batch failed; falling back to CPU");
         static_cast<void>(gpu::pdhg_cuda_download_x(cuda_context, x.data(), n));
         static_cast<void>(gpu::pdhg_cuda_download_y(cuda_context, y.data(), m));
         gpu::pdhg_cuda_destroy(cuda_context);
         cuda_context = nullptr;
         use_cuda = false;
+      } else {
+        eta = batch_result.eta;
+        iteration = batch_result.iteration;
+        averaged = batch_result.averaged;
+        no_information = batch_result.no_information;
       }
     }
 #endif
 
     if (!use_cuda) {
+      // ---- One PDHG step, [CP11] Algorithm 1 with step sizes tau = eta/omega, sigma =
+      // eta*omega.
+      const double tau =
+          eta / omega;
+
+      const double sigma =
+          eta * omega;
+
       // -------------------------------------------------------------------------
       // Primal: x' = proj_X( x - tau (c + A'y) )
       // -------------------------------------------------------------------------
@@ -729,7 +760,7 @@ Solution solve_pdhg(
       // ---- Adaptive step size, [PDLP] section 3.1 ------------------------------------------
       // The step is admissible while eta <= (movement) / (interaction). Both are measured on
       // the step just taken, so a rejected step costs one matvec and is retried smaller.
-      movement = 0.0;
+      double movement = 0.0;
 
       for (Index j = 0; j < cols; ++j) {
         const double d =
@@ -753,7 +784,7 @@ Solution solve_pdhg(
             0.5 * d * d / omega;
       }
 
-      interaction = 0.0;
+      double interaction = 0.0;
 
       if (rows > 0) {
         // (y' - y)' A (x' - x)
@@ -785,61 +816,47 @@ Solution solve_pdhg(
         interaction =
             std::fabs(interaction);
       }
-    }
 
-    // Zero interaction means the step carried NO information about how large eta may safely
-    // be. That is not an exotic case: it happens whenever one of the two blocks does not
-    // move, which is the normal transient while the primal is still pinned against a bound
-    // at start-up, and again once the iterates converge.
-    //
-    // Neither of the obvious readings works. Treating it as an infinite limit lets eta grow
-    // by the `grow` factor every iteration, so on a problem that converges in a few steps
-    // eta overflows to infinity and the objective comes back NaN. Setting limit = eta does
-    // not hold eta either, because the proposal is min(shrink * limit, grow * eta) and
-    // shrink < 1, so eta HALVES on every such iteration and collapses to the floor - after
-    // which nothing can move at all.
-    //
-    // The step is trivially admissible when there is no interaction, so the honest response
-    // is to accept it and leave eta exactly where it was.
-    const bool no_information =
-        interaction <= 0.0;
+      // Zero interaction means the step carried NO information about how large eta may safely
+      // be. That is not an exotic case: it happens whenever one of the two blocks does not
+      // move, which is the normal transient while the primal is still pinned against a bound
+      // at start-up, and again once the iterates converge.
+      //
+      // Neither of the obvious readings works. Treating it as an infinite limit lets eta grow
+      // by the `grow` factor every iteration, so on a problem that converges in a few steps
+      // eta overflows to infinity and the objective comes back NaN. Setting limit = eta does
+      // not hold eta either, because the proposal is min(shrink * limit, grow * eta) and
+      // shrink < 1, so eta HALVES on every such iteration and collapses to the floor - after
+      // which nothing can move at all.
+      //
+      // The step is trivially admissible when there is no interaction, so the honest response
+      // is to accept it and leave eta exactly where it was.
+      no_information =
+          interaction <= 0.0;
 
-    const double limit =
-        no_information
-            ? std::numeric_limits<double>::infinity()
-            : movement / interaction;
+      const double limit =
+          no_information
+              ? std::numeric_limits<double>::infinity()
+              : movement / interaction;
 
-    const double exponent =
-        static_cast<double>(std::max<Count>(2, iteration + 1));
+      const double exponent =
+          static_cast<double>(std::max<Count>(2, iteration + 1));
 
-    const double shrink =
-        1.0 -
-        std::pow(exponent, -0.3);
+      const double shrink =
+          1.0 -
+          std::pow(exponent, -0.3);
 
-    const double grow =
-        1.0 +
-        std::pow(exponent, -0.6);
+      const double grow =
+          1.0 +
+          std::pow(exponent, -0.6);
 
-    const double proposed =
-        std::min(
-            shrink * limit,
-            grow * eta);
+      const double proposed =
+          std::min(
+              shrink * limit,
+              grow * eta);
 
-    if (eta <= limit) {
-      // Accept.
-#ifdef SANKHYA_ENABLE_CUDA
-      if (use_cuda) {
-        if (!gpu::pdhg_cuda_accept_step(cuda_context)) {
-          logger.warning("CUDA accept step failed; falling back to CPU");
-          static_cast<void>(gpu::pdhg_cuda_download_x(cuda_context, x.data(), n));
-          static_cast<void>(gpu::pdhg_cuda_download_y(cuda_context, y.data(), m));
-          gpu::pdhg_cuda_destroy(cuda_context);
-          cuda_context = nullptr;
-          use_cuda = false;
-        }
-      } else
-#endif
-      {
+      if (eta <= limit) {
+        // Accept.
         x.swap(x_next);
         y.swap(y_next);
 
@@ -856,29 +873,29 @@ Solution solve_pdhg(
               y[
                   static_cast<std::size_t>(i)];
         }
+
+        ++averaged;
+        ++iteration;
       }
 
-      ++averaged;
-      ++iteration;
-    }
+      // Whether accepted or not, the step size moves to the proposal. A rejected step is
+      // therefore always retried smaller, which is what makes the rule terminate. The upper
+      // clamp is a backstop against unbounded growth: the vanilla method needs
+      // eta <= 1/||A||_2, and the adaptive rule may exceed that safely, but never by orders
+      // of magnitude.
+      const double eta_ceiling =
+          1.0e3 /
+          std::max(
+              spectral_norm,
+              1e-12);
 
-    // Whether accepted or not, the step size moves to the proposal. A rejected step is
-    // therefore always retried smaller, which is what makes the rule terminate. The upper
-    // clamp is a backstop against unbounded growth: the vanilla method needs
-    // eta <= 1/||A||_2, and the adaptive rule may exceed that safely, but never by orders
-    // of magnitude.
-    const double eta_ceiling =
-        1.0e3 /
-        std::max(
-            spectral_norm,
-            1e-12);
-
-    if (!no_information) {
-      eta =
-          std::clamp(
-              proposed,
-              1e-12,
-              eta_ceiling);
+      if (!no_information) {
+        eta =
+            std::clamp(
+                proposed,
+                1e-12,
+                eta_ceiling);
+      }
     }
 
     // ---- Convergence and restart -----------------------------------------------------------
