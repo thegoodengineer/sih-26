@@ -180,18 +180,18 @@ Solution solve(const Model& model, const Options& options) {
     }
 
     if (options.get_bool("gpu")) {
-      #ifdef SANKHYA_ENABLE_CUDA
-        std::string device_description;
-        if (gpu::device_available(&device_description)) {
-          logger.info("--gpu requested; CUDA device available: {}", device_description);
-        } else {
-          logger.warning("--gpu requested but CUDA device unavailable: {}; running on CPU",
-                        device_description);
-        }
-      #else
-        logger.warning(
-            "--gpu requested but this build has no CUDA backend compiled in; running on CPU");
-      #endif
+#ifdef SANKHYA_ENABLE_CUDA
+      std::string device_description;
+      if (gpu::device_available(&device_description)) {
+        logger.info("--gpu requested; CUDA device available: {}", device_description);
+      } else {
+        logger.warning("--gpu requested but CUDA device unavailable: {}; running on CPU",
+                       device_description);
+      }
+#else
+      logger.warning(
+          "--gpu requested but this build has no CUDA backend compiled in; running on CPU");
+#endif
     }
 
     // PRESOLVE RUNS HERE, not inside an engine. The reductions are properties of the model,

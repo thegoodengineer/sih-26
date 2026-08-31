@@ -52,14 +52,12 @@ const char* banner() noexcept {
     std::string device_description;
     const bool device_available = gpu::device_available(&device_description);
 
-    return fmt::format(
-        "SANKHYA {} ({}, {}, {}, CUDA compiled in, device {})",
-        version_string(), git_commit(), build_type(), compiler_string(),
-        device_available ? device_description : "not visible");
+    return fmt::format("SANKHYA {} ({}, {}, {}, CUDA compiled in, device {})", version_string(),
+                       git_commit(), build_type(), compiler_string(),
+                       device_available ? device_description : "not visible");
 #else
-    return fmt::format(
-        "SANKHYA {} ({}, {}, {}, CUDA compiled in: no, device: not available)",
-        version_string(), git_commit(), build_type(), compiler_string());
+    return fmt::format("SANKHYA {} ({}, {}, {}, CUDA compiled in: no, device: not available)",
+                       version_string(), git_commit(), build_type(), compiler_string());
 #endif
   }();
 
