@@ -69,6 +69,18 @@ class SparseLu {
   [[nodiscard]] bool factorize(const std::vector<LuColumn>& columns, Index m,
                                double pivot_tolerance, double markowitz_threshold);
 
+  /// After factorize() returns false: the basis positions no pivot could ever use, and the
+  /// rows no pivot ever covered. Both are empty after a SUCCESSFUL factorization.
+  ///
+  /// These exist so a singular basis can be REPAIRED instead of ending the solve. The
+  /// elimination already knows which columns defeated it - it records every pivot it makes -
+  /// but it used to throw that away and return a bare `false`, which told the caller a basis
+  /// was singular without telling it where, and there is no way to patch a basis you cannot
+  /// locate the defect in. The two sets are the same size when the failure is a genuine rank
+  /// deficiency: k dependent columns leave exactly k rows uncovered.
+  [[nodiscard]] std::vector<Index> dependent_positions() const;
+  [[nodiscard]] std::vector<Index> uncovered_rows() const;
+
   /// Solve B z = b in place. FTRAN.
   void solve(double* b) const;
 

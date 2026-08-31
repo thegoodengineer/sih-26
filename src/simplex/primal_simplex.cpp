@@ -71,6 +71,19 @@ constexpr int kStallLimit = 20 * tol::kBlandSwitchIterations;
 /// leftover violation is below the tolerance the answer is judged against. At 1e-9 against a
 /// 1e-7 feasibility tolerance there are two orders of margin, and phase 1 does not even
 /// re-engage on the restored bounds.
+/// Most basis repairs a single solve may make (#34).
+///
+/// A repair moves the current point, so it can hand the search a basis that goes singular
+/// again a few pivots later, and repairing THAT one costs another move. Measured on pilot4
+/// before the size guard existed, the ungated repair fired 202 times and never terminated -
+/// a fast clean failure turned into a hang, which is strictly worse than the failure.
+///
+/// The size guard makes that particular runaway impossible, but it bounds the size of each
+/// repair, not the number of them. This bounds the number. A solve needing more than a
+/// handful of repairs is not being rescued by them, and should report the singular basis it
+/// actually has rather than grind.
+constexpr Count kMaxBasisRepairs = 8;
+
 constexpr double kPerturbationSize = 1e-9;
 constexpr int kPerturbationTrigger = kStallLimit / 2;
 
@@ -182,6 +195,14 @@ class PrimalSimplex {
   /// Rebuild and refactorize the basis matrix from scratch. Returns false when singular.
   [[nodiscard]] bool refactorize();
 
+  /// Replace the linearly dependent basis columns with logicals, making the basis
+  /// nonsingular by construction. Returns false when the defect cannot be located.
+  [[nodiscard]] bool repair_basis();
+
+  /// Park a variable on whichever of its bounds it should hold while nonbasic. `current`
+  /// is its value before it left the basis, used only to pick the nearer of two bounds.
+  void make_nonbasic(Index k, double current);
+
   /// Relax every finite bound slightly, so a degenerate vertex stops being degenerate.
   void perturb_bounds();
 
@@ -282,6 +303,10 @@ class PrimalSimplex {
   /// things from the same choice. Perturbation sidesteps the conflict.
   bool perturbed_ = false;
   Count perturbations_ = 0;
+
+  /// Number of basis columns swapped for logicals to escape a singular basis (#34).
+  Count repaired_columns_ = 0;
+  Count repairs_ = 0;
 
   SparseLu lu_;
 
@@ -405,6 +430,134 @@ void PrimalSimplex::set_initial_basis() {
   }
 }
 
+void PrimalSimplex::make_nonbasic(Index k, double current) {
+  const auto u = static_cast<std::size_t>(k);
+  const double lo = lower_[u];
+  const double hi = upper_[u];
+  if (lo == hi) {
+    status_[u] = BasisStatus::kFixed;
+    nonbasic_value_[u] = lo;
+  } else if (is_finite_bound(lo) && is_finite_bound(hi)) {
+    // Both bounds finite: keep whichever the variable is already nearer, so a repair moves
+    // the point as little as it can. The alternative - always the lower bound - can throw a
+    // variable sitting at its upper bound the whole width of its range, and phase 1 then has
+    // to walk it back.
+    if (std::fabs(current - hi) < std::fabs(current - lo)) {
+      status_[u] = BasisStatus::kAtUpper;
+      nonbasic_value_[u] = hi;
+    } else {
+      status_[u] = BasisStatus::kAtLower;
+      nonbasic_value_[u] = lo;
+    }
+  } else if (is_finite_bound(lo)) {
+    status_[u] = BasisStatus::kAtLower;
+    nonbasic_value_[u] = lo;
+  } else if (is_finite_bound(hi)) {
+    status_[u] = BasisStatus::kAtUpper;
+    nonbasic_value_[u] = hi;
+  } else {
+    status_[u] = BasisStatus::kNonbasicFree;
+    nonbasic_value_[u] = 0.0;
+  }
+}
+
+bool PrimalSimplex::repair_basis() {
+  // BASIS REPAIR (#34), the standard remedy for a singular basis and the one thing this
+  // solver did not do about it. Reference: Maros, "Computational Techniques of the Simplex
+  // Method", section 9.4; Suhl & Suhl, "Computing sparse LU factorizations for large-scale
+  // linear programming bases", ORSA J. Computing 2 (1990), which describes the same patch.
+  //
+  // WHY THIS IS THE FIX RATHER THAN BETTER PIVOTING. refactorize() already retries the
+  // ordering all the way to full partial pivoting (tau = 1), so by the time it gives up the
+  // basis is not badly ordered, it is RANK DEFICIENT: some of its columns are linear
+  // combinations of the others, and no pivot order can make a singular matrix invertible.
+  // Measured on the full Netlib set, 13 of the 24 failures ended exactly here, including the
+  // whole pilot family - the largest single cause of failure in the benchmark.
+  //
+  // THE PATCH. If k columns are dependent, exactly k rows were left uncovered by the
+  // elimination. Evict those k columns and put in the LOGICAL (slack) of each uncovered row.
+  // A logical is the unit column e_i, so it pivots on row i against nothing else: the
+  // repaired basis is nonsingular by construction, not by luck, and re-factorizing it
+  // succeeds for a structural reason rather than a numerical one.
+  //
+  // WHAT IT COSTS, stated because it is not free. The evicted variables are parked on a
+  // bound, which moves the current point, so the basis afterwards may be primal infeasible
+  // where it was feasible before. That is recoverable - phase 1 exists for exactly this - and
+  // it is unambiguously better than the alternative, which was to return kNumericalError and
+  // no answer at all. It is a REPAIR, not a free lunch, and the counters report how often it
+  // fired so a run that limps to an answer cannot be mistaken for one that never stumbled.
+  if (repairs_ >= kMaxBasisRepairs) {
+    logger_.warning("basis singular again at iteration {} after {} repair(s); not repairing",
+                    iterations_seen_, repairs_);
+    return false;
+  }
+
+  const std::vector<Index> dependent = lu_.dependent_positions();
+  const std::vector<Index> uncovered = lu_.uncovered_rows();
+  if (dependent.empty() || dependent.size() != uncovered.size()) return false;
+
+  // SIZE GUARD, and the reason for it is the whole difficulty of this repair.
+  //
+  // eliminate() stops at the FIRST step with no acceptable pivot, so the columns it has not
+  // reached are not all dependent - they are simply unvisited. Treating them as dependent
+  // evicts most of the basis: measured on pilot4, the first repair wanted to replace 217 of
+  // 410 columns, and a basis that factorized a few iterations earlier has not lost half its
+  // rank. Repairing that many columns discards the point entirely and the solve stops
+  // converging - it ran 202 repairs without terminating.
+  //
+  // A genuine rank defect in a simplex basis is one or two columns. So the repair applies
+  // only when the reported defect is small enough to be credible, and otherwise declines and
+  // lets the caller report the singular basis exactly as it did before. Declining is not a
+  // silent no-op: the size is logged, because it is the measurement that says whether the
+  // narrow repair is worth having at all.
+  const std::size_t limit = std::max<std::size_t>(4, static_cast<std::size_t>(m_) / 20);
+  if (dependent.size() > limit) {
+    logger_.warning(
+        "singular basis at iteration {} reports {} unpivoted column(s) of {}, beyond the {} "
+        "the narrow repair trusts; not repairing",
+        iterations_seen_, dependent.size(), m_, limit);
+    return false;
+  }
+
+  std::size_t patched = 0;
+  for (std::size_t t = 0; t < dependent.size(); ++t) {
+    const Index slot = dependent[t];
+    const Index row = uncovered[t];
+    const Index logical = n_ + row;
+    if (slot < 0 || slot >= m_ || row < 0 || row >= m_) continue;
+    // A logical already in the basis cannot be added a second time. This should not happen -
+    // a unit column always pivots on its own row, so its row cannot be uncovered - but the
+    // invariant is cheap to check and expensive to get wrong.
+    if (basis_position_[static_cast<std::size_t>(logical)] >= 0) continue;
+
+    const Index leaving = basis_[static_cast<std::size_t>(slot)];
+    // Read the departing variable's value BEFORE the slot is cleared - it is the only hint
+    // available for which bound to park it on, and x_basic_ is indexed by slot, not variable.
+    const double leaving_value = (static_cast<std::size_t>(slot) < x_basic_.size())
+                                     ? x_basic_[static_cast<std::size_t>(slot)]
+                                     : lower_[static_cast<std::size_t>(leaving)];
+    basis_position_[static_cast<std::size_t>(leaving)] = -1;
+    make_nonbasic(leaving, leaving_value);
+
+    basis_[static_cast<std::size_t>(slot)] = logical;
+    basis_position_[static_cast<std::size_t>(logical)] = slot;
+    status_[static_cast<std::size_t>(logical)] = BasisStatus::kBasic;
+    ++patched;
+  }
+
+  if (patched == 0) return false;
+  repaired_columns_ += static_cast<Count>(patched);
+  ++repairs_;
+  // Logged HERE, where the count for this repair is in scope. Reporting the running total
+  // instead reads as one enormous repair rather than several small ones - which is exactly
+  // how the first version of this was misread while it was being debugged.
+  logger_.warning(
+      "basis singular at iteration {}: replaced {} dependent column(s) with "
+      "logicals (repair {} of at most {})",
+      iterations_seen_, patched, repairs_, kMaxBasisRepairs);
+  return true;
+}
+
 bool PrimalSimplex::refactorize() {
   // Phase 2 materialised a dense m x m array here and threw it away again on every pivot:
   // O(m^2) of memory traffic and O(m^3) of arithmetic to factorize a matrix that is better
@@ -479,6 +632,42 @@ bool PrimalSimplex::refactorize() {
       }
       logger_.verbose("refactorized at iteration {}: smallest pivot {:.3e}", iterations_seen_,
                       pivot);
+      return true;
+    }
+  }
+
+  // The ladder ran out at full partial pivoting, so this basis is rank deficient rather than
+  // badly ordered. Patch it and factorize once more. ONE retry, not a loop: the repaired
+  // basis is nonsingular by construction, so a second failure means an assumption above is
+  // wrong, and spinning on it would turn a wrong answer into a hang.
+  if (repair_basis()) {
+    for (Index slot = 0; slot < m_; ++slot) {
+      const Index k = basis_[static_cast<std::size_t>(slot)];
+      LuColumn& target = basis_columns_[static_cast<std::size_t>(slot)];
+      if (k < n_) {
+        const ColumnView column = model_.matrix.column(k);
+        target.rows = column.rows;
+        target.values = column.values;
+        target.size = column.size;
+      } else {
+        const auto row = static_cast<std::size_t>(k - n_);
+        target.rows = logical_rows_.data() + row;
+        target.values = logical_values_.data() + row;
+        target.size = 1;
+      }
+    }
+    if (lu_.factorize(basis_columns_, m_, tol::kPivotTolerance, 1.0)) {
+      basis_needed_stricter_threshold_ = true;
+      // THE BASIS CHANGED, SO THE BASIC VALUES DESCRIBE A BASIS THAT NO LONGER EXISTS.
+      //
+      // Every other caller of refactorize() rebuilds the same factorization of the same
+      // basis, so x_basic_ stays valid across it and only one of the two call sites bothers
+      // to recompute. A repair is the exception: it swaps columns, so x_basic_ must be
+      // recomputed here rather than left to the caller. Without this the ratio test at the
+      // accuracy-check site runs on values from the pre-repair basis, which is not a crash
+      // and not a warning - it is a plausible wrong number, the failure mode CLAUDE.md's
+      // evidence rules exist for.
+      compute_basic_values();
       return true;
     }
   }
@@ -868,6 +1057,17 @@ Solution PrimalSimplex::finish(SolveStatus status, const std::string& message, C
       // number standing in for absent data is the one way it could mislead.
       worst_basis_pivot_ > 0.0 ? fmt::format("{:.3e}", worst_basis_pivot_)
                                : std::string("n/a (nothing was factorized)"));
+
+  // Repairs are reported only when they happened. A "0 repairs" on every well-behaved solve
+  // would be noise on the line that exists to make an ill-behaved one legible - but a solve
+  // that reached its answer by patching its own basis must never look like one that did not,
+  // because the patch moves the point and the answer is reached from somewhere else.
+  if (repairs_ > 0) {
+    logger_.info(
+        "Basis repair: {} column(s) replaced with logicals over {} repair(s); the "
+        "basis was rank deficient and the point was moved to mend it",
+        repaired_columns_, repairs_);
+  }
 
   Solution solution;
   solution.allocate_for(model_);

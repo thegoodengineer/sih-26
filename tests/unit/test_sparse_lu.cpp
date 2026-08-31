@@ -209,6 +209,41 @@ TEST(SparseLu, ReportsAStructurallyEmptyColumn) {
   EXPECT_FALSE(lu.factorize(matrix.columns(), 3, tol::kPivotTolerance, kThreshold));
 }
 
+TEST(SparseLu, LocatesTheDefectInAStructurallyEmptyColumn) {
+  // The accessors that make a singular basis REPAIRABLE rather than fatal. An empty column
+  // can never be pivotal, so it is the one case where the defect is unambiguous: exactly one
+  // column is dependent and exactly one row is left uncovered.
+  TestMatrix matrix(3);
+  matrix.set(0, 0, 1.0);
+  matrix.set(1, 1, 1.0);
+  // column 2 has no entries at all, and row 2 has nothing to cover it
+  SparseLu lu;
+  ASSERT_FALSE(lu.factorize(matrix.columns(), 3, tol::kPivotTolerance, kThreshold));
+
+  const std::vector<Index> dependent = lu.dependent_positions();
+  const std::vector<Index> uncovered = lu.uncovered_rows();
+  EXPECT_EQ(dependent.size(), uncovered.size())
+      << "a rank defect of k leaves exactly k rows uncovered";
+  ASSERT_EQ(dependent.size(), 1u);
+  EXPECT_EQ(dependent[0], 2) << "column 2 is the empty one";
+  EXPECT_EQ(uncovered[0], 2) << "row 2 is the one nothing covers";
+}
+
+TEST(SparseLu, ReportsNoDefectAfterASuccessfulFactorization) {
+  // The sets must be EMPTY on success, not merely ignored. A caller that repairs whenever
+  // they are non-empty would otherwise mangle a perfectly good basis.
+  TestMatrix matrix(3);
+  matrix.set(0, 0, 2.0);
+  matrix.set(1, 1, 3.0);
+  matrix.set(2, 2, 4.0);
+  matrix.set(1, 0, 1.0);
+
+  SparseLu lu;
+  ASSERT_TRUE(lu.factorize(matrix.columns(), 3, tol::kPivotTolerance, kThreshold));
+  EXPECT_TRUE(lu.dependent_positions().empty());
+  EXPECT_TRUE(lu.uncovered_rows().empty());
+}
+
 TEST(SparseLu, HandlesTheEmptyBasis) {
   SparseLu lu;
   EXPECT_TRUE(lu.factorize({}, 0, tol::kPivotTolerance, kThreshold));
