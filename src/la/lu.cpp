@@ -206,6 +206,31 @@ bool SparseLu::factorize(const std::vector<LuColumn>& columns, Index m, double p
   return true;
 }
 
+namespace {
+
+/// Indices in [0, m) that never appear in `chosen`.
+[[nodiscard]] std::vector<Index> missing_from(const std::vector<Index>& chosen, Index m) {
+  std::vector<bool> seen(static_cast<std::size_t>(m), false);
+  for (const Index k : chosen) {
+    if (k >= 0 && k < m) seen[static_cast<std::size_t>(k)] = true;
+  }
+  std::vector<Index> out;
+  for (Index k = 0; k < m; ++k) {
+    if (!seen[static_cast<std::size_t>(k)]) out.push_back(k);
+  }
+  return out;
+}
+
+}  // namespace
+
+std::vector<Index> SparseLu::dependent_positions() const {
+  return missing_from(pivot_col_, m_);
+}
+
+std::vector<Index> SparseLu::uncovered_rows() const {
+  return missing_from(pivot_row_, m_);
+}
+
 // =========================================================================================
 // Basis update
 // =========================================================================================
