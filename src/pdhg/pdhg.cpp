@@ -116,9 +116,7 @@ struct Residuals {
   /// point can show a tiny gap and still price a constraint it is not sitting on.
   double complementarity = 0.0;
 
-  [[nodiscard]] double worst() const {
-    return std::max({primal, dual, gap});
-  }
+  [[nodiscard]] double worst() const { return std::max({primal, dual, gap}); }
 
   /// Has the run met the tolerance the CALLER asked for, AND is the point actually feasible
   /// in absolute terms? Both are required to stop.
@@ -128,9 +126,7 @@ struct Residuals {
   /// this engine claim feasibility for a point that misses the project's own primal
   /// tolerance - a weaker claim than kOptimal, but still one the verifier rejects.
   [[nodiscard]] bool meets_request(double tolerance) const {
-    return primal <= tolerance &&
-           dual <= tolerance &&
-           gap <= tolerance &&
+    return primal <= tolerance && dual <= tolerance && gap <= tolerance &&
            absolute_primal <= tol::kPrimalFeasibility;
   }
 
@@ -139,8 +135,7 @@ struct Residuals {
   /// against, and meeting them is the ONLY basis on which this engine claims kOptimal.
   [[nodiscard]] bool meets_project_standard() const {
     return absolute_primal <= tol::kPrimalFeasibility &&
-           absolute_dual <= tol::kDualFeasibility &&
-           gap_as_verified <= tol::kDualityGap &&
+           absolute_dual <= tol::kDualFeasibility && gap_as_verified <= tol::kDualityGap &&
            complementarity <= 1e-6;
   }
 };
@@ -154,12 +149,9 @@ struct Problem {
 };
 
 /// Compute the unscaled residuals for a candidate (x, y).
-Residuals evaluate(
-    const Problem& problem,
-    const std::vector<double>& x,
-    const std::vector<double>& y,
-    std::vector<double>* activity,
-    std::vector<double>* reduced) {
+Residuals evaluate(const Problem& problem, const std::vector<double>& x,
+                   const std::vector<double>& y, std::vector<double>* activity,
+                   std::vector<double>* reduced) {
   const Model& model = *problem.model;
 
   const Index rows = model.num_rows();
@@ -169,14 +161,10 @@ Residuals evaluate(
 
   // ---- Primal: how far Ax falls outside the row bounds. x is projected every iteration,
   // so the column bounds hold by construction and contribute nothing.
-  activity->assign(
-      static_cast<std::size_t>(rows),
-      0.0);
+  activity->assign(static_cast<std::size_t>(rows), 0.0);
 
   if (rows > 0) {
-    model.matrix.multiply(
-        x.data(),
-        activity->data());
+    model.matrix.multiply(x.data(), activity->data());
   }
 
   double primal_violation = 0.0;
@@ -188,41 +176,30 @@ Residuals evaluate(
     double violation = 0.0;
 
     if (is_finite_bound(model.row_lower[u])) {
-      violation = std::max(
-          violation,
-          model.row_lower[u] - a);
+      violation = std::max(violation, model.row_lower[u] - a);
     }
 
     if (is_finite_bound(model.row_upper[u])) {
-      violation = std::max(
-          violation,
-          a - model.row_upper[u]);
+      violation = std::max(violation, a - model.row_upper[u]);
     }
 
     primal_violation += violation * violation;
   }
 
   r.absolute_primal = std::sqrt(primal_violation);
-  r.primal =
-      r.absolute_primal /
-      (1.0 + problem.bound_norm);
+  r.primal = r.absolute_primal / (1.0 + problem.bound_norm);
 
   // ---- Dual: d = c + A'y. A component of d is only a violation where no bound can absorb
   // it, i.e. a positive reduced cost on a variable with no lower bound, or a negative one
   // on a variable with no upper bound.
-  reduced->assign(
-      static_cast<std::size_t>(cols),
-      0.0);
+  reduced->assign(static_cast<std::size_t>(cols), 0.0);
 
   for (Index j = 0; j < cols; ++j) {
-    (*reduced)[static_cast<std::size_t>(j)] =
-        problem.cost[static_cast<std::size_t>(j)];
+    (*reduced)[static_cast<std::size_t>(j)] = problem.cost[static_cast<std::size_t>(j)];
   }
 
   if (rows > 0) {
-    model.matrix.transpose_multiply_add(
-        y.data(),
-        reduced->data());
+    model.matrix.transpose_multiply_add(y.data(), reduced->data());
   }
 
   double dual_violation = 0.0;
@@ -234,15 +211,13 @@ Residuals evaluate(
 
     if (d > 0.0) {
       if (is_finite_bound(model.col_lower[u])) {
-        bound_contribution +=
-            d * model.col_lower[u];
+        bound_contribution += d * model.col_lower[u];
       } else {
         dual_violation += d * d;
       }
     } else if (d < 0.0) {
       if (is_finite_bound(model.col_upper[u])) {
-        bound_contribution +=
-            d * model.col_upper[u];
+        bound_contribution += d * model.col_upper[u];
       } else {
         dual_violation += d * d;
       }
@@ -262,27 +237,22 @@ Residuals evaluate(
 
     if (yi > 0.0) {
       if (is_finite_bound(model.row_upper[u])) {
-        support +=
-            yi * model.row_upper[u];
+        support += yi * model.row_upper[u];
       } else {
         dual_violation += yi * yi;
       }
     } else if (yi < 0.0) {
       if (is_finite_bound(model.row_lower[u])) {
-        support +=
-            yi * model.row_lower[u];
+        support += yi * model.row_lower[u];
       } else {
         dual_violation += yi * yi;
       }
     }
   }
 
-  r.absolute_dual =
-      std::sqrt(dual_violation);
+  r.absolute_dual = std::sqrt(dual_violation);
 
-  r.dual =
-      r.absolute_dual /
-      (1.0 + problem.cost_norm);
+  r.dual = r.absolute_dual / (1.0 + problem.cost_norm);
 
   // Complementary slackness, in the product form the verifier uses.
   for (Index i = 0; i < rows; ++i) {
@@ -292,21 +262,16 @@ Residuals evaluate(
       continue;
     }
 
-    const double lower_slack =
-        is_finite_bound(model.row_lower[u])
-            ? (*activity)[u] - model.row_lower[u]
-            : std::numeric_limits<double>::infinity();
+    const double lower_slack = is_finite_bound(model.row_lower[u])
+                                   ? (*activity)[u] - model.row_lower[u]
+                                   : std::numeric_limits<double>::infinity();
 
-    const double upper_slack =
-        is_finite_bound(model.row_upper[u])
-            ? model.row_upper[u] - (*activity)[u]
-            : std::numeric_limits<double>::infinity();
+    const double upper_slack = is_finite_bound(model.row_upper[u])
+                                   ? model.row_upper[u] - (*activity)[u]
+                                   : std::numeric_limits<double>::infinity();
 
     r.complementarity =
-        std::max(
-            r.complementarity,
-            std::fabs(y[u]) *
-                std::min(lower_slack, upper_slack));
+        std::max(r.complementarity, std::fabs(y[u]) * std::min(lower_slack, upper_slack));
   }
 
   for (Index j = 0; j < cols; ++j) {
@@ -316,68 +281,46 @@ Residuals evaluate(
       continue;
     }
 
-    const double lower_slack =
-        is_finite_bound(model.col_lower[u])
-            ? x[u] - model.col_lower[u]
-            : std::numeric_limits<double>::infinity();
+    const double lower_slack = is_finite_bound(model.col_lower[u])
+                                   ? x[u] - model.col_lower[u]
+                                   : std::numeric_limits<double>::infinity();
 
-    const double upper_slack =
-        is_finite_bound(model.col_upper[u])
-            ? model.col_upper[u] - x[u]
-            : std::numeric_limits<double>::infinity();
+    const double upper_slack = is_finite_bound(model.col_upper[u])
+                                   ? model.col_upper[u] - x[u]
+                                   : std::numeric_limits<double>::infinity();
 
-    r.complementarity =
-        std::max(
-            r.complementarity,
-            std::fabs((*reduced)[u]) *
-                std::min(lower_slack, upper_slack));
+    r.complementarity = std::max(r.complementarity,
+                                 std::fabs((*reduced)[u]) * std::min(lower_slack, upper_slack));
   }
 
   double primal_objective = 0.0;
 
   for (Index j = 0; j < cols; ++j) {
     primal_objective +=
-        problem.cost[static_cast<std::size_t>(j)] *
-        x[static_cast<std::size_t>(j)];
+        problem.cost[static_cast<std::size_t>(j)] * x[static_cast<std::size_t>(j)];
   }
 
   r.primal_objective = primal_objective;
-  r.dual_objective =
-      bound_contribution - support;
+  r.dual_objective = bound_contribution - support;
 
-  const double absolute_gap =
-      std::fabs(
-          r.primal_objective -
-          r.dual_objective);
+  const double absolute_gap = std::fabs(r.primal_objective - r.dual_objective);
 
-  r.gap =
-      absolute_gap /
-      (1.0 +
-       std::fabs(r.primal_objective) +
-       std::fabs(r.dual_objective));
+  r.gap = absolute_gap / (1.0 + std::fabs(r.primal_objective) + std::fabs(r.dual_objective));
 
-  r.gap_as_verified =
-      absolute_gap /
-      std::max(
-          1.0,
-          std::fabs(r.primal_objective));
+  r.gap_as_verified = absolute_gap / std::max(1.0, std::fabs(r.primal_objective));
 
   return r;
 }
 
 }  // namespace
 
-Solution solve_pdhg(
-    const Model& model,
-    const Options& options,
-    Logger& logger) {
+Solution solve_pdhg(const Model& model, const Options& options, Logger& logger) {
   Timer timer;
 
   Solution solution;
   solution.allocate_for(model);
 
-  const std::string problem_text =
-      model.validate();
+  const std::string problem_text = model.validate();
 
   if (!problem_text.empty()) {
     solution.status = SolveStatus::kModelError;
@@ -394,50 +337,35 @@ Solution solve_pdhg(
 
   problem.model = &model;
 
-  problem.cost.resize(
-      static_cast<std::size_t>(cols));
+  problem.cost.resize(static_cast<std::size_t>(cols));
 
   for (Index j = 0; j < cols; ++j) {
     problem.cost[static_cast<std::size_t>(j)] =
-        sense *
-        model.col_cost[static_cast<std::size_t>(j)];
+        sense * model.col_cost[static_cast<std::size_t>(j)];
   }
 
-  problem.cost_norm =
-      euclidean_norm(problem.cost);
+  problem.cost_norm = euclidean_norm(problem.cost);
 
   double bound_square = 0.0;
 
   for (Index i = 0; i < rows; ++i) {
     const auto u = static_cast<std::size_t>(i);
 
-    const double b =
-        is_finite_bound(model.row_lower[u])
-            ? model.row_lower[u]
-            : (is_finite_bound(model.row_upper[u])
-                   ? model.row_upper[u]
-                   : 0.0);
+    const double b = is_finite_bound(model.row_lower[u])
+                         ? model.row_lower[u]
+                         : (is_finite_bound(model.row_upper[u]) ? model.row_upper[u] : 0.0);
 
     bound_square += b * b;
   }
 
-  problem.bound_norm =
-      std::sqrt(bound_square);
+  problem.bound_norm = std::sqrt(bound_square);
 
   // ---- Preconditioning -------------------------------------------------------------------
-  const Scaling scaling =
-      build_scaling(
-          model,
-          problem.cost,
-          kRuizIterations);
+  const Scaling scaling = build_scaling(model, problem.cost, kRuizIterations);
 
   const double spectral_norm =
-      estimate_spectral_norm(
-          scaling.matrix,
-          kPowerIterations,
-          static_cast<unsigned>(
-              options.get_int("random_seed")) +
-              1u);
+      estimate_spectral_norm(scaling.matrix, kPowerIterations,
+                             static_cast<unsigned>(options.get_int("random_seed")) + 1u);
 
 #ifdef SANKHYA_ENABLE_CUDA
   gpu::PdhgCudaContext* cuda_context = nullptr;
@@ -446,45 +374,31 @@ Solution solve_pdhg(
   constexpr std::size_t kCudaMinNnz = 20000;
 
   if (options.get_bool("gpu")) {
-    const auto post_presolve_nnz =
-        static_cast<std::size_t>(scaling.matrix.num_nonzeros());
+    const auto post_presolve_nnz = static_cast<std::size_t>(scaling.matrix.num_nonzeros());
 
     if (post_presolve_nnz < kCudaMinNnz) {
-      logger.info(
-          "PDHG: problem has {} nonzeros (< {} threshold); using CPU for performance",
-          post_presolve_nnz,
-          kCudaMinNnz);
+      logger.info("PDHG: problem has {} nonzeros (< {} threshold); using CPU for performance",
+                  post_presolve_nnz, kCudaMinNnz);
     } else {
-      cuda_context =
-          gpu::pdhg_cuda_create(
-              static_cast<std::size_t>(rows),
-              static_cast<std::size_t>(cols),
-              post_presolve_nnz,
-              scaling.matrix.column_starts().data(),
-              scaling.matrix.row_indices().data(),
-              scaling.matrix.values().data());
+      cuda_context = gpu::pdhg_cuda_create(
+          static_cast<std::size_t>(rows), static_cast<std::size_t>(cols), post_presolve_nnz,
+          scaling.matrix.column_starts().data(), scaling.matrix.row_indices().data(),
+          scaling.matrix.values().data());
 
       if (cuda_context != nullptr) {
         if (gpu::pdhg_cuda_upload_problem_data(
-                cuda_context,
-                scaling.cost.data(),
-                scaling.col_lower.data(),
-                scaling.col_upper.data(),
-                scaling.row_lower.data(),
-                scaling.row_upper.data())) {
+                cuda_context, scaling.cost.data(), scaling.col_lower.data(),
+                scaling.col_upper.data(), scaling.row_lower.data(), scaling.row_upper.data())) {
           use_cuda = true;
 
-          logger.info(
-              "PDHG CUDA backend enabled");
+          logger.info("PDHG CUDA backend enabled");
         } else {
-          logger.warning(
-              "CUDA problem data upload failed; running on CPU");
+          logger.warning("CUDA problem data upload failed; running on CPU");
           gpu::pdhg_cuda_destroy(cuda_context);
           cuda_context = nullptr;
         }
       } else {
-        logger.warning(
-            "PDHG CUDA backend initialization failed; running on CPU");
+        logger.warning("PDHG CUDA backend initialization failed; running on CPU");
       }
     }
   }
@@ -492,50 +406,32 @@ Solution solve_pdhg(
   const bool use_cuda = false;
 #endif
 
-  solution.algorithm =
-      use_cuda ? "pdhg-cuda" : "pdhg-cpu";
+  solution.algorithm = use_cuda ? "pdhg-cuda" : "pdhg-cpu";
 
-  const double tolerance =
-      options.get_double("pdhg_tolerance");
+  const double tolerance = options.get_double("pdhg_tolerance");
 
-  const double time_limit =
-      options.get_double("time_limit");
+  const double time_limit = options.get_double("time_limit");
 
-  const std::int64_t iteration_option =
-      options.get_int("iteration_limit");
+  const std::int64_t iteration_option = options.get_int("iteration_limit");
 
   const Count iteration_limit =
-      iteration_option < 0
-          ? 1000000
-          : static_cast<Count>(
-                iteration_option);
+      iteration_option < 0 ? 1000000 : static_cast<Count>(iteration_option);
 
-  const bool use_restarts =
-      options.get_bool("pdhg_restart");
+  const bool use_restarts = options.get_bool("pdhg_restart");
 
-  logger.info(
-      "Solving LP with restarted PDHG: {} rows, {} columns, {} nonzeros",
-      rows,
-      cols,
-      model.num_nonzeros());
+  logger.info("Solving LP with restarted PDHG: {} rows, {} columns, {} nonzeros", rows, cols,
+              model.num_nonzeros());
 
-  logger.info(
-      "Scaled matrix entries in [{:.3e}, {:.3e}], estimated ||A||_2 = {:.4e}",
-      scaling.min_abs,
-      scaling.max_abs,
-      spectral_norm);
+  logger.info("Scaled matrix entries in [{:.3e}, {:.3e}], estimated ||A||_2 = {:.4e}",
+              scaling.min_abs, scaling.max_abs, spectral_norm);
 
-  logger.info(
-      "Target relative tolerance {:.1e}, restarts {}",
-      tolerance,
-      use_restarts ? "on" : "off");
+  logger.info("Target relative tolerance {:.1e}, restarts {}", tolerance,
+              use_restarts ? "on" : "off");
 
   // ---- Iterates, in SCALED space ----------------------------------------------------------
-  const auto n =
-      static_cast<std::size_t>(cols);
+  const auto n = static_cast<std::size_t>(cols);
 
-  const auto m =
-      static_cast<std::size_t>(rows);
+  const auto m = static_cast<std::size_t>(rows);
 
   std::vector<double> x(n, 0.0);
   std::vector<double> y(m, 0.0);
@@ -543,12 +439,8 @@ Solution solve_pdhg(
   for (Index j = 0; j < cols; ++j) {
     // Start at the projection of zero, which is the closest feasible point to the origin.
     x[static_cast<std::size_t>(j)] =
-        project(
-            0.0,
-            scaling.col_lower[
-                static_cast<std::size_t>(j)],
-            scaling.col_upper[
-                static_cast<std::size_t>(j)]);
+        project(0.0, scaling.col_lower[static_cast<std::size_t>(j)],
+                scaling.col_upper[static_cast<std::size_t>(j)]);
   }
 
   std::vector<double> x_next(n, 0.0);
@@ -561,16 +453,9 @@ Solution solve_pdhg(
 #ifdef SANKHYA_ENABLE_CUDA
   // Initialize GPU vectors.
   if (use_cuda) {
-    if (!gpu::pdhg_cuda_upload_x(
-            cuda_context,
-            x.data(),
-            n) ||
-        !gpu::pdhg_cuda_upload_y(
-            cuda_context,
-            y.data(),
-            m)) {
-      logger.warning(
-          "CUDA vector initialization failed; falling back to CPU");
+    if (!gpu::pdhg_cuda_upload_x(cuda_context, x.data(), n) ||
+        !gpu::pdhg_cuda_upload_y(cuda_context, y.data(), m)) {
+      logger.warning("CUDA vector initialization failed; falling back to CPU");
       gpu::pdhg_cuda_destroy(cuda_context);
       cuda_context = nullptr;
       use_cuda = false;
@@ -595,30 +480,21 @@ Solution solve_pdhg(
   std::vector<double> activity(m, 0.0);
   std::vector<double> reduced(n, 0.0);
 
-  const auto unscale =
-      [&](const std::vector<double>& xs,
-          const std::vector<double>& ys) {
-        for (Index j = 0; j < cols; ++j) {
-          const auto u =
-              static_cast<std::size_t>(j);
+  const auto unscale = [&](const std::vector<double>& xs, const std::vector<double>& ys) {
+    for (Index j = 0; j < cols; ++j) {
+      const auto u = static_cast<std::size_t>(j);
 
-          x_unscaled[u] =
-              xs[u] * scaling.column[u];
-        }
+      x_unscaled[u] = xs[u] * scaling.column[u];
+    }
 
-        for (Index i = 0; i < rows; ++i) {
-          const auto u =
-              static_cast<std::size_t>(i);
+    for (Index i = 0; i < rows; ++i) {
+      const auto u = static_cast<std::size_t>(i);
 
-          y_unscaled[u] =
-              ys[u] * scaling.row[u];
-        }
-      };
+      y_unscaled[u] = ys[u] * scaling.row[u];
+    }
+  };
 
-  double eta =
-      spectral_norm > 0.0
-          ? 1.0 / spectral_norm
-          : 1.0;
+  double eta = spectral_norm > 0.0 ? 1.0 / spectral_norm : 1.0;
 
   double omega = 1.0;
 
@@ -626,15 +502,11 @@ Solution solve_pdhg(
   Count restarts = 0;
   Count last_restart = 0;
 
-  double restart_kkt =
-      std::numeric_limits<double>::infinity();
+  double restart_kkt = std::numeric_limits<double>::infinity();
 
   Residuals best;
 
-  best.primal =
-      best.dual =
-          best.gap =
-              std::numeric_limits<double>::infinity();
+  best.primal = best.dual = best.gap = std::numeric_limits<double>::infinity();
 
   std::vector<double> best_x = x;
   std::vector<double> best_y = y;
@@ -658,22 +530,12 @@ Solution solve_pdhg(
       const Count remaining_in_eval =
           static_cast<Count>(kEvaluationInterval) - (iteration % kEvaluationInterval);
       const Count remaining_in_limit = iteration_limit - iteration;
-      const int max_batch =
-          static_cast<int>(std::min(remaining_in_eval, remaining_in_limit));
+      const int max_batch = static_cast<int>(std::min(remaining_in_eval, remaining_in_limit));
 
       gpu::PdhgBatchResult batch_result;
-      if (!gpu::pdhg_cuda_step_batch(
-              cuda_context,
-              eta,
-              omega,
-              spectral_norm,
-              iteration,
-              averaged,
-              iteration_limit,
-              max_batch,
-              &batch_result)) {
-        logger.warning(
-            "CUDA PDHG step batch failed; falling back to CPU");
+      if (!gpu::pdhg_cuda_step_batch(cuda_context, eta, omega, spectral_norm, iteration,
+                                     averaged, iteration_limit, max_batch, &batch_result)) {
+        logger.warning("CUDA PDHG step batch failed; falling back to CPU");
         static_cast<void>(gpu::pdhg_cuda_download_x(cuda_context, x.data(), n));
         static_cast<void>(gpu::pdhg_cuda_download_y(cuda_context, y.data(), m));
         gpu::pdhg_cuda_destroy(cuda_context);
@@ -691,42 +553,29 @@ Solution solve_pdhg(
     if (!use_cuda) {
       // ---- One PDHG step, [CP11] Algorithm 1 with step sizes tau = eta/omega, sigma =
       // eta*omega.
-      const double tau =
-          eta / omega;
+      const double tau = eta / omega;
 
-      const double sigma =
-          eta * omega;
+      const double sigma = eta * omega;
 
       // -------------------------------------------------------------------------
       // Primal: x' = proj_X( x - tau (c + A'y) )
       // -------------------------------------------------------------------------
       for (Index j = 0; j < cols; ++j) {
-        at_y[static_cast<std::size_t>(j)] =
-            0.0;
+        at_y[static_cast<std::size_t>(j)] = 0.0;
       }
 
       if (rows > 0) {
-        scaling.matrix.transpose_multiply(
-            y.data(),
-            at_y.data());
+        scaling.matrix.transpose_multiply(y.data(), at_y.data());
       }
 
       for (Index j = 0; j < cols; ++j) {
-        const auto u =
-            static_cast<std::size_t>(j);
+        const auto u = static_cast<std::size_t>(j);
 
-        const double gradient =
-            scaling.cost[u] +
-            at_y[u];
+        const double gradient = scaling.cost[u] + at_y[u];
 
-        x_next[u] =
-            project(
-                x[u] - tau * gradient,
-                scaling.col_lower[u],
-                scaling.col_upper[u]);
+        x_next[u] = project(x[u] - tau * gradient, scaling.col_lower[u], scaling.col_upper[u]);
 
-        extrapolated[u] =
-            2.0 * x_next[u] - x[u];
+        extrapolated[u] = 2.0 * x_next[u] - x[u];
       }
 
       // -------------------------------------------------------------------------
@@ -736,25 +585,15 @@ Solution solve_pdhg(
       //    = v - sigma proj_C(v / sigma)
       // -------------------------------------------------------------------------
       if (rows > 0) {
-        scaling.matrix.multiply(
-            extrapolated.data(),
-            a_x.data());
+        scaling.matrix.multiply(extrapolated.data(), a_x.data());
       }
 
       for (Index i = 0; i < rows; ++i) {
-        const auto u =
-            static_cast<std::size_t>(i);
+        const auto u = static_cast<std::size_t>(i);
 
-        const double v =
-            y[u] + sigma * a_x[u];
+        const double v = y[u] + sigma * a_x[u];
 
-        y_next[u] =
-            v -
-            sigma *
-                project(
-                    v / sigma,
-                    scaling.row_lower[u],
-                    scaling.row_upper[u]);
+        y_next[u] = v - sigma * project(v / sigma, scaling.row_lower[u], scaling.row_upper[u]);
       }
 
       // ---- Adaptive step size, [PDLP] section 3.1 ------------------------------------------
@@ -763,25 +602,15 @@ Solution solve_pdhg(
       double movement = 0.0;
 
       for (Index j = 0; j < cols; ++j) {
-        const double d =
-            x_next[
-                static_cast<std::size_t>(j)] -
-            x[
-                static_cast<std::size_t>(j)];
+        const double d = x_next[static_cast<std::size_t>(j)] - x[static_cast<std::size_t>(j)];
 
-        movement +=
-            0.5 * omega * d * d;
+        movement += 0.5 * omega * d * d;
       }
 
       for (Index i = 0; i < rows; ++i) {
-        const double d =
-            y_next[
-                static_cast<std::size_t>(i)] -
-            y[
-                static_cast<std::size_t>(i)];
+        const double d = y_next[static_cast<std::size_t>(i)] - y[static_cast<std::size_t>(i)];
 
-        movement +=
-            0.5 * d * d / omega;
+        movement += 0.5 * d * d / omega;
       }
 
       double interaction = 0.0;
@@ -792,29 +621,20 @@ Solution solve_pdhg(
 
         for (Index j = 0; j < cols; ++j) {
           dx[static_cast<std::size_t>(j)] =
-              x_next[
-                  static_cast<std::size_t>(j)] -
-              x[
-                  static_cast<std::size_t>(j)];
+              x_next[static_cast<std::size_t>(j)] - x[static_cast<std::size_t>(j)];
         }
 
         std::vector<double> adx(m, 0.0);
 
-        scaling.matrix.multiply(
-            dx.data(),
-            adx.data());
+        scaling.matrix.multiply(dx.data(), adx.data());
 
         for (Index i = 0; i < rows; ++i) {
-          const auto u =
-              static_cast<std::size_t>(i);
+          const auto u = static_cast<std::size_t>(i);
 
-          interaction +=
-              (y_next[u] - y[u]) *
-              adx[u];
+          interaction += (y_next[u] - y[u]) * adx[u];
         }
 
-        interaction =
-            std::fabs(interaction);
+        interaction = std::fabs(interaction);
       }
 
       // Zero interaction means the step carried NO information about how large eta may safely
@@ -831,29 +651,18 @@ Solution solve_pdhg(
       //
       // The step is trivially admissible when there is no interaction, so the honest response
       // is to accept it and leave eta exactly where it was.
-      no_information =
-          interaction <= 0.0;
+      no_information = interaction <= 0.0;
 
       const double limit =
-          no_information
-              ? std::numeric_limits<double>::infinity()
-              : movement / interaction;
+          no_information ? std::numeric_limits<double>::infinity() : movement / interaction;
 
-      const double exponent =
-          static_cast<double>(std::max<Count>(2, iteration + 1));
+      const double exponent = static_cast<double>(std::max<Count>(2, iteration + 1));
 
-      const double shrink =
-          1.0 -
-          std::pow(exponent, -0.3);
+      const double shrink = 1.0 - std::pow(exponent, -0.3);
 
-      const double grow =
-          1.0 +
-          std::pow(exponent, -0.6);
+      const double grow = 1.0 + std::pow(exponent, -0.6);
 
-      const double proposed =
-          std::min(
-              shrink * limit,
-              grow * eta);
+      const double proposed = std::min(shrink * limit, grow * eta);
 
       if (eta <= limit) {
         // Accept.
@@ -861,17 +670,11 @@ Solution solve_pdhg(
         y.swap(y_next);
 
         for (Index j = 0; j < cols; ++j) {
-          x_sum[
-              static_cast<std::size_t>(j)] +=
-              x[
-                  static_cast<std::size_t>(j)];
+          x_sum[static_cast<std::size_t>(j)] += x[static_cast<std::size_t>(j)];
         }
 
         for (Index i = 0; i < rows; ++i) {
-          y_sum[
-              static_cast<std::size_t>(i)] +=
-              y[
-                  static_cast<std::size_t>(i)];
+          y_sum[static_cast<std::size_t>(i)] += y[static_cast<std::size_t>(i)];
         }
 
         ++averaged;
@@ -883,18 +686,10 @@ Solution solve_pdhg(
       // clamp is a backstop against unbounded growth: the vanilla method needs
       // eta <= 1/||A||_2, and the adaptive rule may exceed that safely, but never by orders
       // of magnitude.
-      const double eta_ceiling =
-          1.0e3 /
-          std::max(
-              spectral_norm,
-              1e-12);
+      const double eta_ceiling = 1.0e3 / std::max(spectral_norm, 1e-12);
 
       if (!no_information) {
-        eta =
-            std::clamp(
-                proposed,
-                1e-12,
-                eta_ceiling);
+        eta = std::clamp(proposed, 1e-12, eta_ceiling);
       }
     }
 
@@ -906,8 +701,7 @@ Solution solve_pdhg(
       continue;
     }
 
-    if (iteration % kEvaluationInterval != 0 &&
-        !no_information) {
+    if (iteration % kEvaluationInterval != 0 && !no_information) {
       continue;
     }
 
@@ -925,30 +719,19 @@ Solution solve_pdhg(
 
     unscale(x, y);
 
-    std::vector<double> current_x =
-        x_unscaled;
+    std::vector<double> current_x = x_unscaled;
 
-    std::vector<double> current_y =
-        y_unscaled;
+    std::vector<double> current_y = y_unscaled;
 
-    const Residuals current =
-        evaluate(
-            problem,
-            current_x,
-            current_y,
-            &activity,
-            &reduced);
+    const Residuals current = evaluate(problem, current_x, current_y, &activity, &reduced);
 
     // PDLP restarts to whichever of the running average and the current iterate has the
     // better KKT error, so both are evaluated and the better one is carried forward.
-    const Residuals* chosen =
-        &current;
+    const Residuals* chosen = &current;
 
-    const std::vector<double>* chosen_x =
-        &current_x;
+    const std::vector<double>* chosen_x = &current_x;
 
-    const std::vector<double>* chosen_y =
-        &current_y;
+    const std::vector<double>* chosen_y = &current_y;
 
     Residuals average;
 
@@ -961,11 +744,8 @@ Solution solve_pdhg(
 
 #ifdef SANKHYA_ENABLE_CUDA
       if (use_cuda) {
-        if (!gpu::pdhg_cuda_download_average(
-                cuda_context,
-                x_avg.data(),
-                y_avg.data(),
-                static_cast<std::size_t>(averaged))) {
+        if (!gpu::pdhg_cuda_download_average(cuda_context, x_avg.data(), y_avg.data(),
+                                             static_cast<std::size_t>(averaged))) {
           logger.warning("CUDA average download failed; falling back to CPU");
           gpu::pdhg_cuda_destroy(cuda_context);
           cuda_context = nullptr;
@@ -974,54 +754,34 @@ Solution solve_pdhg(
       } else
 #endif
       {
-        const auto count =
-            static_cast<double>(averaged);
+        const auto count = static_cast<double>(averaged);
 
         for (Index j = 0; j < cols; ++j) {
-          x_avg[
-              static_cast<std::size_t>(j)] =
-              x_sum[
-                  static_cast<std::size_t>(j)] /
-              count;
+          x_avg[static_cast<std::size_t>(j)] = x_sum[static_cast<std::size_t>(j)] / count;
         }
 
         for (Index i = 0; i < rows; ++i) {
-          y_avg[
-              static_cast<std::size_t>(i)] =
-              y_sum[
-                  static_cast<std::size_t>(i)] /
-              count;
+          y_avg[static_cast<std::size_t>(i)] = y_sum[static_cast<std::size_t>(i)] / count;
         }
       }
 
-      unscale(
-          x_avg,
-          y_avg);
+      unscale(x_avg, y_avg);
 
       average_x = x_unscaled;
       average_y = y_unscaled;
 
-      average =
-          evaluate(
-              problem,
-              average_x,
-              average_y,
-              &activity,
-              &reduced);
+      average = evaluate(problem, average_x, average_y, &activity, &reduced);
 
-      if (average.worst() <
-          current.worst()) {
+      if (average.worst() < current.worst()) {
         chosen = &average;
         chosen_x = &average_x;
         chosen_y = &average_y;
       }
     }
 
-    const Residuals& better =
-        *chosen;
+    const Residuals& better = *chosen;
 
-    if (better.worst() <
-        best.worst()) {
+    if (better.worst() < best.worst()) {
       best = better;
       best_x = *chosen_x;
       best_y = *chosen_y;
@@ -1035,16 +795,10 @@ Solution solve_pdhg(
     // `+ model.objective_offset`, for the same reason PrimalSimplex::minimization_objective()
     // adds it: the number in the iteration table and in the --progress-out stream has to be
     // the same quantity the final line and the .sol file report.
-    logger.iteration(
-        iteration,
-        sense * better.primal_objective +
-            model.objective_offset,
-        better.primal,
-        better.dual,
-        timer.elapsed_seconds());
+    logger.iteration(iteration, sense * better.primal_objective + model.objective_offset,
+                     better.primal, better.dual, timer.elapsed_seconds());
 
-    if (better.meets_request(tolerance) &&
-        better.meets_project_standard()) {
+    if (better.meets_request(tolerance) && better.meets_project_standard()) {
       // Report the point that PASSED, not whichever earlier iterate happened to have the
       // smallest relative residual. best_x tracks worst(), which is a relative measure, so
       // an earlier iterate can hold that title while being less feasible in absolute terms -
@@ -1062,23 +816,15 @@ Solution solve_pdhg(
       // subproblem per candidate; the KKT error is the practical proxy the paper describes,
       // and it is what is used here. Said plainly so the log is not mistaken for the
       // theoretical criterion.
-      const double kkt =
-          better.worst();
+      const double kkt = better.worst();
 
-      const Count since =
-          iteration - last_restart;
+      const Count since = iteration - last_restart;
 
-      const bool sufficient =
-          kkt <= 0.2 * restart_kkt;
+      const bool sufficient = kkt <= 0.2 * restart_kkt;
 
       const bool artificial =
-          since >=
-          std::max<Count>(
-              kEvaluationInterval,
-              static_cast<Count>(
-                  0.36 *
-                  static_cast<double>(
-                      iteration)));
+          since >= std::max<Count>(kEvaluationInterval,
+                                   static_cast<Count>(0.36 * static_cast<double>(iteration)));
 
       if (sufficient || artificial) {
         // Restart at the better candidate, and move the primal weight towards the observed
@@ -1087,46 +833,26 @@ Solution solve_pdhg(
         std::vector<double> dy(m);
 
         for (Index j = 0; j < cols; ++j) {
-          dx[
-              static_cast<std::size_t>(j)] =
-              x[
-                  static_cast<std::size_t>(j)] -
-              x_restart[
-                  static_cast<std::size_t>(j)];
+          dx[static_cast<std::size_t>(j)] =
+              x[static_cast<std::size_t>(j)] - x_restart[static_cast<std::size_t>(j)];
         }
 
         for (Index i = 0; i < rows; ++i) {
-          dy[
-              static_cast<std::size_t>(i)] =
-              y[
-                  static_cast<std::size_t>(i)] -
-              y_restart[
-                  static_cast<std::size_t>(i)];
+          dy[static_cast<std::size_t>(i)] =
+              y[static_cast<std::size_t>(i)] - y_restart[static_cast<std::size_t>(i)];
         }
 
-        const double dx_norm =
-            euclidean_norm(dx);
+        const double dx_norm = euclidean_norm(dx);
 
-        const double dy_norm =
-            euclidean_norm(dy);
+        const double dy_norm = euclidean_norm(dy);
 
-        if (dx_norm > 1e-12 &&
-            dy_norm > 1e-12) {
+        if (dx_norm > 1e-12 && dy_norm > 1e-12) {
           const double theta = 0.5;
 
           omega =
-              std::exp(
-                  theta *
-                      std::log(
-                          dy_norm / dx_norm) +
-                  (1.0 - theta) *
-                      std::log(omega));
+              std::exp(theta * std::log(dy_norm / dx_norm) + (1.0 - theta) * std::log(omega));
 
-          omega =
-              std::clamp(
-                  omega,
-                  1e-6,
-                  1e6);
+          omega = std::clamp(omega, 1e-6, 1e6);
         }
 
 #ifdef SANKHYA_ENABLE_CUDA
@@ -1135,15 +861,9 @@ Solution solve_pdhg(
         } else
 #endif
         {
-          std::fill(
-              x_sum.begin(),
-              x_sum.end(),
-              0.0);
+          std::fill(x_sum.begin(), x_sum.end(), 0.0);
 
-          std::fill(
-              y_sum.begin(),
-              y_sum.end(),
-              0.0);
+          std::fill(y_sum.begin(), y_sum.end(), 0.0);
         }
 
         averaged = 0;
@@ -1156,58 +876,38 @@ Solution solve_pdhg(
 
         ++restarts;
 
-        logger.verbose(
-            "restart {} at iteration {}: KKT {:.3e}, primal weight {:.3e}",
-            restarts,
-            iteration,
-            kkt,
-            omega);
+        logger.verbose("restart {} at iteration {}: KKT {:.3e}, primal weight {:.3e}", restarts,
+                       iteration, kkt, omega);
       }
     }
   }
 
   // ---- Report ----------------------------------------------------------------------------
   for (Index j = 0; j < cols; ++j) {
-    const auto u =
-        static_cast<std::size_t>(j);
+    const auto u = static_cast<std::size_t>(j);
 
-    solution.col_value[u] =
-        best_x.empty()
-            ? 0.0
-            : best_x[u];
+    solution.col_value[u] = best_x.empty() ? 0.0 : best_x[u];
   }
 
   // Recompute the reduced costs at the reported point so the .sol file is self-consistent.
-  const Residuals final_residuals =
-      evaluate(
-          problem,
-          best_x,
-          best_y,
-          &activity,
-          &reduced);
+  const Residuals final_residuals = evaluate(problem, best_x, best_y, &activity, &reduced);
 
   for (Index j = 0; j < cols; ++j) {
-    const auto u =
-        static_cast<std::size_t>(j);
+    const auto u = static_cast<std::size_t>(j);
 
-    solution.col_dual[u] =
-        sense * reduced[u];
+    solution.col_dual[u] = sense * reduced[u];
   }
 
   for (Index i = 0; i < rows; ++i) {
-    const auto u =
-        static_cast<std::size_t>(i);
+    const auto u = static_cast<std::size_t>(i);
 
     // The Lagrangian above adds y'Ax, so the reported multiplier is the negation.
-    solution.row_dual[u] =
-        sense * (-best_y[u]);
+    solution.row_dual[u] = sense * (-best_y[u]);
   }
 
-  solution.iterations =
-      iteration;
+  solution.iterations = iteration;
 
-  solution.solve_seconds =
-      timer.elapsed_seconds();
+  solution.solve_seconds = timer.elapsed_seconds();
 
   // kOptimal is a claim that this point would survive tools/verify_solution.py, which
   // measures ABSOLUTE feasibility against the tolerances in tolerances.hpp. Meeting the
@@ -1218,103 +918,66 @@ Solution solve_pdhg(
   // points the verifier rejected. A point that stops on the caller's tolerance but misses
   // the project standard is a usable answer with no optimality claim attached - which is
   // exactly what kFeasible means, and it is what gets reported now.
-  const bool verifiable =
-      converged &&
-      final_residuals.meets_project_standard();
+  const bool verifiable = converged && final_residuals.meets_project_standard();
 
   if (verifiable) {
-    solution.status =
-        SolveStatus::kOptimal;
+    solution.status = SolveStatus::kOptimal;
 
-    solution.message =
-        fmt::format(
-            "converged after {} iterations and {} restarts; absolute primal {:.3e}, dual {:.3e}, "
-            "relative gap {:.3e}",
-            iteration,
-            restarts,
-            final_residuals.absolute_primal,
-            final_residuals.absolute_dual,
-            final_residuals.gap_as_verified);
+    solution.message = fmt::format(
+        "converged after {} iterations and {} restarts; absolute primal {:.3e}, dual {:.3e}, "
+        "relative gap {:.3e}",
+        iteration, restarts, final_residuals.absolute_primal, final_residuals.absolute_dual,
+        final_residuals.gap_as_verified);
   } else if (converged) {
-    solution.status =
-        SolveStatus::kFeasible;
+    solution.status = SolveStatus::kFeasible;
 
-    solution.message =
-        fmt::format(
-            "met the requested relative tolerance {:.1e} after {} iterations, but NOT the "
-            "absolute standard this project verifies against (primal {:.3e} vs {:.1e}, dual "
-            "{:.3e} vs {:.1e}, relative gap {:.3e} vs {:.1e}). Reported as feasible, not "
-            "optimal. Tighten --option pdhg_tolerance to close it",
-            tolerance,
-            iteration,
-            final_residuals.absolute_primal,
-            tol::kPrimalFeasibility,
-            final_residuals.absolute_dual,
-            tol::kDualFeasibility,
-            final_residuals.gap_as_verified,
-            tol::kDualityGap);
+    solution.message = fmt::format(
+        "met the requested relative tolerance {:.1e} after {} iterations, but NOT the "
+        "absolute standard this project verifies against (primal {:.3e} vs {:.1e}, dual "
+        "{:.3e} vs {:.1e}, relative gap {:.3e} vs {:.1e}). Reported as feasible, not "
+        "optimal. Tighten --option pdhg_tolerance to close it",
+        tolerance, iteration, final_residuals.absolute_primal, tol::kPrimalFeasibility,
+        final_residuals.absolute_dual, tol::kDualFeasibility, final_residuals.gap_as_verified,
+        tol::kDualityGap);
   } else {
     // PDHG stopping short is the normal case, not an exception. Report the residuals it
     // actually reached rather than implying the point is optimal.
-    solution.status =
-        timer.elapsed_seconds() > time_limit
-            ? SolveStatus::kTimeLimit
-            : SolveStatus::kIterationLimit;
+    solution.status = timer.elapsed_seconds() > time_limit ? SolveStatus::kTimeLimit
+                                                           : SolveStatus::kIterationLimit;
 
-    solution.message =
-        fmt::format(
-            "stopped at relative primal {:.3e}, dual {:.3e}, gap {:.3e} after {} iterations "
-            "and {} restarts (target {:.1e})",
-            final_residuals.primal,
-            final_residuals.dual,
-            final_residuals.gap,
-            iteration,
-            restarts,
-            tolerance);
+    solution.message = fmt::format(
+        "stopped at relative primal {:.3e}, dual {:.3e}, gap {:.3e} after {} iterations "
+        "and {} restarts (target {:.1e})",
+        final_residuals.primal, final_residuals.dual, final_residuals.gap, iteration, restarts,
+        tolerance);
   }
 
   // Only a verifiable point carries a dual bound. Anything else leaves it unknown, which is
   // the infinity on the unexplored side of the objective.
   if (verifiable) {
-    solution.dual_bound =
-        sense *
-            final_residuals.dual_objective +
-        model.objective_offset;
+    solution.dual_bound = sense * final_residuals.dual_objective + model.objective_offset;
   } else {
-    solution.dual_bound =
-        model.sense == ObjSense::kMaximize
-            ? kInfinity
-            : -kInfinity;
+    solution.dual_bound = model.sense == ObjSense::kMaximize ? kInfinity : -kInfinity;
   }
 
   solution.recompute_quality(model);
 
   logger.info("");
 
-  logger.info(
-      "Status: {}   objective {:.10e}   iterations {}   restarts {}   time {:.3f}s",
-      to_string(solution.status),
-      solution.objective,
-      solution.iterations,
-      restarts,
-      solution.solve_seconds);
+  logger.info("Status: {}   objective {:.10e}   iterations {}   restarts {}   time {:.3f}s",
+              to_string(solution.status), solution.objective, solution.iterations, restarts,
+              solution.solve_seconds);
 
-  logger.info(
-      "Relative residuals: primal {:.3e}, dual {:.3e}, gap {:.3e}",
-      final_residuals.primal,
-      final_residuals.dual,
-      final_residuals.gap);
+  logger.info("Relative residuals: primal {:.3e}, dual {:.3e}, gap {:.3e}",
+              final_residuals.primal, final_residuals.dual, final_residuals.gap);
 
   if (!solution.message.empty()) {
-    logger.info(
-        "{}",
-        solution.message);
+    logger.info("{}", solution.message);
   }
 
 #ifdef SANKHYA_ENABLE_CUDA
   if (cuda_context != nullptr) {
-    gpu::pdhg_cuda_destroy(
-        cuda_context);
+    gpu::pdhg_cuda_destroy(cuda_context);
   }
 #endif
 
