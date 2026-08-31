@@ -249,6 +249,35 @@ TEST(Presolve, DoubletonEquationCascadesIntoASingletonRow) {
   expect_agrees_with_unpresolved(model);
 }
 
+TEST(Presolve, FixedColumnSharingAFoldedDoubletonRowStillPricesCorrectly) {
+  // x0 is fixed OUTRIGHT by its own bounds, not by any row - fold_fixed_column() removes it
+  // from the equality row below before the doubleton reduction ever looks at that row, so
+  // the doubleton only ever sees x1 and x2 there and has no idea x0 used to share it.
+  //   min x0 + 2*x1 + 3*x2  s.t.  2*x0 + 3*x1 + 4*x2 = 20,  x0 in [5,5],  x1,x2 in [0,10]
+  // x0 = 5 folds the row to 3*x1 + 4*x2 = 10, a genuine doubleton: x1 = (10 - 4*x2)/3,
+  // folding x1's cost (2) into x2's gives 3 - 2*(4/3) = 1/3, and x1 in [0,10] implies
+  // x2 in [0, 2.5]. Minimising a positive cost on x2 parks it at 0, so x1 = 10/3.
+  // objective = 5 + 20/3 + 0 = 35/3.
+  //
+  // x0's ORIGINAL coefficient in that row (2) is real and must be priced against the row's
+  // TRUE dual once the doubleton derives it - postsolve found x0 dead in that row already
+  // (fixed columns are folded out before doubletons are even detected) and, before this was
+  // fixed, treated the row as fully "explained" for every column touching it, silently
+  // dropping x0's own term and reporting a self-inconsistent reduced cost. Found on Netlib's
+  // `bandm` (column ORROLC, fixed by an unrelated earlier equality, sharing a row with a
+  // later doubleton) - this is the same structure at unit-test scale.
+  const Model model =
+      make_lp({{2.0, 3.0, 4.0}}, {20.0}, {20.0}, {1.0, 2.0, 3.0}, {5.0, 0.0, 0.0}, {5.0, 10.0, 10.0});
+  const Solution on = solve(model, with_presolve(true));
+  ASSERT_EQ(on.status, SolveStatus::kOptimal) << on.message;
+  EXPECT_NEAR(on.objective, 35.0 / 3.0, 1e-9);
+  EXPECT_NEAR(on.col_value[0], 5.0, 1e-9);
+  EXPECT_NEAR(on.col_value[1], 10.0 / 3.0, 1e-9);
+  EXPECT_NEAR(on.col_value[2], 0.0, 1e-9);
+  EXPECT_LE(on.dual_infeasibility, tol::kDualFeasibility) << on.message;
+  expect_agrees_with_unpresolved(model);
+}
+
 TEST(Presolve, LeavesAModelWithNothingToRemoveAlone) {
   // Nothing here is empty, fixed, singleton or redundant, so presolve must be a no-op. A
   // reduction that fires when it should not is how a correct model becomes a wrong answer.

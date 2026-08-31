@@ -473,6 +473,25 @@ Result presolve(const Model& model, const Options& options, Logger& logger) {
         if (column < 0 || std::fabs(coefficient) < tol::kZeroDrop) continue;
 
         const auto c = static_cast<std::size_t>(column);
+
+        // A column already touched by a doubleton fold (as `elim` or `keep`) cannot also
+        // absorb a singleton row's price: the doubleton's own dual reconstruction folds the
+        // ELIMINATED column's cost into this one using a STATIC baseline (its cost at the
+        // moment presolve() eliminated it), which is only exact when that eliminated column
+        // has no other live row of its own to also pull its true price away from that
+        // baseline - true for a plain free-column-singleton, false in general for a
+        // doubleton's `elim`. When it has other rows, this column's TRUE reduced cost needs
+        // the doubleton's row dual and THIS row's dual solved jointly, which the per-row
+        // postsolve formulas cannot do (the same class of coupling doubleton_touched already
+        // declines between two doubletons - see its field comment). `bandm`'s ORROLC/RDAS2Q
+        // pair is exactly this: RDAS2Q (elim) touches 8 other rows, so its true row-47 price
+        // is not eliminated_cost/a, and pricing ORROLC from row 111 alone - as this reduction
+        // would - ignored that, failing the independent verifier's reduced-cost and strong-
+        // duality checks even though the primal objective was exact. Leaving this row alone
+        // keeps it in the reduced model, where the simplex itself solves the coupling
+        // correctly instead of postsolve trying to reconstruct it by hand.
+        if (work.doubleton_touched[c]) continue;
+
         double implied_lower = -kInfinity;
         double implied_upper = kInfinity;
         if (coefficient > 0.0) {
@@ -880,6 +899,19 @@ Solution postsolve(const Result& result, const Model& original, const Solution& 
   // an entry there or picked one up for the first time.
   std::vector<double> adjusted_cost = original.col_cost;
   std::vector<bool> row_is_folded(static_cast<std::size_t>(original.num_rows()), false);
+  // Which columns actually had THIS row's fold baked into their adjusted_cost above - a
+  // doubleton's partner, or whichever of a free-column-singleton's row-mates were still LIVE
+  // when it fired. A column that ALSO has an original entry in a folded row but was NOT one
+  // of those recipients - because something else (a fixed-column reduction, say) had already
+  // removed it from that row BEFORE the fold ever ran - never had this row's effect folded
+  // into it anywhere, and skipping the row for such a column below would simply drop its
+  // true contribution rather than avoid double-counting it. Netlib's `bandm`, column ORROLC:
+  // fixed by an EARLIER singleton-row equality, so already dead in row 49 by the time that
+  // row's doubleton fired - yet ORROLC's ORIGINAL coefficient there is very much real, and
+  // the independent verifier's reduced-cost check is computed against the ORIGINAL matrix,
+  // which has no idea presolve ever removed it.
+  std::vector<std::vector<Index>> folded_row_recipients(
+      static_cast<std::size_t>(original.num_rows()));
   std::vector<std::unordered_map<Index, double>> row_overrides(
       static_cast<std::size_t>(original.num_rows()));
   // Rows a column picked up a fill-in entry in that it did NOT originally appear in - the
@@ -906,6 +938,7 @@ Solution postsolve(const Result& result, const Model& original, const Solution& 
       // Exactly one partner, no liveness question to ask.
       adjusted_cost[static_cast<std::size_t>(rec.partner_column)] -=
           rec.eliminated_cost * (rec.partner_coefficient / rec.coefficient);
+      folded_row_recipients[static_cast<std::size_t>(rec.index)].push_back(rec.partner_column);
 
       const ColumnView elim_view = original.matrix.column(rec.column);
       for (Index t = 0; t < elim_view.size; ++t) {
@@ -947,6 +980,7 @@ Solution postsolve(const Result& result, const Model& original, const Solution& 
         const auto found = overrides_here.find(col);
         if (found != overrides_here.end()) coefficient += found->second;
         adjusted_cost[uc] -= rec.eliminated_cost * (coefficient / rec.coefficient);
+        folded_row_recipients[static_cast<std::size_t>(rec.index)].push_back(col);
       }
       // A column an EARLIER doubleton's fill-in added to this row - not in the ORIGINAL row
       // at all, so the loop above never sees it - still shares this row and must receive the
@@ -958,6 +992,7 @@ Solution postsolve(const Result& result, const Model& original, const Solution& 
         const auto found = overrides_here.find(col);
         if (found == overrides_here.end()) continue;
         adjusted_cost[uc] -= rec.eliminated_cost * (found->second / rec.coefficient);
+        folded_row_recipients[static_cast<std::size_t>(rec.index)].push_back(col);
       }
     }
   }
@@ -1078,7 +1113,18 @@ Solution postsolve(const Result& result, const Model& original, const Solution& 
     const ColumnView view = original.matrix.column(column);
     for (Index k = 0; k < view.size; ++k) {
       const Index row = view.rows[k];
-      if (row_is_folded[static_cast<std::size_t>(row)]) continue;
+      // A folded row's effect is already baked into adjusted_cost, but ONLY for the columns
+      // that were actually LIVE in it when the fold fired (folded_row_recipients). A column
+      // that also has an original entry there but was already gone by fold time - fixed by
+      // an earlier, unrelated reduction, say - never received that bake-in, so its true
+      // contribution from this row must still be counted normally, from whatever dual this
+      // row ends up with (see folded_row_recipients' comment above).
+      if (row_is_folded[static_cast<std::size_t>(row)]) {
+        const auto& recipients = folded_row_recipients[static_cast<std::size_t>(row)];
+        const bool is_recipient =
+            std::find(recipients.begin(), recipients.end(), column) != recipients.end();
+        if (is_recipient) continue;
+      }
       const double coefficient = effective_coefficient(row, column, view.values[k]);
       d -= coefficient * solution.row_dual[static_cast<std::size_t>(row)];
     }
@@ -1124,18 +1170,36 @@ Solution postsolve(const Result& result, const Model& original, const Solution& 
     }
   }
 
-  for (auto it = result.records.rbegin(); it != result.records.rend(); ++it) {
-    if (it->kind != Record::Kind::kSingletonRow) continue;
-    const auto c = static_cast<std::size_t>(it->column);
-    if (std::fabs(it->coefficient) <= tol::kZeroDrop) continue;
+  // A column can have an ORIGINAL entry in a folded row without that row's fold ever having
+  // touched its cost - `folded_row_recipients` above is exactly the set that DID get baked
+  // in, and anything outside it (bandm's ORROLC in row 49: fixed by an earlier, unrelated
+  // singleton-row equality, so already gone from that row by the time its doubleton fired)
+  // still needs the row's TRUE dual, not the zero placeholder this loop runs with. Since that
+  // dual is only known once the free-column-singleton/doubleton loop below has run, a
+  // kSingletonRow record for such a column cannot be safely decided here - it is deferred to
+  // a second pass, after that loop, using the identical logic below.
+  const auto depends_on_unresolved_fold = [&](Index column) {
+    const ColumnView view = original.matrix.column(column);
+    for (Index k = 0; k < view.size; ++k) {
+      const Index row = view.rows[k];
+      if (!row_is_folded[static_cast<std::size_t>(row)]) continue;
+      const auto& recipients = folded_row_recipients[static_cast<std::size_t>(row)];
+      if (std::find(recipients.begin(), recipients.end(), column) == recipients.end()) {
+        return true;
+      }
+    }
+    return false;
+  };
 
+  const auto process_singleton_row = [&](const Record& it) {
+    const auto c = static_cast<std::size_t>(it.column);
     const double x = solution.col_value[c];
     const double lo = original.col_lower[c];
     const double hi = original.col_upper[c];
     const bool at_lower = finite(lo) && std::fabs(x - lo) <= tol::kPrimalFeasibility;
     const bool at_upper = finite(hi) && std::fabs(x - hi) <= tol::kPrimalFeasibility;
 
-    const double d = reduced_cost_of(it->column);
+    const double d = reduced_cost_of(it.column);
     const double signed_d = sense * d;
     // Free to sit where it is, so the reduced cost must be zero; at a bound, only the wrong
     // sign needs paying for. A column already at an ORIGINAL bound with an admissible sign
@@ -1159,7 +1223,7 @@ Solution postsolve(const Result& result, const Model& original, const Solution& 
         solution.col_dual[c] = d;
         dual_finalized[c] = true;
       }
-      continue;
+      return;
     }
 
     // THE ROW MUST ACTUALLY BE ACTIVE. Complementary slackness forbids a price on a
@@ -1169,17 +1233,17 @@ Solution postsolve(const Result& result, const Model& original, const Solution& 
     // price landed on the second, which is slack by 4. The oracle reported 59 degenerate
     // instances where the optimum existed and the solver returned merely `feasible`; this
     // was all of them.
-    const double activity = it->coefficient * x;
+    const double activity = it.coefficient * x;
     const bool row_at_lower =
-        finite(it->row_lower) && std::fabs(activity - it->row_lower) <= tol::kPrimalFeasibility;
+        finite(it.row_lower) && std::fabs(activity - it.row_lower) <= tol::kPrimalFeasibility;
     const bool row_at_upper =
-        finite(it->row_upper) && std::fabs(activity - it->row_upper) <= tol::kPrimalFeasibility;
+        finite(it.row_upper) && std::fabs(activity - it.row_upper) <= tol::kPrimalFeasibility;
     if (!row_at_lower && !row_at_upper) {
       if (!dual_finalized[c] && !is_doubleton_participant[c]) {
         solution.col_dual[c] = d;
         dual_finalized[c] = true;
       }
-      continue;
+      return;
     }
 
     // AND THE PRICE MUST HAVE AN ADMISSIBLE SIGN. A column can be pinned between two
@@ -1194,25 +1258,25 @@ Solution postsolve(const Result& result, const Model& original, const Solution& 
     // lets the next record price it correctly, because d is recomputed from the duals each
     // time round - and if there IS no next record to correct it, this row genuinely was not
     // the one that needed to act, so d stands as the finalised answer, same as above.
-    const double candidate = d / it->coefficient;
+    const double candidate = d / it.coefficient;
     const double signed_candidate = sense * candidate;
     if (row_at_lower && !row_at_upper && signed_candidate < -tol::kDualFeasibility) {
       if (!dual_finalized[c] && !is_doubleton_participant[c]) {
         solution.col_dual[c] = d;
         dual_finalized[c] = true;
       }
-      continue;
+      return;
     }
     if (row_at_upper && !row_at_lower && signed_candidate > tol::kDualFeasibility) {
       if (!dual_finalized[c] && !is_doubleton_participant[c]) {
         solution.col_dual[c] = d;
         dual_finalized[c] = true;
       }
-      continue;
+      return;
     }
 
-    solution.row_dual[static_cast<std::size_t>(it->index)] = candidate;
-    solution.row_status[static_cast<std::size_t>(it->index)] =
+    solution.row_dual[static_cast<std::size_t>(it.index)] = candidate;
+    solution.row_status[static_cast<std::size_t>(it.index)] =
         row_at_lower ? BasisStatus::kAtLower : BasisStatus::kAtUpper;
     solution.col_status[c] = BasisStatus::kBasic;
     dual_finalized[c] = true;
@@ -1224,6 +1288,17 @@ Solution postsolve(const Result& result, const Model& original, const Solution& 
     // re-derived c's dual too - from ITS OWN row instead - the two would disagree about
     // which row actually did the pricing. Claiming c here is what stops that.
     dual_finalized[c] = true;
+  };
+
+  std::vector<const Record*> deferred_singleton_rows;
+  for (auto it = result.records.rbegin(); it != result.records.rend(); ++it) {
+    if (it->kind != Record::Kind::kSingletonRow) continue;
+    if (std::fabs(it->coefficient) <= tol::kZeroDrop) continue;
+    if (depends_on_unresolved_fold(it->column)) {
+      deferred_singleton_rows.push_back(&*it);
+      continue;
+    }
+    process_singleton_row(*it);
   }
 
   // kFreeColumnSingleton and kDoubletonEquation duals.
@@ -1384,6 +1459,14 @@ Solution postsolve(const Result& result, const Model& original, const Solution& 
     // exactly zero rather than leaving a rounded residue for the verifier to trip over.
     solution.col_dual[c] = 0.0;
     dual_finalized[c] = true;
+  }
+
+  // The kSingletonRow records deferred above, now that every folded row above has a REAL
+  // dual instead of the zero placeholder - process_singleton_row's reduced_cost_of call
+  // reads exactly the same solution.row_dual it always did, but the entries that matter for
+  // these deferred columns are no longer placeholders.
+  for (const Record* rec : deferred_singleton_rows) {
+    process_singleton_row(*rec);
   }
 
   // Reduced costs for the REMOVED columns only. The surviving columns keep what the engine
