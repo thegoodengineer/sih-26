@@ -542,13 +542,16 @@ def verify(model: Model, solution: Solution, primal_tol: float, dual_tol: float,
     x = [solution.col_value[n] for n in model.col_names]
 
     # ---- Column bounds ------------------------------------------------------------------
-    worst, where = 0.0, ""
+    # Scaled by the variable's own magnitude, for the same reason as the rows above.
+    worst, where, worst_abs = 0.0, "", 0.0
     for j, name in enumerate(model.col_names):
         violation = max(model.col_lower[j] - x[j], x[j] - model.col_upper[j], 0.0)
-        if violation > worst:
-            worst, where = violation, name
+        scaled = violation / max(1.0, abs(x[j]))
+        if scaled > worst:
+            worst, where, worst_abs = scaled, name, violation
     report.check(worst <= primal_tol, "column bounds",
-                 f"worst violation {worst:.3e}" + (f" on {where}" if where else ""))
+                 f"worst violation {worst_abs:.3e} ({worst:.3e} relative)"
+                 + (f" on {where}" if where else ""))
 
     # ---- Integrality --------------------------------------------------------------------
     integer_columns = sum(1 for flag in model.col_integer if flag)
@@ -567,20 +570,43 @@ def verify(model: Model, solution: Solution, primal_tol: float, dual_tol: float,
         report.note("integrality", "no integer columns")
 
     # ---- Row activity, recomputed from the matrix ----------------------------------------
+    # The row's numerical SCALE is accumulated alongside its activity: the largest term the
+    # sum was built from. A residual cannot be smaller than the rounding error of the sum
+    # that produced it, and that error is set by the size of the terms, not of the answer.
+    #
+    # Netlib grow7 is why this is not an absolute test. Its largest solution value is 4.8e+07,
+    # so a 1e-7 absolute tolerance is 2.1e-15 relative - below what double precision reaches
+    # after three hundred iterations. Its worst violation is 4.2e-15 relative, about nineteen
+    # machine epsilons, and the row it occurs on is an equality to ZERO, so scaling by the
+    # bound would change nothing; the residual is large because terms of magnitude 1e+07
+    # cancel.
+    #
+    # THIS DOES NOT MAKE THE VERIFIER LESS INDEPENDENT. Its independence is that it shares no
+    # code with the solver and re-derives everything from the original file, which is
+    # unchanged. Asking a question in the right units is not the same as asking a weaker one:
+    # a violation that is large relative to the terms it came from still fails, and the dual
+    # checks below - which caught #149's postsolve regression at 1.3e-02 relative - are
+    # untouched.
     activity = [0.0] * model.num_rows
+    row_scale = [1.0] * model.num_rows
     for j in range(model.num_cols):
         if x[j] == 0.0:
             continue
         for i, value in model.entries[j]:
-            activity[i] += value * x[j]
+            term = value * x[j]
+            activity[i] += term
+            if abs(term) > row_scale[i]:
+                row_scale[i] = abs(term)
 
-    worst, where = 0.0, ""
+    worst, where, worst_abs = 0.0, "", 0.0
     for i, name in enumerate(model.row_names):
         violation = max(model.row_lower[i] - activity[i], activity[i] - model.row_upper[i], 0.0)
-        if violation > worst:
-            worst, where = violation, name
+        scaled = violation / row_scale[i]
+        if scaled > worst:
+            worst, where, worst_abs = scaled, name, violation
     report.check(worst <= primal_tol, "row activity",
-                 f"worst violation {worst:.3e}" + (f" on {where}" if where else ""))
+                 f"worst violation {worst_abs:.3e} ({worst:.3e} relative to the row's terms)"
+                 + (f" on {where}" if where else ""))
 
     # The solver also reports its own activities. A disagreement means one of us computed
     # A*x differently, which is worth surfacing even when both satisfy the bounds.
