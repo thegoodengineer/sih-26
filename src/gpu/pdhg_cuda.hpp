@@ -10,7 +10,7 @@ namespace sankhya::gpu {
 
 struct PdhgCudaContext;
 
-/// Upload a frozen CSC sparse matrix to the GPU.
+/// Create a CUDA context and upload the frozen CSC matrix, constructing CSR representation on GPU.
 [[nodiscard]] PdhgCudaContext* pdhg_cuda_create(
     std::size_t rows,
     std::size_t cols,
@@ -19,49 +19,75 @@ struct PdhgCudaContext;
     const std::int32_t* row_indices,
     const double* values);
 
-/// Upload a vector to the GPU x buffer.
+/// Upload static problem data once.
+[[nodiscard]] bool pdhg_cuda_upload_problem_data(
+    PdhgCudaContext* context,
+    const double* cost,
+    const double* col_lower,
+    const double* col_upper,
+    const double* row_lower,
+    const double* row_upper);
+
+/// Upload the initial primal vector.
 [[nodiscard]] bool pdhg_cuda_upload_x(
     PdhgCudaContext* context,
     const double* host,
     std::size_t size);
 
-/// Upload a vector to the GPU y buffer.
+/// Upload the initial dual vector.
 [[nodiscard]] bool pdhg_cuda_upload_y(
     PdhgCudaContext* context,
     const double* host,
     std::size_t size);
 
-/// Download the GPU x buffer to a host vector.
+/// Calculate a candidate PDHG step on the GPU without committing to x and y.
+/// Computes movement and interaction scalars on GPU and returns them to host.
+[[nodiscard]] bool pdhg_cuda_step(
+    PdhgCudaContext* context,
+    double tau,
+    double sigma,
+    double omega,
+    double* movement,
+    double* interaction);
+
+/// Accept and commit the candidate step on the GPU (x <- x_next, y <- y_next)
+/// and accumulate running sum vectors for averaging.
+[[nodiscard]] bool pdhg_cuda_accept_step(
+    PdhgCudaContext* context);
+
+/// Download the running average vectors (x_sum / count, y_sum / count).
+[[nodiscard]] bool pdhg_cuda_download_average(
+    PdhgCudaContext* context,
+    double* host_x_avg,
+    double* host_y_avg,
+    std::size_t count);
+
+/// Reset running average sum vectors on the GPU (used on restart).
+[[nodiscard]] bool pdhg_cuda_reset_sum(
+    PdhgCudaContext* context);
+
+/// Download the current primal vector.
 [[nodiscard]] bool pdhg_cuda_download_x(
     PdhgCudaContext* context,
     double* host,
     std::size_t size);
 
-/// Download the GPU y buffer to a host vector.
+/// Download the current dual vector.
 [[nodiscard]] bool pdhg_cuda_download_y(
     PdhgCudaContext* context,
     double* host,
     std::size_t size);
 
-/// Compute y = A*x using GPU-resident vectors.
-[[nodiscard]] bool pdhg_cuda_multiply_device(
-    PdhgCudaContext* context,
-    std::size_t x_size,
-    std::size_t y_size);
+/// Return the device-side primal vector.
+[[nodiscard]] double* pdhg_cuda_x(
+    PdhgCudaContext* context) noexcept;
 
-/// Compute y = A^T*x using GPU-resident vectors.
-[[nodiscard]] bool pdhg_cuda_transpose_multiply_device(
-    PdhgCudaContext* context,
-    std::size_t x_size,
-    std::size_t y_size);
+/// Return the device-side dual vector.
+[[nodiscard]] double* pdhg_cuda_y(
+    PdhgCudaContext* context) noexcept;
 
-/// Return the device-side x buffer.
-[[nodiscard]] double* pdhg_cuda_x(PdhgCudaContext* context) noexcept;
-
-/// Return the device-side y buffer.
-[[nodiscard]] double* pdhg_cuda_y(PdhgCudaContext* context) noexcept;
-
-/// Release GPU resources.
-void pdhg_cuda_destroy(PdhgCudaContext* context) noexcept;
+/// Release all CUDA resources.
+void pdhg_cuda_destroy(
+    PdhgCudaContext* context) noexcept;
 
 }  // namespace sankhya::gpu

@@ -455,10 +455,23 @@ Solution solve_pdhg(
             scaling.matrix.values().data());
 
     if (cuda_context != nullptr) {
-      use_cuda = true;
+      if (gpu::pdhg_cuda_upload_problem_data(
+              cuda_context,
+              scaling.cost.data(),
+              scaling.col_lower.data(),
+              scaling.col_upper.data(),
+              scaling.row_lower.data(),
+              scaling.row_upper.data())) {
+        use_cuda = true;
 
-      logger.info(
-          "PDHG CUDA backend enabled");
+        logger.info(
+            "PDHG CUDA backend enabled");
+      } else {
+        logger.warning(
+            "CUDA problem data upload failed; running on CPU");
+        gpu::pdhg_cuda_destroy(cuda_context);
+        cuda_context = nullptr;
+      }
     } else {
       logger.warning(
           "PDHG CUDA backend initialization failed; running on CPU");
@@ -547,7 +560,8 @@ Solution solve_pdhg(
             m)) {
       logger.warning(
           "CUDA vector initialization failed; falling back to CPU");
-
+      gpu::pdhg_cuda_destroy(cuda_context);
+      cuda_context = nullptr;
       use_cuda = false;
     }
   }
@@ -634,221 +648,143 @@ Solution solve_pdhg(
     const double sigma =
         eta * omega;
 
-    // -------------------------------------------------------------------------
-    // Primal: x' = proj_X( x - tau (c + A'y) )
-    // -------------------------------------------------------------------------
-    for (Index j = 0; j < cols; ++j) {
-      at_y[static_cast<std::size_t>(j)] =
-          0.0;
-    }
+    double movement = 0.0;
+    double interaction = 0.0;
 
-    if (rows > 0) {
 #ifdef SANKHYA_ENABLE_CUDA
-      if (use_cuda) {
-        // IMPORTANT:
-        // A^T*y reads its input vector from GPU d_x and writes
-        // its result into GPU d_y_work.
-        //
-        // Therefore:
-        //     host y -> upload_x -> A^T -> download_y -> host at_y
-        if (!gpu::pdhg_cuda_upload_x(
-                cuda_context,
-                y.data(),
-                static_cast<std::size_t>(rows)) ||
-            !gpu::pdhg_cuda_transpose_multiply_device(
-                cuda_context,
-                static_cast<std::size_t>(rows),
-                static_cast<std::size_t>(cols)) ||
-            !gpu::pdhg_cuda_download_y(
-                cuda_context,
-                at_y.data(),
-                static_cast<std::size_t>(cols))) {
-          logger.warning(
-              "CUDA A^T*y failed; falling back to CPU");
-
-          use_cuda = false;
-
-          scaling.matrix.transpose_multiply(
-              y.data(),
-              at_y.data());
-        }
-      } else
+    if (use_cuda) {
+      if (!gpu::pdhg_cuda_step(cuda_context, tau, sigma, omega, &movement, &interaction)) {
+        logger.warning(
+            "CUDA PDHG step failed; falling back to CPU");
+        static_cast<void>(gpu::pdhg_cuda_download_x(cuda_context, x.data(), n));
+        static_cast<void>(gpu::pdhg_cuda_download_y(cuda_context, y.data(), m));
+        gpu::pdhg_cuda_destroy(cuda_context);
+        cuda_context = nullptr;
+        use_cuda = false;
+      }
+    }
 #endif
-      {
+
+    if (!use_cuda) {
+      // -------------------------------------------------------------------------
+      // Primal: x' = proj_X( x - tau (c + A'y) )
+      // -------------------------------------------------------------------------
+      for (Index j = 0; j < cols; ++j) {
+        at_y[static_cast<std::size_t>(j)] =
+            0.0;
+      }
+
+      if (rows > 0) {
         scaling.matrix.transpose_multiply(
             y.data(),
             at_y.data());
       }
-    }
 
-    for (Index j = 0; j < cols; ++j) {
-      const auto u =
-          static_cast<std::size_t>(j);
+      for (Index j = 0; j < cols; ++j) {
+        const auto u =
+            static_cast<std::size_t>(j);
 
-      const double gradient =
-          scaling.cost[u] +
-          at_y[u];
+        const double gradient =
+            scaling.cost[u] +
+            at_y[u];
 
-      x_next[u] =
-          project(
-              x[u] - tau * gradient,
-              scaling.col_lower[u],
-              scaling.col_upper[u]);
+        x_next[u] =
+            project(
+                x[u] - tau * gradient,
+                scaling.col_lower[u],
+                scaling.col_upper[u]);
 
-      extrapolated[u] =
-          2.0 * x_next[u] - x[u];
-    }
+        extrapolated[u] =
+            2.0 * x_next[u] - x[u];
+      }
 
-    // -------------------------------------------------------------------------
-    // Dual:
-    //
-    // y' = prox_{sigma sigma_C}( y + sigma A xbar )
-    //    = v - sigma proj_C(v / sigma)
-    // -------------------------------------------------------------------------
-    if (rows > 0) {
-#ifdef SANKHYA_ENABLE_CUDA
-      if (use_cuda) {
-        // IMPORTANT:
-        // A*x reads its input from GPU d_x and writes
-        // the result into GPU d_y_work.
-        //
-        // Therefore:
-        //     host extrapolated -> upload_x -> A
-        //     -> download_y -> host a_x
-        if (!gpu::pdhg_cuda_upload_x(
-                cuda_context,
-                extrapolated.data(),
-                static_cast<std::size_t>(cols)) ||
-            !gpu::pdhg_cuda_multiply_device(
-                cuda_context,
-                static_cast<std::size_t>(cols),
-                static_cast<std::size_t>(rows)) ||
-            !gpu::pdhg_cuda_download_y(
-                cuda_context,
-                a_x.data(),
-                static_cast<std::size_t>(rows))) {
-          logger.warning(
-              "CUDA A*x failed; falling back to CPU");
-
-          use_cuda = false;
-
-          scaling.matrix.multiply(
-              extrapolated.data(),
-              a_x.data());
-        }
-      } else
-#endif
-      {
+      // -------------------------------------------------------------------------
+      // Dual:
+      //
+      // y' = prox_{sigma sigma_C}( y + sigma A xbar )
+      //    = v - sigma proj_C(v / sigma)
+      // -------------------------------------------------------------------------
+      if (rows > 0) {
         scaling.matrix.multiply(
             extrapolated.data(),
             a_x.data());
-      }
-    }
-
-    for (Index i = 0; i < rows; ++i) {
-      const auto u =
-          static_cast<std::size_t>(i);
-
-      const double v =
-          y[u] + sigma * a_x[u];
-
-      y_next[u] =
-          v -
-          sigma *
-              project(
-                  v / sigma,
-                  scaling.row_lower[u],
-                  scaling.row_upper[u]);
-    }
-
-    // ---- Adaptive step size, [PDLP] section 3.1 ------------------------------------------
-    // The step is admissible while eta <= (movement) / (interaction). Both are measured on
-    // the step just taken, so a rejected step costs one matvec and is retried smaller.
-    double movement = 0.0;
-
-    for (Index j = 0; j < cols; ++j) {
-      const double d =
-          x_next[
-              static_cast<std::size_t>(j)] -
-          x[
-              static_cast<std::size_t>(j)];
-
-      movement +=
-          0.5 * omega * d * d;
-    }
-
-    for (Index i = 0; i < rows; ++i) {
-      const double d =
-          y_next[
-              static_cast<std::size_t>(i)] -
-          y[
-              static_cast<std::size_t>(i)];
-
-      movement +=
-          0.5 * d * d / omega;
-    }
-
-    double interaction = 0.0;
-
-    if (rows > 0) {
-      // (y' - y)' A (x' - x)
-      std::vector<double> dx(n);
-
-      for (Index j = 0; j < cols; ++j) {
-        dx[static_cast<std::size_t>(j)] =
-            x_next[
-                static_cast<std::size_t>(j)] -
-            x[
-                static_cast<std::size_t>(j)];
-      }
-
-      std::vector<double> adx(m, 0.0);
-
-#ifdef SANKHYA_ENABLE_CUDA
-      if (use_cuda) {
-        // IMPORTANT:
-        // Same rule as A*x:
-        //     host dx -> upload_x -> A -> download_y -> host adx
-        if (!gpu::pdhg_cuda_upload_x(
-                cuda_context,
-                dx.data(),
-                static_cast<std::size_t>(cols)) ||
-            !gpu::pdhg_cuda_multiply_device(
-                cuda_context,
-                static_cast<std::size_t>(cols),
-                static_cast<std::size_t>(rows)) ||
-            !gpu::pdhg_cuda_download_y(
-                cuda_context,
-                adx.data(),
-                static_cast<std::size_t>(rows))) {
-          logger.warning(
-              "CUDA A*dx failed; falling back to CPU");
-
-          use_cuda = false;
-
-          scaling.matrix.multiply(
-              dx.data(),
-              adx.data());
-        }
-      } else
-#endif
-      {
-        scaling.matrix.multiply(
-            dx.data(),
-            adx.data());
       }
 
       for (Index i = 0; i < rows; ++i) {
         const auto u =
             static_cast<std::size_t>(i);
 
-        interaction +=
-            (y_next[u] - y[u]) *
-            adx[u];
+        const double v =
+            y[u] + sigma * a_x[u];
+
+        y_next[u] =
+            v -
+            sigma *
+                project(
+                    v / sigma,
+                    scaling.row_lower[u],
+                    scaling.row_upper[u]);
       }
 
-      interaction =
-          std::fabs(interaction);
+      // ---- Adaptive step size, [PDLP] section 3.1 ------------------------------------------
+      // The step is admissible while eta <= (movement) / (interaction). Both are measured on
+      // the step just taken, so a rejected step costs one matvec and is retried smaller.
+      movement = 0.0;
+
+      for (Index j = 0; j < cols; ++j) {
+        const double d =
+            x_next[
+                static_cast<std::size_t>(j)] -
+            x[
+                static_cast<std::size_t>(j)];
+
+        movement +=
+            0.5 * omega * d * d;
+      }
+
+      for (Index i = 0; i < rows; ++i) {
+        const double d =
+            y_next[
+                static_cast<std::size_t>(i)] -
+            y[
+                static_cast<std::size_t>(i)];
+
+        movement +=
+            0.5 * d * d / omega;
+      }
+
+      interaction = 0.0;
+
+      if (rows > 0) {
+        // (y' - y)' A (x' - x)
+        std::vector<double> dx(n);
+
+        for (Index j = 0; j < cols; ++j) {
+          dx[static_cast<std::size_t>(j)] =
+              x_next[
+                  static_cast<std::size_t>(j)] -
+              x[
+                  static_cast<std::size_t>(j)];
+        }
+
+        std::vector<double> adx(m, 0.0);
+
+        scaling.matrix.multiply(
+            dx.data(),
+            adx.data());
+
+        for (Index i = 0; i < rows; ++i) {
+          const auto u =
+              static_cast<std::size_t>(i);
+
+          interaction +=
+              (y_next[u] - y[u]) *
+              adx[u];
+        }
+
+        interaction =
+            std::fabs(interaction);
+      }
     }
 
     // Zero interaction means the step carried NO information about how large eta may safely
@@ -891,21 +827,35 @@ Solution solve_pdhg(
 
     if (eta <= limit) {
       // Accept.
-      x.swap(x_next);
-      y.swap(y_next);
+#ifdef SANKHYA_ENABLE_CUDA
+      if (use_cuda) {
+        if (!gpu::pdhg_cuda_accept_step(cuda_context)) {
+          logger.warning("CUDA accept step failed; falling back to CPU");
+          static_cast<void>(gpu::pdhg_cuda_download_x(cuda_context, x.data(), n));
+          static_cast<void>(gpu::pdhg_cuda_download_y(cuda_context, y.data(), m));
+          gpu::pdhg_cuda_destroy(cuda_context);
+          cuda_context = nullptr;
+          use_cuda = false;
+        }
+      } else
+#endif
+      {
+        x.swap(x_next);
+        y.swap(y_next);
 
-      for (Index j = 0; j < cols; ++j) {
-        x_sum[
-            static_cast<std::size_t>(j)] +=
-            x[
-                static_cast<std::size_t>(j)];
-      }
+        for (Index j = 0; j < cols; ++j) {
+          x_sum[
+              static_cast<std::size_t>(j)] +=
+              x[
+                  static_cast<std::size_t>(j)];
+        }
 
-      for (Index i = 0; i < rows; ++i) {
-        y_sum[
-            static_cast<std::size_t>(i)] +=
-            y[
-                static_cast<std::size_t>(i)];
+        for (Index i = 0; i < rows; ++i) {
+          y_sum[
+              static_cast<std::size_t>(i)] +=
+              y[
+                  static_cast<std::size_t>(i)];
+        }
       }
 
       ++averaged;
@@ -944,6 +894,18 @@ Solution solve_pdhg(
       continue;
     }
 
+#ifdef SANKHYA_ENABLE_CUDA
+    if (use_cuda) {
+      if (!gpu::pdhg_cuda_download_x(cuda_context, x.data(), n) ||
+          !gpu::pdhg_cuda_download_y(cuda_context, y.data(), m)) {
+        logger.warning("CUDA vector download failed; falling back to CPU");
+        gpu::pdhg_cuda_destroy(cuda_context);
+        cuda_context = nullptr;
+        use_cuda = false;
+      }
+    }
+#endif
+
     unscale(x, y);
 
     std::vector<double> current_x =
@@ -980,23 +942,39 @@ Solution solve_pdhg(
       std::vector<double> x_avg(n);
       std::vector<double> y_avg(m);
 
-      const auto count =
-          static_cast<double>(averaged);
+#ifdef SANKHYA_ENABLE_CUDA
+      if (use_cuda) {
+        if (!gpu::pdhg_cuda_download_average(
+                cuda_context,
+                x_avg.data(),
+                y_avg.data(),
+                static_cast<std::size_t>(averaged))) {
+          logger.warning("CUDA average download failed; falling back to CPU");
+          gpu::pdhg_cuda_destroy(cuda_context);
+          cuda_context = nullptr;
+          use_cuda = false;
+        }
+      } else
+#endif
+      {
+        const auto count =
+            static_cast<double>(averaged);
 
-      for (Index j = 0; j < cols; ++j) {
-        x_avg[
-            static_cast<std::size_t>(j)] =
-            x_sum[
-                static_cast<std::size_t>(j)] /
-            count;
-      }
+        for (Index j = 0; j < cols; ++j) {
+          x_avg[
+              static_cast<std::size_t>(j)] =
+              x_sum[
+                  static_cast<std::size_t>(j)] /
+              count;
+        }
 
-      for (Index i = 0; i < rows; ++i) {
-        y_avg[
-            static_cast<std::size_t>(i)] =
-            y_sum[
-                static_cast<std::size_t>(i)] /
-            count;
+        for (Index i = 0; i < rows; ++i) {
+          y_avg[
+              static_cast<std::size_t>(i)] =
+              y_sum[
+                  static_cast<std::size_t>(i)] /
+              count;
+        }
       }
 
       unscale(
@@ -1134,15 +1112,22 @@ Solution solve_pdhg(
                   1e6);
         }
 
-        std::fill(
-            x_sum.begin(),
-            x_sum.end(),
-            0.0);
+#ifdef SANKHYA_ENABLE_CUDA
+        if (use_cuda) {
+          static_cast<void>(gpu::pdhg_cuda_reset_sum(cuda_context));
+        } else
+#endif
+        {
+          std::fill(
+              x_sum.begin(),
+              x_sum.end(),
+              0.0);
 
-        std::fill(
-            y_sum.begin(),
-            y_sum.end(),
-            0.0);
+          std::fill(
+              y_sum.begin(),
+              y_sum.end(),
+              0.0);
+        }
 
         averaged = 0;
 
