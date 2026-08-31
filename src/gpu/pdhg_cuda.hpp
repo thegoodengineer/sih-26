@@ -40,6 +40,14 @@ struct PdhgCudaContext;
     const double* host,
     std::size_t size);
 
+struct PdhgBatchResult {
+  double eta = 0.0;
+  std::int64_t iteration = 0;
+  std::int64_t averaged = 0;
+  bool no_information = false;
+  int accepted_count = 0;
+};
+
 /// Calculate a candidate PDHG step on the GPU without committing to x and y.
 /// Computes movement and interaction scalars on GPU and returns them to host.
 [[nodiscard]] bool pdhg_cuda_step(
@@ -49,6 +57,19 @@ struct PdhgCudaContext;
     double omega,
     double* movement,
     double* interaction);
+
+/// Perform a batch of GPU-resident PDHG steps (up to max_accepted accepted steps)
+/// evaluating acceptance, updating eta, and committing accepted steps entirely on the GPU.
+[[nodiscard]] bool pdhg_cuda_step_batch(
+    PdhgCudaContext* context,
+    double eta,
+    double omega,
+    double spectral_norm,
+    std::int64_t iteration,
+    std::int64_t averaged,
+    std::int64_t iteration_limit,
+    int max_accepted,
+    PdhgBatchResult* result);
 
 /// Accept and commit the candidate step on the GPU (x <- x_next, y <- y_next)
 /// and accumulate running sum vectors for averaging.
