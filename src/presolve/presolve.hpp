@@ -47,15 +47,45 @@ struct Record {
     kEmptyColumn,  ///< no entries and a finite best value; parked at the bound the cost prefers
     kSingletonRow,  ///< one entry; became a bound on that column, the row is now implied
     kForcingRow,    ///< the row bound is only reachable with every variable at one bound
+    /// A free (unbounded) column appearing in exactly one row. That row can always absorb
+    /// whatever activity is needed, so it constrains nothing else and is removed along with
+    /// the column; the column's cost is folded into every other column sharing the row.
+    /// See presolve.cpp for the full derivation and the citation (Andersen & Andersen 1995).
+    kFreeColumnSingleton,
+    /// An equality row with exactly two entries. One column (`column`) is solved for in
+    /// terms of the other (`partner_column`) and eliminated everywhere it appears - not just
+    /// in this row - which is the fill-in step: every OTHER row containing the eliminated
+    /// column has its coefficient on `partner_column` adjusted and its bounds shifted.
+    kDoubletonEquation,
   };
 
   Kind kind = Kind::kEmptyRow;
   Index index = -1;          ///< original row or column index this record is about
   double value = 0.0;        ///< the value a removed column takes
-  double coefficient = 0.0;  ///< the single entry, for a singleton row
+  double coefficient = 0.0;  ///< the single entry, for a singleton row; a_ij for the two new
+                             ///< kinds (the eliminated column's own coefficient)
   double row_lower = 0.0;    ///< original bounds, kept so postsolve can price the row
   double row_upper = 0.0;
-  Index column = -1;  ///< the column a singleton row constrained
+  Index column = -1;  ///< the column a singleton row constrained, or the ELIMINATED column
+                      ///< for the two new kinds
+
+  // ---- kFreeColumnSingleton and kDoubletonEquation only ----------------------------------
+  /// The row activity the eliminated column was solved to hit: for kFreeColumnSingleton, the
+  /// row bound presolve chose (see presolve.cpp); for kDoubletonEquation, the row's rhs
+  /// (lower == upper, it is an equality).
+  double substituted_rhs = 0.0;
+  /// kDoubletonEquation only: the column KEPT in the reduced model, and its coefficient in
+  /// the eliminated row. Unused (left at -1 / 0) by kFreeColumnSingleton, which has no
+  /// partner - the whole point of a free SINGLETON is that nothing else shares the row.
+  Index partner_column = -1;
+  double partner_coefficient = 0.0;
+  /// The eliminated column's OWN cost at the moment it was eliminated - not
+  /// Model::col_cost[column], which is wrong whenever an EARLIER reduction already folded
+  /// something into it (it was a `keep` survivor of a still-earlier doubleton, say). Needed
+  /// by postsolve to price the eliminated row: a variable that was fully eliminated by
+  /// substitution always has a zero reduced cost of its own in the ORIGINAL problem, which
+  /// pins the row's dual to eliminated_cost / coefficient (minus any fill-in terms).
+  double eliminated_cost = 0.0;
 };
 
 /// The reduced problem plus everything needed to get back.
