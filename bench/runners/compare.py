@@ -174,10 +174,20 @@ HIGHS_RUNTIME = re.compile(r"^\s*HiGHS\s+run\s+time\s*:\s*([\d.eE+-]+)\s*$", re.
 
 
 def run_highs_binary(binary: Path, mps: Path, time_limit: float) -> dict:
-    started = time.perf_counter()
-    completed = subprocess.run([str(binary), str(mps), "--time_limit", str(time_limit)],
-                               capture_output=True, text=True)
-    wall = time.perf_counter() - started
+    # Issue #47: with no log destination, HiGHS writes Highs.log into the current working
+    # directory - the repo root, when this script is run from there. --log_file is a
+    # HighsOptions field, and every field in HighsOptions is exposed as a --<name> <value>
+    # CLI flag (the same convention --time_limit above already relies on), so routing it into
+    # the same scratch temp dir run_sankhya() uses for --stats keeps both solvers' throwaway
+    # output out of the tree the same way.
+    with tempfile.TemporaryDirectory() as tmp:
+        log_file = Path(tmp) / "Highs.log"
+        started = time.perf_counter()
+        completed = subprocess.run(
+            [str(binary), str(mps), "--time_limit", str(time_limit), "--log_file",
+             str(log_file)],
+            capture_output=True, text=True)
+        wall = time.perf_counter() - started
     text = completed.stdout + completed.stderr
 
     status = HIGHS_STATUS.search(text)
