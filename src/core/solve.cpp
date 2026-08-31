@@ -93,11 +93,20 @@ void reconcile_status_with_measurement(Solution* solution, const Options& option
   // A point that violates its own constraints is not feasible, so neither kOptimal nor
   // kFeasible is available. The engine stopped believing it had converged, so this is a
   // numerical failure and is reported as one, with the number that contradicts it.
-  if (solution->primal_infeasibility > primal_tolerance) {
+  //
+  // THE TEST IS ON THE SCALED VIOLATION, and the absolute one is still what gets printed.
+  // An absolute tolerance asks a badly scaled model for accuracy it cannot have: on Netlib
+  // grow7, whose largest solution value is 4.8e+07, 1e-7 absolute is 2.1e-15 relative, which
+  // is below double precision's reach after three hundred iterations of arithmetic. Judging
+  // that point infeasible says nothing about the point and everything about the units the
+  // question was asked in. See Solution::primal_infeasibility_scaled for the derivation.
+  if (solution->primal_infeasibility_scaled > primal_tolerance) {
     const std::string detail = fmt::format(
-        "engine reported {} but the returned point violates primal feasibility by {:.3e}, "
-        "above the {:.1e} tolerance; it is not a feasible point",
-        to_string(solution->status), solution->primal_infeasibility, primal_tolerance);
+        "engine reported {} but the returned point violates primal feasibility by {:.3e} "
+        "({:.3e} relative to the scale it was measured on), above the {:.1e} tolerance; it is "
+        "not a feasible point",
+        to_string(solution->status), solution->primal_infeasibility,
+        solution->primal_infeasibility_scaled, primal_tolerance);
     solution->status = SolveStatus::kNumericalError;
     solution->message = solution->message.empty() ? detail : solution->message + "; " + detail;
     logger.warning("{}", detail);

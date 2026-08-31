@@ -228,7 +228,27 @@ class Solution {
   // ---- Reported quality. Never assumed - always measured before reporting. -------------
 
   double primal_infeasibility = 0.0;  ///< max violation over row and column bounds
-  double dual_infeasibility = 0.0;    ///< max violation of the reduced-cost sign conditions
+
+  /// The same violations, each divided by the numerical scale of the quantity it was
+  /// measured on (#34).
+  ///
+  /// WHY BOTH EXIST. `primal_infeasibility` is an absolute number, and an absolute number is
+  /// the wrong question on a badly scaled model. Netlib `grow7` is the case that forced this:
+  /// its largest solution value is 4.8e+07, so the 1e-7 absolute tolerance is 2.1e-15
+  /// RELATIVE - below what double precision can deliver after 297 iterations of arithmetic.
+  /// Its worst violation, 2.0e-07, is 4.2e-15 relative, about nineteen machine epsilons. The
+  /// point is as accurate as doubles allow and was being reported as a numerical failure.
+  ///
+  /// The scale is the ROW'S OWN TERM MAGNITUDE, max |a_ij * x_j|, not the row's bound. The
+  /// row that fails on grow7 is an equality to ZERO, so dividing by the bound would change
+  /// nothing; what makes its residual large is cancellation between terms of magnitude 1e+07,
+  /// and the achievable accuracy of a sum is set by the size of what is being summed. For a
+  /// column bound the scale is |x_j| for the same reason.
+  ///
+  /// The absolute figure is still what gets REPORTED, because it is the one a reader can
+  /// check by hand against the model. This is what the status decision uses.
+  double primal_infeasibility_scaled = 0.0;
+  double dual_infeasibility = 0.0;  ///< max violation of the reduced-cost sign conditions
   double complementarity_violation = 0.0;
   double integrality_violation = 0.0;
 
