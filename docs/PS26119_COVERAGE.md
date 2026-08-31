@@ -11,7 +11,7 @@ way an issue body is not, and every status here was checked against a specific c
 
 | requirement | status | evidence / issue |
 |---|---|---|
-| Linear Programming | **done** | revised primal simplex; Netlib small 9/9, medium 43/50 (#34) |
+| Linear Programming | **done** | revised primal simplex; Netlib full set 66/89, medium 43/50, small 9/9 (#34) — the full set is the headline per #142, the narrower tiers being row-capped and so the easier half |
 | Mixed-Integer LP | **done** | branch & bound; corroborated by exhaustive oracle in the demo |
 | Quadratic Programming | **done** | #55 — Condat-Vu primal-dual engine, `src/qp/`. Convexity decided by LDL^T on `sense * Q` before any arithmetic; non-convex is refused with a certificate, never solved to a local point. Readable from a QPS `QUADOBJ` file (#112) and independently verified. |
 | Mixed-Integer QP | **done** | #139 — branch and bound over convex QP node relaxations, joining the two existing engines. `src/core/solve.cpp` dispatches a real `ProblemClass::kMiqp` case; a non-convex Hessian is still refused before any arithmetic, exactly as plain QP does. `tests/unit/test_miqp.cpp` covers it. (Superseded: this used to return `not_solved`; #142 corrected the demo and docs to stop saying so.) |
@@ -35,7 +35,7 @@ way an issue body is not, and every status here was checked against a specific c
 |---|---|---|
 | Sparse matrix techniques | **done** | CSC/CSR, sparse Markowitz LU with threshold stability |
 | Efficient numerical linear algebra | **done** | #49 scaling (Ruiz + Pock-Chambolle, default on), #50 basis update (product-form, with an FTRAN-residual accuracy check that forces refactorization). #144 (open, CI green) fixes `eliminate()` reporting the wrong singular column when an earlier column is merely unpivotable within the search budget — a prerequisite for basis repair, not the repair itself. |
-| Pricing | **partial** | Dantzig is the default; Devex (#66) landed in #126 and is selectable via `--option pricing=devex`, but stays opt-in — measured on the Netlib medium tier it turns `grow22` from `optimal` into a singular basis for no reduction in the singular-basis count elsewhere, so shipping it as the default would trade an iteration-count headline for a wrong answer. The Harris two-pass ratio test (#67, PR #137, open and CI green) was built specifically to test whether it would fix that interaction; measured, it does not. |
+| Pricing | **partial** | Dantzig is the default; Devex (#66) landed in #126 and is selectable via `--option pricing=devex`, but stays opt-in — measured on the Netlib medium tier it turns `grow22` from `optimal` into a singular basis for no reduction in the singular-basis count elsewhere, so shipping it as the default would trade an iteration-count headline for a wrong answer. The Harris two-pass ratio test (#67) landed in #137 and is selectable via `--option ratio_test=harris`; it was built specifically to test whether it would fix that interaction, and measured, it does not — it trades `grow22` for no reduction in singular-basis failures, so it too stays opt-in. |
 | Multi-core parallelization | **not started** | #57 |
 | GPU acceleration | **not started** | #16-#19. The engine it needs — restarted PDHG — exists, is verified, and solves the 5000x5000 instance in the demo on CPU. `--gpu` warns and falls back. |
 | **Not built on any existing solver** | **done** | `docs/PROVENANCE.md`, CI-enforced, live link list in demo section 1 |
