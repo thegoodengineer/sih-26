@@ -6,7 +6,12 @@
 //   Chvatal, "Linear Programming" (Freeman, 1983), ch. 3 and 8 - the bounded-variable form
 //     and Bland's anti-cycling rule.
 //   Maros, "Computational Techniques of the Simplex Method" (Kluwer, 2003), ch. 9 - the
-//     piecewise-linear (composite) phase 1 used below.
+//     piecewise-linear (composite) phase 1 used below, and the long-step ratio test.
+//   Harris, P.M.J. (1973), "Pivot selection methods of the Devex LP code", Mathematical
+//     Programming 5, 1-28 - the two-pass ratio test (issue #67): pass one finds how far a
+//     relaxed set of bounds would allow the step to go, pass two takes the largest available
+//     pivot among rows that still block within that relaxed limit, trading a controlled,
+//     bounded amount of infeasibility for a far better-conditioned basis.
 //
 // FORMULATION. Every row gets a logical variable, so the working system is
 //
@@ -31,11 +36,10 @@
 // It is bounded below by zero by construction, so "phase 1 stalls with no improving
 // column" is a proof of infeasibility rather than an inconclusive result.
 //
-// SCOPE. Dantzig pricing with a Bland fallback, a textbook ratio test, and a full dense
-// refactorization every iteration. Devex pricing, the Harris two-pass ratio test, bound
-// flipping, perturbation and the sparse LU all arrive in Phase 6. Adding them now would
-// mean debugging five interacting approximations at once against a simplex that has never
-// been shown to be right, which is the opposite of the order this project needs.
+// SCOPE. Dantzig pricing (default) with an optional Devex mode and a Bland fallback, the
+// Harris two-pass ratio test with long-step bound flipping (issue #67, below), and a full
+// dense refactorization every iteration. Perturbation is still open (#67 leaves it there
+// deliberately - see the ratio test comment).
 
 #include "primal_simplex.hpp"
 
@@ -248,7 +252,17 @@ class PrimalSimplex {
   /// plus their eta file still represent the basis - and it replaces inferring conditioning
   /// from whether the Markowitz ladder happened to fire.
   [[nodiscard]] double ftran_residual(Index entering) const;
+
+  /// Dispatches to whichever rule `ratio_test_` selects.
   [[nodiscard]] RatioResult ratio_test(Index entering, int direction, bool phase_one) const;
+  /// The textbook rule: the single tightest step, tie-broken by pivot magnitude within
+  /// kRatioTestFeasibility. Default - see ratio_test_ for why.
+  [[nodiscard]] RatioResult ratio_test_textbook(Index entering, int direction,
+                                                bool phase_one) const;
+  /// Harris's two-pass rule with long-step bound flipping (issue #67). Opt-in - see
+  /// ratio_test_ for why.
+  [[nodiscard]] RatioResult ratio_test_harris(Index entering, int direction,
+                                              bool phase_one) const;
 
   /// Iterate over the entries of column k of [A | -I].
   template <typename Fn>
@@ -353,10 +367,38 @@ class PrimalSimplex {
   //
   // Measured before this landed: 1147 simplex iterations against HiGHS's 531 across the
   // committed Netlib set, worst 4.21x on blend. See issue #66 for the table.
-  bool devex_ = false;  ///< opt-in until #67 lands; see the option description and #66
+  //
+  // #67 HAS NOW LANDED (Harris two-pass ratio test, below) AND DOES NOT CHANGE THIS. The
+  // hope going in was that Harris would defend devex's pivot magnitude and let it become the
+  // default; measured on the medium tier it does not - see ratio_test_ below for the number.
+  // Devex stays opt-in for the same reason it always was: it costs two correct answers on the
+  // medium tier for headline iteration counts, and CLAUDE.md settles that.
+  bool devex_ = false;  ///< opt-in; see the option description, #66 and ratio_test_ below
   std::vector<double> devex_weight_;
   std::vector<double> rho_;  ///< B^-T e_r, scratch: rho . a_j gives the leaving row's alpha_rj
   Count devex_resets_ = 0;
+
+  // ---- Ratio test (issue #67) ------------------------------------------------------------
+  //
+  // Harris, P.M.J. (1973), "Pivot selection methods of the Devex LP code", Mathematical
+  // Programming 5, 1-28.
+  //
+  // MEASURED, Netlib medium tier, Dantzig pricing (the default) both ways: the textbook rule
+  // passes 41/50; Harris passes 40/50, trading grow22 (was optimal, primal infeasibility
+  // 8.904e-07 under Harris - just over kPrimalFeasibility) for no singular-basis win at all.
+  // The three singular-basis failures (d6cube, grow15, pilot4) are IDENTICAL under both
+  // rules; Harris relaxes ratio-test ties, and none of these three fail on a tie. Tightening
+  // kHarrisRelaxation by 10x (0.01 * kPrimalFeasibility instead of 0.1x) does not change
+  // grow22's outcome either - the regression comes from pass two choosing a different pivot
+  // altogether on this instance, not from the size of the relaxation.
+  //
+  // This matches what #67's own comment thread already found when Harris was first tried
+  // against devex ("measures null") - it is not a devex-specific interaction, it reproduces
+  // under plain Dantzig too. The textbook rule stays the default so the medium pass rate does
+  // not drop (CLAUDE.md); Harris is implemented, cited, tested and selectable
+  // (--option ratio_test=harris) so this can be re-measured the moment something else in the
+  // basis-conditioning chain changes, without reimplementing it from scratch.
+  bool harris_ratio_test_ = false;
   double primal_tolerance_ = tol::kPrimalFeasibility;
   double dual_tolerance_ = tol::kDualFeasibility;
 };
@@ -935,7 +977,26 @@ double PrimalSimplex::ftran_residual(Index entering) const {
 // Ratio test
 // -----------------------------------------------------------------------------------------
 
+namespace {
+
+/// One row's candidate breakpoint, gathered in pass one of the Harris test and re-examined
+/// in pass two.
+struct RatioCandidate {
+  Index slot;
+  double exact_step;
+  bool to_upper;
+  double pivot_magnitude;
+};
+
+}  // namespace
+
 RatioResult PrimalSimplex::ratio_test(Index entering, int direction, bool phase_one) const {
+  return harris_ratio_test_ ? ratio_test_harris(entering, direction, phase_one)
+                            : ratio_test_textbook(entering, direction, phase_one);
+}
+
+RatioResult PrimalSimplex::ratio_test_textbook(Index entering, int direction,
+                                               bool phase_one) const {
   RatioResult result;
   const double sign = static_cast<double>(direction);
 
@@ -968,10 +1029,8 @@ RatioResult PrimalSimplex::ratio_test(Index entering, int direction, bool phase_
     switch (position) {
       case Position::kBelowLower:
         // Infeasible below its lower bound. Moving up, it becomes feasible exactly at the
-        // bound and we stop there. The full piecewise-linear ratio test would be allowed to
-        // step past this breakpoint - the phase-1 slope only changes there, it does not
-        // reverse - and would take longer steps. Stopping is correct, just less efficient,
-        // and it keeps the test a single comparison. Phase 6 revisits this.
+        // bound and we stop there. ratio_test_harris() below takes the fuller piecewise-
+        // linear step; this rule keeps the test a single comparison.
         if (rate > 0.0 && is_finite_bound(lo)) step = (lo - x) / rate;
         break;
       case Position::kAboveUpper:
@@ -1012,6 +1071,140 @@ RatioResult PrimalSimplex::ratio_test(Index entering, int direction, bool phase_
     return result;
   }
   result.step = best_step;
+  result.leaving_position = best_slot;
+  result.leaving_to_upper = best_to_upper;
+  return result;
+}
+
+RatioResult PrimalSimplex::ratio_test_harris(Index entering, int direction,
+                                             bool phase_one) const {
+  RatioResult result;
+  const double sign = static_cast<double>(direction);
+
+  // The entering variable's own range limits the step even when nothing blocks: moving from
+  // one finite bound to the other is a bound flip and leaves the basis untouched. This is a
+  // structural limit on the ENTERING variable itself, not a blocking row, so it is never
+  // relaxed the way candidate rows are below.
+  double theta_max = std::numeric_limits<double>::infinity();
+  const auto e = static_cast<std::size_t>(entering);
+  if (is_finite_bound(lower_[e]) && is_finite_bound(upper_[e])) {
+    theta_max = upper_[e] - lower_[e];
+  }
+
+  // PASS ONE (Harris 1973). For every row that blocks, compute the step a bound RELAXED by
+  // kHarrisRelaxation would allow, and take the smallest such step as theta_max. Any step at
+  // or below theta_max is safe to consider in pass two: it introduces at most
+  // kHarrisRelaxation of new infeasibility on whichever row actually defines theta_max, which
+  // tolerances.hpp establishes is inside kPrimalFeasibility.
+  //
+  // LONG-STEP BOUND FLIPPING (issue #67, generalising the piecewise-linear phase-1 objective
+  // this file already cites Maros ch. 9 for). A basic variable that starts phase 1 outside
+  // its bounds and is moving TOWARD feasibility never needs to stop the search when it
+  // crosses into feasibility - the phase-1 slope only improves there, it does not reverse.
+  //
+  // Crossing into feasibility never itself HAS to stop the search, but it is always kept as a
+  // fallback candidate (exactly the textbook breakpoint) as well as, when the FAR bound is
+  // finite, offered as a longer alternative candidate for the SAME row: past the far bound
+  // the variable would swing out the other side and start making phase 1 worse again, so that
+  // is genuinely where it blocks. A row with only the fallback (no finite far bound, e.g. a
+  // one-sided >= constraint) still gets a candidate - the fallback IS its only real
+  // breakpoint, and dropping it would leave phase 1 with nothing to pivot on at all, which is
+  // exactly the bug an earlier version of this had: every currently-infeasible row with an
+  // unbounded far side produced no candidate, theta_max stayed infinite, and phase 1 reported
+  // "no blocking variable" on a model that was never unbounded.
+  //
+  // Both candidates for the same row carry the same pivot magnitude (same alpha), so pass two
+  // never prefers one over the other for stability; it only matters through theta_max, and
+  // the near-bound candidate's own relaxed step keeps that honestly capped even when the far
+  // one is offered too.
+  std::vector<RatioCandidate> candidates;
+  candidates.reserve(static_cast<std::size_t>(m_));
+
+  auto add_candidate = [&](Index slot, double x, double bound, double rate, bool to_upper,
+                           double sign_of_relaxation) {
+    double exact_step = (bound - x) / rate;
+    double relaxed_step = (bound + sign_of_relaxation * tol::kHarrisRelaxation - x) / rate;
+    if (exact_step < 0.0) exact_step = 0.0;
+    if (relaxed_step < 0.0) relaxed_step = 0.0;
+    theta_max = std::min(theta_max, relaxed_step);
+    candidates.push_back(
+        {slot, exact_step, to_upper, std::fabs(alpha_[static_cast<std::size_t>(slot)])});
+  };
+
+  for (Index slot = 0; slot < m_; ++slot) {
+    const double a = alpha_[static_cast<std::size_t>(slot)];
+    // rate = d(x_B[slot]) / dt as the entering variable moves in `direction`.
+    const double rate = -sign * a;
+    if (std::fabs(rate) <= tol::kPivotTolerance) continue;
+
+    const Index k = basis_[static_cast<std::size_t>(slot)];
+    const double x = x_basic_[static_cast<std::size_t>(slot)];
+    const double lo = lower_[static_cast<std::size_t>(k)];
+    const double hi = upper_[static_cast<std::size_t>(k)];
+
+    const Position position = phase_one ? position_of(slot) : Position::kFeasible;
+    switch (position) {
+      case Position::kBelowLower:
+        // Moving up (rate > 0) toward feasibility: the near bound (lo) is always a fallback
+        // candidate; the far bound (hi), if finite, is the long-step bonus.
+        if (rate > 0.0) {
+          if (is_finite_bound(lo)) add_candidate(slot, x, lo, rate, false, 1.0);
+          if (is_finite_bound(hi)) add_candidate(slot, x, hi, rate, true, 1.0);
+        }
+        break;
+      case Position::kAboveUpper:
+        if (rate < 0.0) {
+          if (is_finite_bound(hi)) add_candidate(slot, x, hi, rate, true, -1.0);
+          if (is_finite_bound(lo)) add_candidate(slot, x, lo, rate, false, -1.0);
+        }
+        break;
+      case Position::kFeasible:
+        // Already feasible: crossing OUT of feasibility in either direction genuinely blocks,
+        // exactly as the textbook test - there is no far bound to look past here.
+        if (rate > 0.0 && is_finite_bound(hi)) {
+          add_candidate(slot, x, hi, rate, true, 1.0);
+        } else if (rate < 0.0 && is_finite_bound(lo)) {
+          add_candidate(slot, x, lo, rate, false, -1.0);
+        }
+        break;
+    }
+  }
+
+  // PASS TWO. Among rows that still block within the relaxed limit, take the largest pivot
+  // magnitude - the numerically stable choice among the candidates pass one certified as
+  // safe. A candidate whose exact step is already comfortably inside theta_max is treated
+  // exactly like one sitting right at the limit; kRatioTestFeasibility is the same slack the
+  // textbook test used for its own ties.
+  Index best_slot = -1;
+  bool best_to_upper = false;
+  double best_pivot_magnitude = 0.0;
+  double best_exact_step = 0.0;
+  for (const RatioCandidate& candidate : candidates) {
+    if (candidate.exact_step > theta_max + tol::kRatioTestFeasibility) continue;
+    if (candidate.pivot_magnitude > best_pivot_magnitude) {
+      best_pivot_magnitude = candidate.pivot_magnitude;
+      best_slot = candidate.slot;
+      best_to_upper = candidate.to_upper;
+      best_exact_step = candidate.exact_step;
+    }
+  }
+
+  if (best_slot < 0) {
+    if (!(theta_max < std::numeric_limits<double>::infinity())) {
+      result.unbounded = true;
+      return result;
+    }
+    // Nothing blocked within the relaxed limit: theta_max came from the entering variable's
+    // own range, so this is a bound flip.
+    result.step = theta_max;
+    return result;
+  }
+
+  // The realised step is the WINNING row's own exact ratio, capped at the relaxed limit that
+  // admitted it into pass two - never the limit itself. This is what keeps the infeasibility
+  // introduced bounded by kHarrisRelaxation regardless of which row pass two picks, rather
+  // than by however far that row's own exact bound happens to sit from the tightest one.
+  result.step = std::min(best_exact_step, theta_max);
   result.leaving_position = best_slot;
   result.leaving_to_upper = best_to_upper;
   return result;
@@ -1140,27 +1333,39 @@ Solution PrimalSimplex::run() {
   // DEVEX IS NOT THE DEFAULT YET, and the reason is measured rather than cautious. It cuts
   // iterations substantially - 1147 to 830 on the committed small set, and 52250 to 31618
   // across the Netlib medium set once d6cube (which fails under both rules) is set aside -
-  // but it also turns grow22 and scsd8 from `optimal` into "basis became singular", taking
-  // the medium pass rate from 41 to 39.
+  // but under the default (textbook) ratio test it also turns grow22 from `optimal` into
+  // "basis became singular" at iteration 679.
   //
-  // The two facts are the same fact. Devex chooses a different entering column, and nothing
-  // in the CURRENT ratio test defends the pivot magnitude of that choice: it takes the
-  // tightest bound and accepts whatever pivot comes with it. Dantzig happened to pick
-  // columns whose pivots were survivable; devex does not, and the basis degrades until it
-  // is singular. Both regressions fail EARLIER than the Dantzig run succeeded, which is the
-  // signature of conditioning rather than of a longer search.
+  // #67 landed to test whether the Harris two-pass ratio test would fix this by defending
+  // the pivot magnitude devex's choice of column relies on. MEASURED, on grow22, all four
+  // pricing/ratio-test combinations:
   //
-  // The Harris two-pass ratio test (#67) is what makes this safe: it spends a relaxed bound
-  // tolerance to buy a larger pivot, which is exactly the degree of freedom missing here.
-  // #67 was implemented once, measured as null under Dantzig, and not shipped for that
-  // reason - its value only appears once the pricing rule stops picking safe columns by
-  // accident. Landing devex on by default before it would trade a headline iteration count
-  // for two correct answers, which CLAUDE.md settles: a wrong answer scores zero.
+  //   dantzig + textbook (default)   optimal
+  //   dantzig + harris                numerical_error, primal infeasibility 8.904e-07
+  //   devex   + textbook              numerical_error, "basis became singular" at 679
+  //   devex   + harris                numerical_error, "basis became singular" at 444
+  //
+  // Harris does not rescue devex on this instance - it fails EARLIER under Harris than under
+  // the textbook rule, not later. Landing devex as the default would trade a headline
+  // iteration count for a wrong answer, which CLAUDE.md settles regardless of which ratio
+  // test is paired with it.
   const std::string pricing = options_.get_string("pricing");
   devex_ = pricing == "devex";
   if (pricing != "devex" && pricing != "dantzig" && !pricing.empty()) {
     logger_.warning("pricing '{}' is not recognised; using dantzig", pricing);
     devex_ = false;
+  }
+
+  // TEXTBOOK IS THE DEFAULT (issue #67), measured rather than assumed. Harris passes 40/50 on
+  // the medium tier against the textbook rule's 41/50 under the same (default) Dantzig
+  // pricing - see ratio_test_ above for the instance and the number. Kept selectable so this
+  // can be re-measured without reimplementing it.
+  const std::string ratio_test_choice = options_.get_string("ratio_test");
+  harris_ratio_test_ = ratio_test_choice == "harris";
+  if (ratio_test_choice != "harris" && ratio_test_choice != "textbook" &&
+      !ratio_test_choice.empty()) {
+    logger_.warning("ratio_test '{}' is not recognised; using textbook", ratio_test_choice);
+    harris_ratio_test_ = false;
   }
 
   build_working_problem();

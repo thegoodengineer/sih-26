@@ -120,6 +120,19 @@ inline constexpr int kBlandSwitchIterations = 50;
 /// kPrimalFeasibility so that a marginally infeasible basic variable does not block a pivot.
 inline constexpr double kRatioTestFeasibility = 1e-9;
 
+/// Bound relaxation for the Harris two-pass ratio test (issue #67). Pass one finds the
+/// tightest step allowed if every candidate row's bound were loosened by this much; pass two
+/// then picks, among the rows whose EXACT (unrelaxed) step still fits under that limit, the
+/// one with the largest pivot magnitude - buying numerical stability at the cost of a
+/// controlled amount of new infeasibility.
+///
+/// PROVABLY TIGHTER THAN kPrimalFeasibility, which is what makes the trade safe: the
+/// realised step is capped at the relaxed limit (see ratio_test()), so a Harris-relaxed pivot
+/// alone can move a basic variable at most kHarrisRelaxation + kRatioTestFeasibility past its
+/// bound - an order of magnitude inside kPrimalFeasibility, so it can never by itself turn a
+/// point recompute_quality() would call feasible into one it calls infeasible.
+inline constexpr double kHarrisRelaxation = 0.1 * kPrimalFeasibility;
+
 // ---------------------------------------------------------------------------------------
 // First-order method (PDHG)
 // ---------------------------------------------------------------------------------------
