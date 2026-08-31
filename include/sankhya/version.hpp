@@ -23,6 +23,12 @@ namespace sankhya {
 /// nothing about whether a device is present at run time.
 [[nodiscard]] bool cuda_enabled() noexcept;
 
+/// True when a CUDA device is visible at runtime. Always false in CPU-only builds.
+[[nodiscard]] bool cuda_device_available() noexcept;
+
+/// CUDA device description, or the reason no device is available.
+[[nodiscard]] const char* cuda_device_description() noexcept;
+
 /// One-line banner: name, version, commit, build type.
 [[nodiscard]] const char* banner() noexcept;
 
