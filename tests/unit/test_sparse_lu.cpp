@@ -209,6 +209,39 @@ TEST(SparseLu, ReportsAStructurallyEmptyColumn) {
   EXPECT_FALSE(lu.factorize(matrix.columns(), 3, tol::kPivotTolerance, kThreshold));
 }
 
+TEST(SparseLu, EliminateLocatesTheSingularColumnPastEarlierUnpivotableOnes) {
+  // Issue #143. Columns 0-3 are each a lone entry below pivot_tolerance - genuinely part of
+  // the singular set, and there are exactly kCandidateBudget (4) of them, so the FIRST
+  // budgeted search at step 0 examines all four, rejects every one on magnitude, and finds
+  // nothing - without ever having looked at columns 4 or 5, which sit later in the same
+  // count-1 bucket and are perfectly good, unrelated pivots (5.0 and 7.0, each the only entry
+  // in its row and column).
+  //
+  // Before this fix, that budgeted-search failure at step 0 WAS eliminate() returning false
+  // immediately: the reported "singular" set was all six columns, though only four of them
+  // are actually dependent. The fix must scan past columns 4 and 5, pivot them normally, and
+  // report ONLY {0, 1, 2, 3} - the genuine rank defect - once the exhaustive fallback over
+  // the remaining 4x4 block also finds nothing above tolerance.
+  constexpr Index m = 6;
+  TestMatrix matrix(m);
+  const double tiny = tol::kPivotTolerance * 1e-3;  // below tolerance, not merely small
+  matrix.set(0, 0, tiny);
+  matrix.set(1, 1, tiny);
+  matrix.set(2, 2, tiny);
+  matrix.set(3, 3, tiny);
+  matrix.set(4, 4, 5.0);
+  matrix.set(5, 5, 7.0);
+
+  SparseLu lu;
+  EXPECT_FALSE(lu.factorize(matrix.columns(), m, tol::kPivotTolerance, kThreshold));
+
+  const std::vector<Index> expected{0, 1, 2, 3};
+  EXPECT_EQ(lu.dependent_positions(), expected)
+      << "columns 4 and 5 have perfectly good pivots and must not be reported as singular "
+         "just because the budgeted search reached its limit before looking at them";
+  EXPECT_EQ(lu.uncovered_rows(), expected);
+}
+
 TEST(SparseLu, LocatesTheDefectInAStructurallyEmptyColumn) {
   // The accessors that make a singular basis REPAIRABLE rather than fatal. An empty column
   // can never be pivotal, so it is the one case where the defect is unambiguous: exactly one

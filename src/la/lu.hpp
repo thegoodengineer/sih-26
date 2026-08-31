@@ -69,17 +69,22 @@ class SparseLu {
   [[nodiscard]] bool factorize(const std::vector<LuColumn>& columns, Index m,
                                double pivot_tolerance, double markowitz_threshold);
 
-  /// After factorize() returns false: the basis positions no pivot could ever use, and the
-  /// rows no pivot ever covered. Both are empty after a SUCCESSFUL factorization.
-  ///
-  /// These exist so a singular basis can be REPAIRED instead of ending the solve. The
-  /// elimination already knows which columns defeated it - it records every pivot it makes -
-  /// but it used to throw that away and return a bare `false`, which told the caller a basis
-  /// was singular without telling it where, and there is no way to patch a basis you cannot
-  /// locate the defect in. The two sets are the same size when the failure is a genuine rank
-  /// deficiency: k dependent columns leave exactly k rows uncovered.
-  [[nodiscard]] std::vector<Index> dependent_positions() const;
-  [[nodiscard]] std::vector<Index> uncovered_rows() const;
+  /// When factorize() returns false, the columns of the ORIGINAL `columns` array (identified
+  /// by position, 0..m-1) that no pivot ever reached - the genuine rank defect, not merely
+  /// "whatever was left when the search gave up" (issue #143). Empty after a successful
+  /// factorize(). Basis repair (Maros 9.4; Suhl & Suhl 1990) evicts exactly these and
+  /// substitutes the logical of each row in uncovered_rows() below, which restores a
+  /// nonsingular basis by construction because a logical column is a unit vector.
+  [[nodiscard]] const std::vector<Index>& dependent_positions() const noexcept {
+    return dependent_positions_;
+  }
+
+  /// The rows left uncovered by any pivot when factorize() returns false - always the same
+  /// count as dependent_positions(), since eliminating k fewer columns leaves exactly k rows
+  /// with no pivot row assigned to them.
+  [[nodiscard]] const std::vector<Index>& uncovered_rows() const noexcept {
+    return uncovered_rows_;
+  }
 
   /// Solve B z = b in place. FTRAN.
   void solve(double* b) const;
@@ -194,6 +199,11 @@ class SparseLu {
 
   double smallest_pivot_ = 0.0;
   double largest_pivot_ = 0.0;
+
+  /// The rank defect located by eliminate() (issue #143), reported only when factorize()
+  /// returns false. Cleared at the start of every factorize() call.
+  std::vector<Index> dependent_positions_;
+  std::vector<Index> uncovered_rows_;
 };
 
 }  // namespace sankhya
