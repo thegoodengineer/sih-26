@@ -294,6 +294,66 @@ jobs:
           path: bench/results/*.csv
           if-no-files-found: warn
 
+  netlib-medium:
+    # THE GATE THAT #149 NEEDED AND DID NOT HAVE.
+    #
+    # The job above runs the nine committed instances and requires all nine to match their
+    # published optimum. That is a strict gate on a small, easy set, and it is worth keeping
+    # exactly as it is. What it cannot do is see a bug that only larger models expose.
+    #
+    # #149 (presolve free-column-singleton and doubleton-equation) passed all five checks and
+    # regressed the DUAL on seven of the first thirty Netlib instances - objective matching
+    # the published value to ten significant figures while the reduced costs were out by
+    # 6.9e-01. Presolve is on by default for every model, so the blast radius was everything;
+    # the job that would have caught it was pointed at nine instances that do not trigger
+    # those reductions.
+    #
+    # This job runs the 50-instance medium tier and gates on a DIFFERENT property:
+    # --require-verified fails only when the independent verifier rejects a solution, not
+    # when an instance misses the published optimum. Missing an optimum can be a known
+    # limitation - the tier is 43/50 and the shortfall is named in docs/BENCHMARKS.md and
+    # tracked in #34 - and gating on it would paint this job permanently red, which trains
+    # everyone to ignore it. A verifier rejection is never a known limitation: the verifier
+    # shares no code with the solver and re-derives the answer from the original file, so its
+    # rejection means the solution does not hold together on its own terms.
+    name: netlib medium (verifier gate)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build zlib1g-dev
+
+      - name: Build
+        run: |
+          cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Release -DSANKHYA_BUILD_TESTS=OFF
+          cmake --build build -j
+
+      # Keyed on the tier as well as on fetch_data.py, so this cache and the small set's
+      # cannot overwrite each other with a different set of files under the same key.
+      - name: Cache the fetched Netlib instances
+        uses: actions/cache@v4
+        with:
+          path: data/netlib
+          key: netlib-medium-v1-${{ hashFiles('bench/runners/fetch_data.py') }}
+
+      - name: Fetch the medium tier and its published optima
+        run: python3 bench/runners/fetch_data.py --set medium
+
+      - name: Solve and verify every answer
+        run: |
+          python3 bench/runners/netlib.py --binary build/sankhya             --time-limit 120 --require-verified
+
+      - name: Upload the evidence CSV
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: netlib-medium-results
+          path: bench/results/*.csv
+          if-no-files-found: warn
+
   provenance:
     name: provenance
     runs-on: ubuntu-latest

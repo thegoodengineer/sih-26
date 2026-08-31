@@ -35,6 +35,8 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -100,9 +102,36 @@ SUMMARY_ROW = re.compile(
 )
 
 
-def download(url: str, timeout: int = 120) -> bytes:
-    with urllib.request.urlopen(url, timeout=timeout) as response:
-        return response.read()
+def download(url: str, timeout: int = 120, attempts: int = 4) -> bytes:
+    """Fetch a URL, retrying on transport failures.
+
+    netlib.org times out often enough to matter. It happened twice in one afternoon here, and
+    each time it turned a benchmark job red for a reason that had nothing to do with the
+    change under review. The cache in ci.yml limits the exposure, but a COLD cache - a new
+    job, or any edit to this file, which is what the cache key is built from - still has to
+    fetch a whole tier, and that is when a single timeout is both most likely and most
+    expensive. The medium gate added alongside this fetches fifty instances on its first run.
+
+    Retries cover the TRANSPORT only. An HTTP error is re-raised immediately: a 404 is a real
+    answer about the request, and retrying it four times turns a clear failure into a slow
+    one.
+    """
+    last: Exception | None = None
+    for attempt in range(attempts):
+        try:
+            with urllib.request.urlopen(url, timeout=timeout) as response:
+                return response.read()
+        except urllib.error.HTTPError:
+            raise
+        except (urllib.error.URLError, TimeoutError, ConnectionError) as error:
+            last = error
+            if attempt + 1 == attempts:
+                break
+            delay = 2 ** attempt
+            print(f"  {url}: {error}; retrying in {delay}s "
+                  f"({attempt + 2} of {attempts})", file=sys.stderr)
+            time.sleep(delay)
+    raise SystemExit(f"failed to fetch {url} after {attempts} attempts: {last}")
 
 
 def sha256(data: bytes) -> str:

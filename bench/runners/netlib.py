@@ -207,6 +207,10 @@ def main() -> int:
                         help="skip the independent verifier (not recommended)")
     parser.add_argument("--check", action="store_true",
                         help="fail if the pass count dropped versus the newest committed CSV")
+    parser.add_argument("--require-verified", action="store_true",
+                        help="fail ONLY when the independent verifier rejects a solution, "
+                             "not when an instance merely fails to reach the published "
+                             "optimum. This is the gate for tiers with known failures.")
     parser.add_argument("--out", type=Path, default=None,
                         help="destination CSV; relative paths are resolved "
                              "against the repository root")
@@ -402,6 +406,38 @@ def main() -> int:
         if passes < baseline_passes:
             print(f"REGRESSION: pass count fell from {baseline_passes} to {passes}")
             return 1
+
+    # --require-verified: the gate for a tier we do not pass completely.
+    #
+    # The default rule is `passes == total`, which is right for the small set and useless
+    # anywhere else: the medium tier is 43/50 and the full set 71/89, so pointing CI at
+    # either would paint the job permanently red, and a job that is always red is a job
+    # everyone learns to ignore - the exact outcome the cache comment above worries about.
+    #
+    # A VERIFIER REJECTION IS A DIFFERENT KIND OF EVENT FROM A MISSED OPTIMUM. Failing to
+    # reach the published value can be a known limitation: too slow, not accurate enough,
+    # honestly recorded in docs/BENCHMARKS.md and named in #34. But the verifier re-derives
+    # the answer from the original file and shares no code with the solver, so its rejection
+    # says the solution is internally inconsistent - infeasible, or its duals do not price
+    # its primal. That is never acceptable and never a known limitation.
+    #
+    # This distinction is not hypothetical. #149 (presolve free-column-singleton and
+    # doubleton-equation) passed all five CI checks and regressed the DUAL on seven of the
+    # first thirty Netlib instances: the objective matched the published optimum to ten
+    # significant figures while the reduced costs were out by 6.9e-01. Nothing except the
+    # verifier could see it, and the job that runs the verifier was pointed at nine
+    # instances none of which trigger those reductions.
+    if args.require_verified:
+        rejected = [row["instance"] for row in rows if row["independently_verified"] == 0]
+        if rejected:
+            print(f"REJECTED BY THE VERIFIER: {len(rejected)} instance(s): "
+                  f"{', '.join(rejected)}")
+            print("An answer the verifier rejects is internally inconsistent, which is a bug "
+                  "whatever the objective says.")
+            return 1
+        print(f"no verifier rejections across {total} instance(s); "
+              f"{passes} also matched the published optimum")
+        return 0
 
     return 0 if passes == total else 1
 
