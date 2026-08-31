@@ -35,7 +35,7 @@ arithmetic starts, and a negative pivot is returned as the certificate. Reportin
 optimum as a global one is the single most damaging thing this dispatcher could do, so it
 does not — see the Evidence rules in [`CLAUDE.md`](CLAUDE.md).
 
-Benchmark results against Netlib, headline first: **66 of 89** on the full set — matched to
+Benchmark results against Netlib, headline first: **71 of 89** on the full set — matched to
 the published optimum to a relative 1e-6 *and* passed independent verification. The narrower
 tiers read higher (**43 of 50** on the medium tier, **9 of 9** on the small set the demo
 runs) because both are defined by a row cap, which makes them the easier half by
@@ -43,12 +43,19 @@ construction; the full set is the number Phase 6's ">= 95% of Netlib" criterion 
 against, so it is the one quoted here. See [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md),
 generated from the CSVs in `bench/results/` so it cannot drift.
 
-The 23 failures are worth naming, because they are not scattered: **14 are numerical**, and
-13 of those are one message - `basis became singular` - with the `pilot` family alone
-accounting for 4. Basis repair (#147) fixes the cases whose rank defect can be located; the
-rest wait on #143, which is what stops the defect being located at all. Of the remaining 9:
-5 converge to an objective that disagrees past 1e-6, 3 hit the time limit, and 1 finds a
-feasible point without proving it optimal.
+The 18 failures are worth naming, and their character has changed. `basis became singular`,
+which was 13 of the 23 failures a day earlier, is now **zero**: #144 found that the pivot
+search treated "none of my first four candidates was admissible" as proof the basis was
+singular, and #147 repairs the genuine rank defects that remain. What is left is no longer
+the solver giving up - it is the solver being too slow or not accurate enough:
+
+- **7** converge to an objective that disagrees with the published one past 1e-6
+- **6** hit the 120s time limit (`dfl001`, `pilot87`, `maros-r7`, `d6cube`, `fit2p`, `modszk1`)
+- **4** report optimal but fail our own primal or dual feasibility check on the way out
+- **1** finds a feasible point without proving it optimal
+
+That is a better class of problem to have, and a different roadmap: accuracy and speed rather
+than robustness. Tracked in #34.
 
 MIPLIB 2017 is benchmarked too: **11 of 30** easy instances reach the published optimum,
 **6 of 30** also prove it — branch and bound has no cutting planes yet (#23), so it finds
