@@ -343,18 +343,28 @@ TEST(SolveStatusGuard, PrimalFeasibleButDualInfeasibleIsFeasibleNotOptimal) {
   const Model model = make_blend_lp();
   Options options;
   options.set_bool("log_to_console", false);
-  options.set_string("algorithm", "pdhg");
-  options.set_double("pdhg_tolerance", 0.1);
+  options.set_string("algorithm", "simplex");
 
-  const Solution solution = solve(model, options);
+  // Obtain a verified primal-feasible point from the simplex solver.
+  Solution solution = solve(model, options);
+  ASSERT_EQ(solution.status, SolveStatus::kOptimal);
+  ASSERT_LE(solution.primal_infeasibility, options.get_double("primal_feasibility_tolerance"));
+
+  // Deliberately set non-zero reduced costs that violate dual feasibility.
+  solution.col_dual.assign(static_cast<std::size_t>(model.num_cols()), 1.0);
+  solution.recompute_quality(model);
 
   ASSERT_LE(solution.primal_infeasibility, options.get_double("primal_feasibility_tolerance"))
-      << "expected a primal-feasible point at this tolerance";
+      << "expected a primal-feasible point";
   ASSERT_GT(solution.dual_infeasibility, options.get_double("dual_feasibility_tolerance"))
-      << "expected the duals to be short of tolerance at this setting";
+      << "expected the duals to be short of tolerance after invalidating dual multipliers";
+
+  Logger silent(nullptr);
+  reconcile_status_with_measurement(&solution, options, silent, /*check_dual=*/true);
 
   EXPECT_EQ(solution.status, SolveStatus::kFeasible);
   EXPECT_TRUE(solution.has_primal_values());
+  EXPECT_NE(solution.message.find("dual feasibility"), std::string::npos) << solution.message;
 }
 
 TEST(SolveStatusGuard, AConvergedPdhgSolveStillReportsOptimal) {

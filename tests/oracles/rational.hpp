@@ -15,19 +15,24 @@
 
 #include <cstdint>
 #include <exception>
+#include <limits>
 
 namespace sankhya::oracle {
 
 /// Thrown when an exact operation cannot be represented in __int128.
 struct RationalOverflow : std::exception {
   [[nodiscard]] const char* what() const noexcept override {
-    return "exact rational arithmetic overflowed __int128";
+    return "exact rational arithmetic overflowed";
   }
 };
 
 class Rational {
  public:
+#if defined(_MSC_VER) && !defined(__clang__)
+  using Int = std::int64_t;
+#else
   using Int = __int128;
+#endif
 
   Rational() = default;
   Rational(Int numerator) : numerator_(numerator), denominator_(1) {}  // NOLINT: implicit
@@ -106,15 +111,42 @@ class Rational {
   }
 
   static Int add(Int a, Int b) {
+#if defined(_MSC_VER) && !defined(__clang__)
+    if ((b > 0 && a > INT64_MAX - b) || (b < 0 && a < INT64_MIN - b)) {
+      throw RationalOverflow();
+    }
+    return a + b;
+#else
     Int result = 0;
     if (__builtin_add_overflow(a, b, &result)) throw RationalOverflow();
     return result;
+#endif
   }
 
   static Int multiply(Int a, Int b) {
+#if defined(_MSC_VER) && !defined(__clang__)
+    if (a == 0 || b == 0) return 0;
+    if (a > 0) {
+      if (b > 0) {
+        if (a > INT64_MAX / b) throw RationalOverflow();
+      } else {
+        if (b < INT64_MIN / a) throw RationalOverflow();
+      }
+    } else {
+      if (b > 0) {
+        if (a < INT64_MIN / b) throw RationalOverflow();
+      } else {
+        if (a == INT64_MIN || b == INT64_MIN || -a > INT64_MAX / (-b)) {
+          throw RationalOverflow();
+        }
+      }
+    }
+    return a * b;
+#else
     Int result = 0;
     if (__builtin_mul_overflow(a, b, &result)) throw RationalOverflow();
     return result;
+#endif
   }
 
   static Int greatest_common_divisor(Int a, Int b) {
@@ -145,7 +177,11 @@ class Rational {
     }
   }
 
+#if defined(_MSC_VER) && !defined(__clang__)
+  static constexpr Int kMin = INT64_MIN;
+#else
   static constexpr Int kMin = static_cast<Int>(1) << 127;
+#endif
 
   Int numerator_ = 0;
   Int denominator_ = 1;
