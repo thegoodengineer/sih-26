@@ -15,6 +15,10 @@
 
 #include <fmt/format.h>
 
+#ifdef SANKHYA_ENABLE_CUDA
+#include "gpu/device.hpp"
+#endif
+
 #include "core/status_guard.hpp"
 #include "presolve/presolve.hpp"
 #include "sankhya/logging.hpp"
@@ -176,10 +180,18 @@ Solution solve(const Model& model, const Options& options) {
     }
 
     if (options.get_bool("gpu")) {
-      // Honest fallback, per CLAUDE.md: the CPU build must work with zero CUDA installed,
-      // and --gpu must never crash. No CUDA backend is compiled in yet, so say so once.
-      logger.warning(
-          "--gpu requested but this build has no CUDA backend compiled in; running on CPU");
+      #ifdef SANKHYA_ENABLE_CUDA
+        std::string device_description;
+        if (gpu::device_available(&device_description)) {
+          logger.info("--gpu requested; CUDA device available: {}", device_description);
+        } else {
+          logger.warning("--gpu requested but CUDA device unavailable: {}; running on CPU",
+                        device_description);
+        }
+      #else
+        logger.warning(
+            "--gpu requested but this build has no CUDA backend compiled in; running on CPU");
+      #endif
     }
 
     // PRESOLVE RUNS HERE, not inside an engine. The reductions are properties of the model,

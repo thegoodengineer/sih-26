@@ -141,18 +141,24 @@ endif()
 add_library(sankhya_flags INTERFACE)
 
 if(MSVC)
-  target_compile_options(sankhya_flags INTERFACE /W4 /WX /permissive- /Zc:__cplusplus)
+  target_compile_options(sankhya_flags INTERFACE
+    $<$<COMPILE_LANGUAGE:CXX>:/W4 /WX /permissive- /Zc:__cplusplus>
+  )
+  target_compile_definitions(sankhya_flags INTERFACE _CRT_SECURE_NO_WARNINGS)
 else()
   target_compile_options(sankhya_flags INTERFACE
-    -Wall -Wextra -Werror
-    -Wshadow
-    -Wconversion
-    -Wsign-conversion
-    -Wcast-qual
-    -Wdouble-promotion
-    -Wnon-virtual-dtor
-    -Woverloaded-virtual
-    -Wnull-dereference)
+    $<$<COMPILE_LANGUAGE:CXX>:
+      -Wall -Wextra -Werror
+      -Wshadow
+      -Wconversion
+      -Wsign-conversion
+      -Wcast-qual
+      -Wdouble-promotion
+      -Wnon-virtual-dtor
+      -Woverloaded-virtual
+      -Wnull-dereference
+    >
+  )
 endif()
 
 if(MINGW)
@@ -224,6 +230,16 @@ target_compile_definitions(sankhya_objects PRIVATE
 
 if(SANKHYA_ENABLE_CUDA)
   enable_language(CUDA)
+  set_target_properties(sankhya_objects PROPERTIES
+    CUDA_ARCHITECTURES 89)
+
+  file(GLOB SANKHYA_CUDA_SOURCES CONFIGURE_DEPENDS
+    "${PROJECT_SOURCE_DIR}/src/gpu/*.cu")
+  target_sources(sankhya_objects PRIVATE ${SANKHYA_CUDA_SOURCES})
+
+  find_package(CUDAToolkit REQUIRED)
+  target_link_libraries(sankhya_objects PUBLIC CUDA::cusparse)
+
   target_compile_definitions(sankhya_objects PUBLIC SANKHYA_ENABLE_CUDA)
 endif()
 
