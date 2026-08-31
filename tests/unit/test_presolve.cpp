@@ -266,8 +266,8 @@ TEST(Presolve, FixedColumnSharingAFoldedDoubletonRowStillPricesCorrectly) {
   // dropping x0's own term and reporting a self-inconsistent reduced cost. Found on Netlib's
   // `bandm` (column ORROLC, fixed by an unrelated earlier equality, sharing a row with a
   // later doubleton) - this is the same structure at unit-test scale.
-  const Model model =
-      make_lp({{2.0, 3.0, 4.0}}, {20.0}, {20.0}, {1.0, 2.0, 3.0}, {5.0, 0.0, 0.0}, {5.0, 10.0, 10.0});
+  const Model model = make_lp({{2.0, 3.0, 4.0}}, {20.0}, {20.0}, {1.0, 2.0, 3.0},
+                              {5.0, 0.0, 0.0}, {5.0, 10.0, 10.0});
   const Solution on = solve(model, with_presolve(true));
   ASSERT_EQ(on.status, SolveStatus::kOptimal) << on.message;
   EXPECT_NEAR(on.objective, 35.0 / 3.0, 1e-9);
