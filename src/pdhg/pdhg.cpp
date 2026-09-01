@@ -371,35 +371,66 @@ Solution solve_pdhg(const Model& model, const Options& options, Logger& logger) 
   gpu::PdhgCudaContext* cuda_context = nullptr;
   bool use_cuda = false;
 
-  constexpr std::size_t kCudaMinNnz = 300000;
+  // Automatic CPU/CUDA crossover threshold.
+  //
+  // Benchmarking on the development CPU/GPU platform shows that CUDA is
+  // clearly slower below roughly 4M post-presolve nonzeros and becomes
+  // competitive above that range. The threshold is deliberately
+  // conservative and applies only to automatic dispatch.
+  //
+  // Explicit --option gpu=true/false always overrides this policy.
+  constexpr std::size_t kCudaAutoMinNnz = 4000000;
 
-  if (options.get_bool("gpu")) {
-    const auto post_presolve_nnz = static_cast<std::size_t>(scaling.matrix.num_nonzeros());
+  const bool gpu_specified = options.is_explicitly_set("gpu");
+  const bool gpu_requested = options.get_bool("gpu");
 
-    if (post_presolve_nnz < kCudaMinNnz) {
-      logger.info("PDHG: problem has {} nonzeros (< {} threshold); using CPU for performance",
-                  post_presolve_nnz, kCudaMinNnz);
+  const auto post_presolve_nnz = static_cast<std::size_t>(scaling.matrix.num_nonzeros());
+
+  bool try_cuda = false;
+
+  if (gpu_specified) {
+    try_cuda = gpu_requested;
+
+    if (gpu_requested) {
+      logger.info("PDHG: CUDA explicitly requested");
     } else {
-      cuda_context = gpu::pdhg_cuda_create(
-          static_cast<std::size_t>(rows), static_cast<std::size_t>(cols), post_presolve_nnz,
-          scaling.matrix.column_starts().data(), scaling.matrix.row_indices().data(),
-          scaling.matrix.values().data());
+      logger.info("PDHG: CUDA explicitly disabled; using CPU");
+    }
+  } else {
+    if (post_presolve_nnz >= kCudaAutoMinNnz) {
+      try_cuda = true;
+      logger.info(
+          "PDHG: automatic dispatch selected CUDA "
+          "(post-presolve nnz {} >= {} threshold)",
+          post_presolve_nnz, kCudaAutoMinNnz);
+    } else {
+      logger.info(
+          "PDHG: automatic dispatch selected CPU "
+          "(post-presolve nnz {} < {} threshold)",
+          post_presolve_nnz, kCudaAutoMinNnz);
+    }
+  }
 
-      if (cuda_context != nullptr) {
-        if (gpu::pdhg_cuda_upload_problem_data(
-                cuda_context, scaling.cost.data(), scaling.col_lower.data(),
-                scaling.col_upper.data(), scaling.row_lower.data(), scaling.row_upper.data())) {
-          use_cuda = true;
+  if (try_cuda) {
+    cuda_context = gpu::pdhg_cuda_create(
+        static_cast<std::size_t>(rows), static_cast<std::size_t>(cols), post_presolve_nnz,
+        scaling.matrix.column_starts().data(), scaling.matrix.row_indices().data(),
+        scaling.matrix.values().data());
 
-          logger.info("PDHG CUDA backend enabled");
-        } else {
-          logger.warning("CUDA problem data upload failed; running on CPU");
-          gpu::pdhg_cuda_destroy(cuda_context);
-          cuda_context = nullptr;
-        }
+    if (cuda_context != nullptr) {
+      if (gpu::pdhg_cuda_upload_problem_data(
+              cuda_context, scaling.cost.data(), scaling.col_lower.data(),
+              scaling.col_upper.data(), scaling.row_lower.data(), scaling.row_upper.data())) {
+        use_cuda = true;
+
+        logger.info("PDHG CUDA backend enabled");
       } else {
-        logger.warning("PDHG CUDA backend initialization failed; running on CPU");
+        logger.warning("CUDA problem data upload failed; running on CPU");
+        gpu::pdhg_cuda_destroy(cuda_context);
+        cuda_context = nullptr;
       }
+    } else {
+      logger.warning("PDHG CUDA backend initialization failed; running on CPU");
     }
   }
 #else

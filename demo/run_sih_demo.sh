@@ -20,7 +20,7 @@ cd "$REPO"
 
 BIN="${SANKHYA_BIN:-}"
 if [ -z "$BIN" ]; then
-  for candidate in build/sankhya build/sankhya.exe build/Release/sankhya.exe; do
+  for candidate in build/sankhya build/sankhya.exe build/Release/sankhya.exe build-cuda/sankhya.exe; do
     [ -x "$REPO/$candidate" ] && BIN="$REPO/$candidate" && break
   done
 fi
@@ -31,7 +31,9 @@ if [ -z "$BIN" ]; then
 fi
 
 PYTHON="${PYTHON:-python3}"
-command -v "$PYTHON" >/dev/null 2>&1 || PYTHON=python
+if ! "$PYTHON" --version >/dev/null 2>&1; then
+  PYTHON=python
+fi
 
 QUICK=0
 [ "${1:-}" = "--quick" ] && QUICK=1
@@ -59,6 +61,74 @@ field() {  # field <tag> <section> <key>
 import json, sys
 print(json.load(open(sys.argv[1]))[sys.argv[2]][sys.argv[3]])" "$WORK/$1.json" "$2" "$3"
 }
+
+# ===========================================================================================
+rule "0.5. GPU acceleration: CPU vs CUDA on a large sparse LP"
+# ===========================================================================================
+if [ "$QUICK" = "1" ]; then
+  GPU_SIZE=5000
+  GPU_NNZ_PER_COL=100
+  GPU_LABEL="500k"
+else
+  GPU_SIZE=50000
+  GPU_NNZ_PER_COL=100
+  GPU_LABEL="5m"
+fi
+
+echo "Generating a ${GPU_SIZE} x ${GPU_SIZE} sparse LP with ${GPU_LABEL} nonzeros..."
+"$PYTHON" bench/runners/generate_large_lp.py \
+  --rows "$GPU_SIZE" --cols "$GPU_SIZE" \
+  --nnz-per-col "$GPU_NNZ_PER_COL" --seed 42 \
+  --out "$WORK/gpu_test_${GPU_LABEL}.mps"
+
+echo
+echo "--- CPU PDHG -------------------------------------------------------------------------"
+solve_case gpu_cpu "$WORK/gpu_test_${GPU_LABEL}.mps" \
+  --option algorithm=pdhg --option gpu=false
+echo "    algorithm: $(field gpu_cpu result algorithm)"
+echo "    objective: $(field gpu_cpu result objective)"
+echo "    message:   $(field gpu_cpu result message)"
+
+echo
+echo "--- CUDA PDHG ------------------------------------------------------------------------"
+solve_case gpu_cuda "$WORK/gpu_test_${GPU_LABEL}.mps" \
+  --option algorithm=pdhg --option gpu=true
+echo "    algorithm: $(field gpu_cuda result algorithm)"
+echo "    objective: $(field gpu_cuda result objective)"
+echo "    message:   $(field gpu_cuda result message)"
+
+echo
+"$PYTHON" - "$WORK/gpu_cpu.json" "$WORK/gpu_cuda.json" <<'PYGPU'
+import json
+import sys
+
+cpu = json.load(open(sys.argv[1]))["result"]
+gpu = json.load(open(sys.argv[2]))["result"]
+
+cpu_obj = float(cpu["objective"])
+gpu_obj = float(gpu["objective"])
+
+rel = abs(cpu_obj - gpu_obj) / max(1.0, abs(cpu_obj))
+
+print("    CUDA backend: {}".format(
+    "ACTIVE" if gpu["algorithm"] == "pdhg-cuda" else "NOT ACTIVE"))
+print("    CPU objective: {:.10f}".format(cpu_obj))
+print("    CUDA objective: {:.10f}".format(gpu_obj))
+print("    CPU/CUDA objective relative difference: {:.3e}".format(rel))
+print("    CPU/CUDA correctness: {}".format(
+    "PASS" if rel <= 1e-6 else "FAIL"))
+
+sys.exit(
+    0 if gpu["algorithm"] == "pdhg-cuda" and rel <= 1e-6 else 1
+)
+PYGPU
+
+echo
+echo "    GPU dispatch policy:"
+echo "    - gpu=false forces CPU."
+echo "    - gpu=true explicitly requests CUDA."
+echo "    - when gpu is omitted, post-presolve NNZ >= 4000000 selects CUDA."
+echo "    - smaller problems remain on CPU to avoid GPU overhead."
 
 # ===========================================================================================
 rule "0. What this is"
@@ -491,8 +561,9 @@ cat <<'GAPS' | sed -e "s|@FULL@|${FULL_SUMMARY}|g" -e "s|@MEDIUM@|${MEDIUM_SUMMA
     Cutting planes      Branch and bound is plain: no Gomory, MIR or cover cuts yet, no
                         pseudocost branching. Tracked as issue #23.
     GPU acceleration    IMPLEMENTED for PDHG. CUDA is selected automatically for sufficiently
-                        large post-presolve sparse problems (>= 300000 nonzeros); smaller problems
-                        use CPU to avoid GPU overhead. CPU/CUDA correctness is covered by tests.
+                        large post-presolve sparse problems (>= 4000000 nonzeros); smaller
+                        problems use CPU to avoid GPU overhead. CPU/CUDA correctness is covered
+                        by tests.
     Scale               Section 2.5 above solves one 5000 x 5000 instance, which is the
                         largest thing here by two orders of magnitude and is checked against
                         an optimum known by construction - but ONE generated instance is a

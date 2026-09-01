@@ -164,7 +164,7 @@ TEST(Pdhg, GpuFlagFallsBackToCpuWithoutCrashing) {
   EXPECT_NEAR(s.objective, 2.0, 1e-6);
 }
 
-TEST(Pdhg, GpuFlagFallsBackToCpuBelowCudaThreshold) {
+TEST(Pdhg, AutomaticDispatchFallsBackToCpuBelowCudaThreshold) {
 #ifdef SANKHYA_ENABLE_CUDA
   constexpr Index kSize = 2000;
   constexpr Index kEntriesPerColumn = 100;
@@ -192,7 +192,6 @@ TEST(Pdhg, GpuFlagFallsBackToCpuBelowCudaThreshold) {
   ASSERT_EQ(model.num_nonzeros(), 200000);
 
   Options options = pdhg_options(1e-4);
-  options.set_bool("gpu", true);
 
   const Solution solution = solve(model, options);
 
