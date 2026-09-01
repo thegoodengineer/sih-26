@@ -88,9 +88,16 @@ class Options {
   /// True when the option exists in the registry.
   [[nodiscard]] static bool exists(const std::string& name);
 
-  /// True when this instance holds a value different from the registry default. Used by
-  /// the log banner, which prints only the options the user actually changed.
+  /// True when this option was explicitly supplied/set by the caller,
+  /// even if its value equals the registry default.
+  [[nodiscard]] bool is_explicitly_set(const std::string& name) const;
+
+  /// True when this option was explicitly supplied by the caller,
+  /// even if its value equals the registry default.
   [[nodiscard]] bool is_modified(const std::string& name) const;
+
+  /// True when this option's stored value differs from the registry default.
+  [[nodiscard]] bool is_non_default(const std::string& name) const;
 
   /// Names of all options whose value differs from the default, in registry order.
   [[nodiscard]] std::vector<std::string> modified_names() const;
@@ -106,6 +113,11 @@ class Options {
   /// here: the registry is small, fixed at compile time, and looked up by index once the
   /// spec is resolved.
   std::vector<OptionValue> values_;
+
+  /// Tracks whether each option was explicitly supplied by the caller.
+  /// This is separate from values_: --option gpu=false must be distinguishable
+  /// from leaving gpu unspecified (which means automatic dispatch).
+  std::vector<bool> explicitly_set_;
 };
 
 }  // namespace sankhya

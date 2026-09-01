@@ -163,13 +163,14 @@ Solution solve(const Model& model, const Options& options) {
 
   if (problem_class == ProblemClass::kLp) {
     const std::string requested = options.get_string("algorithm");
-
-    // "auto" means the simplex. PDHG is a first-order method: it converges to a tolerance
-    // rather than to a vertex, produces no basis, and on the small instances we benchmark
-    // today the simplex is both faster and exact. It is selected explicitly, and it becomes
-    // the automatic choice only once there is evidence for a crossover point to switch on.
+    // Explicit engine selection.
+    // "auto" keeps the existing simplex behaviour for ordinary LPs. Large sparse LPs
+    // are dispatched to PDHG after presolve, where PDHG performs the CPU/CUDA decision.
+    const bool want_simplex = requested == "simplex";
     const bool want_pdhg = requested == "pdhg";
-    if (requested != "auto" && requested != "simplex" && !want_pdhg) {
+    const bool want_auto = requested == "auto";
+
+    if (!want_simplex && !want_pdhg && !want_auto) {
       solution.status = SolveStatus::kNotSolved;
       solution.algorithm = "none";
       solution.message = fmt::format(

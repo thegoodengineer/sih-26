@@ -169,6 +169,23 @@ TEST(Options, ModifiedTracking) {
   EXPECT_TRUE(options.modified_names().empty());
 }
 
+TEST(Options, ExplicitlySetTracking) {
+  Options options;
+
+  EXPECT_FALSE(options.is_explicitly_set("gpu"));
+  EXPECT_FALSE(options.is_non_default("gpu"));
+
+  options.set_bool("gpu", false);
+
+  EXPECT_TRUE(options.is_explicitly_set("gpu"));
+  EXPECT_FALSE(options.is_non_default("gpu"));
+
+  options.set_bool("gpu", true);
+
+  EXPECT_TRUE(options.is_explicitly_set("gpu"));
+  EXPECT_TRUE(options.is_non_default("gpu"));
+}
+
 TEST(Options, ValueAsStringRoundTrips) {
   Options options;
   std::string error;

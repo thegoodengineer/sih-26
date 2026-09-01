@@ -279,8 +279,14 @@ const std::vector<OptionSpec>& Options::registry() {
 
 Options::Options() {
   const std::vector<OptionSpec>& specs = registry();
+
   values_.reserve(specs.size());
-  for (const OptionSpec& spec : specs) values_.push_back(spec.default_value);
+  explicitly_set_.reserve(specs.size());
+
+  for (const OptionSpec& spec : specs) {
+    values_.push_back(spec.default_value);
+    explicitly_set_.push_back(false);
+  }
 }
 
 const OptionSpec* Options::find_spec(const std::string& name) {
@@ -317,10 +323,12 @@ bool Options::set_from_string(const std::string& raw_name, const std::string& ra
       const std::string v = to_lower(text);
       if (v == "1" || v == "true" || v == "on" || v == "yes") {
         values_[it->second] = true;
+        explicitly_set_[it->second] = true;
         return true;
       }
       if (v == "0" || v == "false" || v == "off" || v == "no") {
         values_[it->second] = false;
+        explicitly_set_[it->second] = true;
         return true;
       }
       if (error != nullptr) {
@@ -328,6 +336,7 @@ bool Options::set_from_string(const std::string& raw_name, const std::string& ra
       }
       return false;
     }
+
     case OptionType::Int: {
       errno = 0;
       char* end = nullptr;
@@ -347,8 +356,10 @@ bool Options::set_from_string(const std::string& raw_name, const std::string& ra
         return false;
       }
       values_[it->second] = static_cast<std::int64_t>(parsed);
+      explicitly_set_[it->second] = true;
       return true;
     }
+
     case OptionType::Double: {
       errno = 0;
       char* end = nullptr;
@@ -367,8 +378,10 @@ bool Options::set_from_string(const std::string& raw_name, const std::string& ra
         return false;
       }
       values_[it->second] = parsed;
+      explicitly_set_[it->second] = true;
       return true;
     }
+
     case OptionType::String: {
       const std::string v = spec.case_sensitive ? text : to_lower(text);
       if (!spec.choices.empty() &&
@@ -380,36 +393,46 @@ bool Options::set_from_string(const std::string& raw_name, const std::string& ra
         return false;
       }
       values_[it->second] = v;
+      explicitly_set_[it->second] = true;
       return true;
     }
   }
-  if (error != nullptr) *error = "unreachable option type";
+
   return false;
 }
 
 void Options::set_bool(const std::string& name, bool value) {
   OptionValue& slot = mutable_value_of(name);
   assert(std::holds_alternative<bool>(slot) && "option is not a bool");
+  const std::size_t i = require_index(name);
   slot = value;
+  explicitly_set_[i] = true;
 }
 
 void Options::set_int(const std::string& name, std::int64_t value) {
   OptionValue& slot = mutable_value_of(name);
   assert(std::holds_alternative<std::int64_t>(slot) && "option is not an int");
+  const std::size_t i = require_index(name);
   slot = value;
+  explicitly_set_[i] = true;
 }
 
 void Options::set_double(const std::string& name, double value) {
   OptionValue& slot = mutable_value_of(name);
   assert(std::holds_alternative<double>(slot) && "option is not a double");
+  const std::size_t i = require_index(name);
   slot = value;
+  explicitly_set_[i] = true;
 }
 
 void Options::set_string(const std::string& name, const std::string& value) {
   OptionValue& slot = mutable_value_of(name);
   assert(std::holds_alternative<std::string>(slot) && "option is not a string");
+  const std::size_t i = require_index(name);
+
   const OptionSpec* spec = find_spec(name);
   slot = (spec != nullptr && spec->case_sensitive) ? value : to_lower(value);
+  explicitly_set_[i] = true;
 }
 
 bool Options::get_bool(const std::string& name) const {
@@ -436,7 +459,16 @@ const std::string& Options::get_string(const std::string& name) const {
   return std::get<std::string>(slot);
 }
 
+bool Options::is_explicitly_set(const std::string& name) const {
+  return explicitly_set_[require_index(name)];
+}
+
 bool Options::is_modified(const std::string& name) const {
+  const std::size_t i = require_index(name);
+  return explicitly_set_[i] && values_[i] != registry()[i].default_value;
+}
+
+bool Options::is_non_default(const std::string& name) const {
   const std::size_t i = require_index(name);
   return values_[i] != registry()[i].default_value;
 }
@@ -444,9 +476,13 @@ bool Options::is_modified(const std::string& name) const {
 std::vector<std::string> Options::modified_names() const {
   std::vector<std::string> names;
   const std::vector<OptionSpec>& specs = registry();
+
   for (std::size_t i = 0; i < specs.size(); ++i) {
-    if (values_[i] != specs[i].default_value) names.push_back(specs[i].name);
+    if (explicitly_set_[i] && values_[i] != specs[i].default_value) {
+      names.push_back(specs[i].name);
+    }
   }
+
   return names;
 }
 
