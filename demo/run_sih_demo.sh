@@ -490,9 +490,9 @@ cat <<'GAPS' | sed -e "s|@FULL@|${FULL_SUMMARY}|g" -e "s|@MEDIUM@|${MEDIUM_SUMMA
                         (exact, gives a basis) and restarted PDHG (first-order, CPU).
     Cutting planes      Branch and bound is plain: no Gomory, MIR or cover cuts yet, no
                         pseudocost branching. Tracked as issue #23.
-    GPU acceleration    NOT WRITTEN. The first-order method it needs exists and runs on CPU;
-                        the CUDA backend is issues #16-#19. --gpu today prints a warning and
-                        falls back to CPU. We are not claiming a speed-up we have not measured.
+    GPU acceleration    IMPLEMENTED for PDHG. CUDA is selected automatically for sufficiently
+                        large post-presolve sparse problems (>= 300000 nonzeros); smaller problems
+                        use CPU to avoid GPU overhead. CPU/CUDA correctness is covered by tests.
     Scale               Section 2.5 above solves one 5000 x 5000 instance, which is the
                         largest thing here by two orders of magnitude and is checked against
                         an optimum known by construction - but ONE generated instance is a
