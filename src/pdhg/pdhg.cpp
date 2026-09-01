@@ -371,7 +371,7 @@ Solution solve_pdhg(const Model& model, const Options& options, Logger& logger) 
   gpu::PdhgCudaContext* cuda_context = nullptr;
   bool use_cuda = false;
 
-  constexpr std::size_t kCudaMinNnz = 20000;
+  constexpr std::size_t kCudaMinNnz = 300000;
 
   if (options.get_bool("gpu")) {
     const auto post_presolve_nnz = static_cast<std::size_t>(scaling.matrix.num_nonzeros());

@@ -31,6 +31,10 @@
 #include "oracles/lp_generator.hpp"
 #include "oracles/rational_simplex.hpp"
 
+#ifdef SANKHYA_ENABLE_CUDA
+#include "gpu/device.hpp"
+#endif
+
 namespace sankhya {
 namespace {
 
@@ -158,6 +162,101 @@ TEST(Pdhg, GpuFlagFallsBackToCpuWithoutCrashing) {
   const Solution s = solve(model, options);
   EXPECT_EQ(s.status, SolveStatus::kOptimal);
   EXPECT_NEAR(s.objective, 2.0, 1e-6);
+}
+
+TEST(Pdhg, GpuFlagFallsBackToCpuBelowCudaThreshold) {
+#ifdef SANKHYA_ENABLE_CUDA
+  constexpr Index kSize = 2000;
+  constexpr Index kEntriesPerColumn = 100;
+
+  Model model;
+  model.name = "GPU_CUDA_FALLBACK_TEST";
+  model.col_cost.assign(static_cast<std::size_t>(kSize), 1.0);
+  model.col_lower.assign(static_cast<std::size_t>(kSize), 0.0);
+  model.col_upper.assign(static_cast<std::size_t>(kSize), kInfinity);
+  model.col_type.assign(static_cast<std::size_t>(kSize), VarType::kContinuous);
+
+  model.row_lower.assign(static_cast<std::size_t>(kSize), 1.0);
+  model.row_upper.assign(static_cast<std::size_t>(kSize), kInfinity);
+
+  model.matrix.reset(kSize, kSize);
+
+  for (Index j = 0; j < kSize; ++j) {
+    for (Index k = 0; k < kEntriesPerColumn; ++k) {
+      const Index i = (j + k) % kSize;
+      model.matrix.add_entry(i, j, 1.0);
+    }
+  }
+  model.matrix.finalize();
+
+  ASSERT_EQ(model.num_nonzeros(), 200000);
+
+  Options options = pdhg_options(1e-4);
+  options.set_bool("gpu", true);
+
+  const Solution solution = solve(model, options);
+
+  ASSERT_TRUE(solution.status == SolveStatus::kOptimal ||
+              solution.status == SolveStatus::kFeasible);
+
+  EXPECT_EQ(solution.algorithm, "pdhg-cpu");
+#else
+  GTEST_SKIP() << "SANKHYA_ENABLE_CUDA is OFF";
+#endif
+}
+
+TEST(Pdhg, GpuCudaBackendAgreesWithCpu) {
+#ifdef SANKHYA_ENABLE_CUDA
+  std::string device_description;
+  if (!gpu::device_available(&device_description)) {
+    GTEST_SKIP() << "CUDA device unavailable: " << device_description;
+  }
+
+  constexpr Index kSize = 5000;
+  constexpr Index kEntriesPerColumn = 100;
+
+  Model model;
+  model.name = "GPU_CUDA_TEST";
+  model.col_cost.assign(static_cast<std::size_t>(kSize), 1.0);
+  model.col_lower.assign(static_cast<std::size_t>(kSize), 0.0);
+  model.col_upper.assign(static_cast<std::size_t>(kSize), kInfinity);
+  model.col_type.assign(static_cast<std::size_t>(kSize), VarType::kContinuous);
+
+  model.row_lower.assign(static_cast<std::size_t>(kSize), 1.0);
+  model.row_upper.assign(static_cast<std::size_t>(kSize), kInfinity);
+
+  model.matrix.reset(kSize, kSize);
+
+  for (Index j = 0; j < kSize; ++j) {
+    for (Index k = 0; k < kEntriesPerColumn; ++k) {
+      const Index i = (j + k) % kSize;
+      model.matrix.add_entry(i, j, 1.0);
+    }
+  }
+  model.matrix.finalize();
+
+  ASSERT_EQ(model.num_nonzeros(), 500000);
+
+  Options cpu_options = pdhg_options(1e-4);
+  cpu_options.set_bool("gpu", false);
+
+  Options gpu_options = pdhg_options(1e-4);
+  gpu_options.set_bool("gpu", true);
+
+  const Solution cpu = solve(model, cpu_options);
+  const Solution gpu = solve(model, gpu_options);
+
+  ASSERT_TRUE(cpu.status == SolveStatus::kOptimal || cpu.status == SolveStatus::kFeasible);
+  ASSERT_TRUE(gpu.status == SolveStatus::kOptimal || gpu.status == SolveStatus::kFeasible);
+
+  EXPECT_EQ(cpu.algorithm, "pdhg-cpu");
+  EXPECT_EQ(gpu.algorithm, "pdhg-cuda");
+
+  // The known feasible point x = 1 has objective kSize, and is optimal.
+  EXPECT_NEAR(gpu.objective, cpu.objective, 1e-3);
+#else
+  GTEST_SKIP() << "SANKHYA_ENABLE_CUDA is OFF";
+#endif
 }
 
 TEST(Pdhg, AgreesWithTheSimplexOnGeneratedInstances) {

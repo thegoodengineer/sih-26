@@ -996,7 +996,11 @@ bool pdhg_cuda_download_average(
         context->d_x_sum,
         context->d_y_sum,
         context->d_x_bar,
-        context->d_dx);
+        context->d_dy);
+
+    if (!check_cuda(cudaGetLastError())) {
+      return false;
+    }
   }
 
   if (context->cols > 0) {
@@ -1012,7 +1016,7 @@ bool pdhg_cuda_download_average(
   if (context->rows > 0) {
     if (!check_cuda(cudaMemcpy(
             host_y_avg,
-            context->d_dx,
+            context->d_dy,
             context->rows * sizeof(double),
             cudaMemcpyDeviceToHost))) {
       return false;
