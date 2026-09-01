@@ -66,39 +66,36 @@ print(json.load(open(sys.argv[1]))[sys.argv[2]][sys.argv[3]])" "$WORK/$1.json" "
 rule "0.5. GPU acceleration: CPU vs CUDA on a large sparse LP"
 # ===========================================================================================
 if [ "$QUICK" = "1" ]; then
-  GPU_SIZE=5000
-  GPU_NNZ_PER_COL=100
-  GPU_LABEL="500k"
-else
+  echo "GPU acceleration benchmark skipped in --quick mode."
+elif "$BIN" version 2>/dev/null | grep -q "CUDA compiled in"; then
   GPU_SIZE=50000
   GPU_NNZ_PER_COL=100
   GPU_LABEL="5m"
-fi
 
-echo "Generating a ${GPU_SIZE} x ${GPU_SIZE} sparse LP with ${GPU_LABEL} nonzeros..."
-"$PYTHON" bench/runners/generate_large_lp.py \
-  --rows "$GPU_SIZE" --cols "$GPU_SIZE" \
-  --nnz-per-col "$GPU_NNZ_PER_COL" --seed 42 \
-  --out "$WORK/gpu_test_${GPU_LABEL}.mps"
+  echo "Generating a ${GPU_SIZE} x ${GPU_SIZE} sparse LP with ${GPU_LABEL} nonzeros..."
+  "$PYTHON" bench/runners/generate_large_lp.py \
+    --rows "$GPU_SIZE" --cols "$GPU_SIZE" \
+    --nnz-per-col "$GPU_NNZ_PER_COL" --seed 42 \
+    --out "$WORK/gpu_test_${GPU_LABEL}.mps"
 
-echo
-echo "--- CPU PDHG -------------------------------------------------------------------------"
-solve_case gpu_cpu "$WORK/gpu_test_${GPU_LABEL}.mps" \
-  --option algorithm=pdhg --option gpu=false
-echo "    algorithm: $(field gpu_cpu result algorithm)"
-echo "    objective: $(field gpu_cpu result objective)"
-echo "    message:   $(field gpu_cpu result message)"
+  echo
+  echo "--- CPU PDHG -------------------------------------------------------------------------"
+  solve_case gpu_cpu "$WORK/gpu_test_${GPU_LABEL}.mps" \
+    --option algorithm=pdhg --option gpu=false
+  echo "    algorithm: $(field gpu_cpu result algorithm)"
+  echo "    objective: $(field gpu_cpu result objective)"
+  echo "    message:   $(field gpu_cpu result message)"
 
-echo
-echo "--- CUDA PDHG ------------------------------------------------------------------------"
-solve_case gpu_cuda "$WORK/gpu_test_${GPU_LABEL}.mps" \
-  --option algorithm=pdhg --option gpu=true
-echo "    algorithm: $(field gpu_cuda result algorithm)"
-echo "    objective: $(field gpu_cuda result objective)"
-echo "    message:   $(field gpu_cuda result message)"
+  echo
+  echo "--- CUDA PDHG ------------------------------------------------------------------------"
+  solve_case gpu_cuda "$WORK/gpu_test_${GPU_LABEL}.mps" \
+    --option algorithm=pdhg --option gpu=true
+  echo "    algorithm: $(field gpu_cuda result algorithm)"
+  echo "    objective: $(field gpu_cuda result objective)"
+  echo "    message:   $(field gpu_cuda result message)"
 
-echo
-"$PYTHON" - "$WORK/gpu_cpu.json" "$WORK/gpu_cuda.json" <<'PYGPU'
+  echo
+  "$PYTHON" - "$WORK/gpu_cpu.json" "$WORK/gpu_cuda.json" <<'PYGPU'
 import json
 import sys
 
@@ -123,12 +120,15 @@ sys.exit(
 )
 PYGPU
 
-echo
-echo "    GPU dispatch policy:"
-echo "    - gpu=false forces CPU."
-echo "    - gpu=true explicitly requests CUDA."
-echo "    - when gpu is omitted, post-presolve NNZ >= 4000000 selects CUDA."
-echo "    - smaller problems remain on CPU to avoid GPU overhead."
+  echo
+  echo "    GPU dispatch policy:"
+  echo "    - gpu=false forces CPU."
+  echo "    - gpu=true explicitly requests CUDA."
+  echo "    - when gpu is omitted, post-presolve NNZ >= 4000000 selects CUDA."
+  echo "    - smaller problems remain on CPU to avoid GPU overhead."
+else
+  echo "CUDA not available in this build; skipping GPU acceleration demo."
+fi
 
 # ===========================================================================================
 rule "0. What this is"
