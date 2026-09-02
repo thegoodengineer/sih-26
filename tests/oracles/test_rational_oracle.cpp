@@ -85,7 +85,11 @@ TEST(Rational, Comparison) {
 TEST(Rational, OverflowThrowsRatherThanWrapping) {
   // A wrapped intermediate would silently turn the oracle into a random number generator,
   // and the fuzz harness would then confirm whatever the float simplex happened to do.
+#if defined(_MSC_VER) && !defined(__clang__)
+  const Rational huge(static_cast<Rational::Int>(1) << 50);
+#else
   const Rational huge(static_cast<Rational::Int>(1) << 100);
+#endif
   EXPECT_THROW((void)(huge * huge), RationalOverflow);
   EXPECT_THROW((void)(Rational(1) / Rational(0)), RationalOverflow);
 }

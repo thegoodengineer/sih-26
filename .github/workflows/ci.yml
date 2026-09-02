@@ -408,3 +408,28 @@ jobs:
           clang-format --version
           find include src apps tests -type f \( -name '*.hpp' -o -name '*.cpp' -o -name '*.h' \) \
             -print0 | xargs -0 clang-format --dry-run --Werror
+
+  cuda-build:
+    name: CUDA build (compilation only)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install CUDA toolkit
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build nvidia-cuda-toolkit
+
+      - name: Report nvcc version
+        run: nvcc --version
+
+      - name: Configure with CUDA
+        run: |
+          cmake -G Ninja -B build-cuda \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DSANKHYA_ENABLE_CUDA=ON \
+            -DSANKHYA_BUILD_TESTS=ON
+
+      # Build only. Hosted GitHub runners do not provide an NVIDIA GPU.
+      - name: Build
+        run: cmake --build build-cuda -j

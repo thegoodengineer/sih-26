@@ -15,6 +15,10 @@
 
 #include <fmt/format.h>
 
+#ifdef SANKHYA_ENABLE_CUDA
+#include "gpu/device.hpp"
+#endif
+
 #include "core/status_guard.hpp"
 #include "presolve/presolve.hpp"
 #include "sankhya/logging.hpp"
@@ -168,13 +172,14 @@ Solution solve(const Model& model, const Options& options) {
 
   if (problem_class == ProblemClass::kLp) {
     const std::string requested = options.get_string("algorithm");
-
-    // "auto" means the simplex. PDHG is a first-order method: it converges to a tolerance
-    // rather than to a vertex, produces no basis, and on the small instances we benchmark
-    // today the simplex is both faster and exact. It is selected explicitly, and it becomes
-    // the automatic choice only once there is evidence for a crossover point to switch on.
+    // Explicit engine selection.
+    // "auto" keeps the existing simplex behaviour for ordinary LPs. Large sparse LPs
+    // are dispatched to PDHG after presolve, where PDHG performs the CPU/CUDA decision.
+    const bool want_simplex = requested == "simplex";
     const bool want_pdhg = requested == "pdhg";
-    if (requested != "auto" && requested != "simplex" && !want_pdhg) {
+    const bool want_auto = requested == "auto";
+
+    if (!want_simplex && !want_pdhg && !want_auto) {
       solution.status = SolveStatus::kNotSolved;
       solution.algorithm = "none";
       solution.message = fmt::format(
@@ -185,10 +190,18 @@ Solution solve(const Model& model, const Options& options) {
     }
 
     if (options.get_bool("gpu")) {
-      // Honest fallback, per CLAUDE.md: the CPU build must work with zero CUDA installed,
-      // and --gpu must never crash. No CUDA backend is compiled in yet, so say so once.
+#ifdef SANKHYA_ENABLE_CUDA
+      std::string device_description;
+      if (gpu::device_available(&device_description)) {
+        logger.info("--gpu requested; CUDA device available: {}", device_description);
+      } else {
+        logger.warning("--gpu requested but CUDA device unavailable: {}; running on CPU",
+                       device_description);
+      }
+#else
       logger.warning(
           "--gpu requested but this build has no CUDA backend compiled in; running on CPU");
+#endif
     }
 
     // PRESOLVE RUNS HERE, not inside an engine. The reductions are properties of the model,
