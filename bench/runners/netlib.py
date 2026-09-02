@@ -220,7 +220,16 @@ def main() -> int:
     reference_path = DATA_DIR / "reference.json"
     if not reference_path.exists():
         raise SystemExit("no reference data; run bench/runners/fetch_data.py first")
-    reference = json.loads(reference_path.read_text())["instances"]
+    # READ ONCE. The tier tag used in the output filename used to be read from this file
+    # again at the END of the run, hundreds of solves later, and anything that changed the
+    # file in between silently mislabelled the result. That is not hypothetical: a stray
+    # `git checkout -- data/netlib/reference.json` during a run produced an 89-instance CSV
+    # named netlib-small-*.csv, and make_benchmarks_doc.py selects CSVs BY THAT NAME - so
+    # docs/BENCHMARKS.md would have reported a full-set figure as the small tier's, in a
+    # document whose whole purpose is that it cannot drift from the evidence.
+    reference_blob = json.loads(reference_path.read_text())
+    reference = reference_blob["instances"]
+    tier = reference_blob.get("instance_set", "")
 
     names = sorted(args.instances or reference)
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -348,7 +357,6 @@ def main() -> int:
     # Tier goes in the FILENAME. Both tiers at the same commit previously produced the same
     # path, so running medium after small silently overwrote it and docs/BENCHMARKS.md could
     # only ever describe whichever ran last.
-    tier = json.loads(reference_path.read_text()).get("instance_set", "")
     tier_tag = f"{tier}-" if tier and tier != "explicit" else ""
     out_path = args.out or (RESULTS_DIR / f"netlib-{tier_tag}{commit}.csv")
     # Resolve against the repository root BEFORE anything else touches it. Two separate

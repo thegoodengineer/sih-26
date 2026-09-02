@@ -235,15 +235,37 @@ void Solution::recompute_quality(const Model& model) {
   if (m > 0) model.matrix.multiply(col_value.data(), row_activity.data());
 
   primal_infeasibility = 0.0;
+  primal_infeasibility_scaled = 0.0;
   integrality_violation = 0.0;
+
+  // Per-row numerical scale: the largest term the activity sum was built from. A residual
+  // cannot be expected to be smaller than the rounding error of the sum that produced it,
+  // and that error is set by the size of the terms, not by the size of the answer.
+  std::vector<double> row_scale(static_cast<std::size_t>(m), 1.0);
+  for (Index j = 0; j < n; ++j) {
+    const double x = col_value[static_cast<std::size_t>(j)];
+    if (x == 0.0) continue;
+    const ColumnView column = model.matrix.column(j);
+    for (Index k = 0; k < column.size; ++k) {
+      const auto r = static_cast<std::size_t>(column.rows[k]);
+      row_scale[r] = std::max(row_scale[r], std::fabs(column.values[k] * x));
+    }
+  }
+
+  const auto record = [&](double violation, double scale) {
+    if (violation <= 0.0) return;
+    primal_infeasibility = std::max(primal_infeasibility, violation);
+    primal_infeasibility_scaled =
+        std::max(primal_infeasibility_scaled, violation / std::max(1.0, scale));
+  };
   for (Index j = 0; j < n; ++j) {
     const auto u = static_cast<std::size_t>(j);
     const double x = col_value[u];
     if (is_finite_bound(model.col_lower[u])) {
-      primal_infeasibility = std::max(primal_infeasibility, model.col_lower[u] - x);
+      record(model.col_lower[u] - x, std::fabs(x));
     }
     if (is_finite_bound(model.col_upper[u])) {
-      primal_infeasibility = std::max(primal_infeasibility, x - model.col_upper[u]);
+      record(x - model.col_upper[u], std::fabs(x));
     }
     if (model.col_type[u] == VarType::kInteger) {
       integrality_violation = std::max(integrality_violation, std::fabs(x - std::round(x)));
@@ -253,10 +275,10 @@ void Solution::recompute_quality(const Model& model) {
     const auto u = static_cast<std::size_t>(i);
     const double a = row_activity[u];
     if (is_finite_bound(model.row_lower[u])) {
-      primal_infeasibility = std::max(primal_infeasibility, model.row_lower[u] - a);
+      record(model.row_lower[u] - a, row_scale[u]);
     }
     if (is_finite_bound(model.row_upper[u])) {
-      primal_infeasibility = std::max(primal_infeasibility, a - model.row_upper[u]);
+      record(a - model.row_upper[u], row_scale[u]);
     }
   }
 
