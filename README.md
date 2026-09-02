@@ -43,16 +43,32 @@ construction; the full set is the number Phase 6's ">= 95% of Netlib" criterion 
 against, so it is the one quoted here. See [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md),
 generated from the CSVs in `bench/results/` so it cannot drift.
 
-The 18 failures are worth naming, and their character has changed. `basis became singular`,
-which was 13 of the 23 failures a day earlier, is now **zero**: #144 found that the pivot
-search treated "none of my first four candidates was admissible" as proof the basis was
-singular, and #147 repairs the genuine rank defects that remain. What is left is no longer
-the solver giving up - it is the solver being too slow or not accurate enough:
+The 18 failures are worth naming, and most of them are not wrong answers.
 
-- **7** converge to an objective that disagrees with the published one past 1e-6
-- **6** hit the 120s time limit (`dfl001`, `pilot87`, `maros-r7`, `d6cube`, `fit2p`, `modszk1`)
-- **4** report optimal but fail our own primal or dual feasibility check on the way out
-- **1** finds a feasible point without proving it optimal
+Every failing instance that produces an answer at all was cross-checked against **HiGHS**, a
+mature third-party solver, by `bench/runners/cross_check_highs.py`. On all twelve of them our
+objective agrees with HiGHS to between **8.8e-13 and 3.1e-10**. On eight, HiGHS *also*
+disagrees with Netlib's published table, by up to 1.3e-03:
+
+| what it is | count | instances |
+|---|---|---|
+| our answer agrees with HiGHS; the published table is the outlier | **8** | `80bau3b`, `e226`, `ganges`, `greenbea`, `greenbeb`, `nesm`, `pilot`, `scrs8` |
+| we ran out of time — nothing to compare | **6** | `d6cube`, `dfl001`, `fit2p`, `maros-r7`, `modszk1`, `pilot87` |
+| answer agrees with everyone; our own status check rejects it | **4** | `etamacro`, `grow7`, `grow15`, `pilotnov` |
+
+So: **on every Netlib instance where this solver produces a final answer, that answer agrees
+with HiGHS.** What remains is speed on six instances and our own status reporting on four.
+
+This mattered because our own verifier could not settle it — it re-derives the answer from
+the same file we read, so agreeing with it shows only that our two readers agree, and both
+were written by this project (#75). Two independent solvers landing on the same number is a
+different order of evidence. The pass rate above is still measured against Netlib's table,
+unchanged: a project cannot grade itself against a solver of its own choosing.
+
+The failure class that *was* the largest is gone. `basis became singular` was 13 of 23
+failures a day earlier and is now **zero** — #144 found the pivot search treating "none of my
+first four candidates was admissible" as proof of singularity, and #147 repairs the genuine
+rank defects that remain.
 
 That is a better class of problem to have, and a different roadmap: accuracy and speed rather
 than robustness. Tracked in #34.
