@@ -11,7 +11,7 @@ way an issue body is not, and every status here was checked against a specific c
 
 | requirement | status | evidence / issue |
 |---|---|---|
-| Linear Programming | **done** | revised primal simplex; Netlib full set 71/89, medium 43/50, small 9/9 (#34) — the full set is the headline per #142, the narrower tiers being row-capped and so the easier half |
+| Linear Programming | **done** | revised primal simplex; Netlib full set 71/89, medium 43/50, small 9/9 (#34). Cross-checked against HiGHS (#154): on every instance where the solver produces a final answer, that answer agrees with HiGHS to 3.1e-10 or better; 8 of the 18 failures are cases where the published Netlib table is the outlier, not our answer — the full set is the headline per #142, the narrower tiers being row-capped and so the easier half |
 | Mixed-Integer LP | **done** | branch & bound; corroborated by exhaustive oracle in the demo |
 | Quadratic Programming | **done** | #55 — Condat-Vu primal-dual engine, `src/qp/`. Convexity decided by LDL^T on `sense * Q` before any arithmetic; non-convex is refused with a certificate, never solved to a local point. Readable from a QPS `QUADOBJ` file (#112) and independently verified. |
 | Mixed-Integer QP | **done** | #139 — branch and bound over convex QP node relaxations, joining the two existing engines. `src/core/solve.cpp` dispatches a real `ProblemClass::kMiqp` case; a non-convex Hessian is still refused before any arithmetic, exactly as plain QP does. `tests/unit/test_miqp.cpp` covers it. (Superseded: this used to return `not_solved`; #142 corrected the demo and docs to stop saying so.) |
