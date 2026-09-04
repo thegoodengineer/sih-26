@@ -163,6 +163,13 @@ const std::vector<OptionSpec>& Options::registry() {
                  0.0,
                  0.0,
                  {}});
+    s.push_back({"enable_root_cuts",
+                 OptionType::Bool,
+                 false,
+                 "Enable root-node cutting planes (GMI and Knapsack Cover).",
+                 0.0,
+                 0.0,
+                 {}});
     s.push_back({"gpu",
                  OptionType::Bool,
                  false,

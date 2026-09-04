@@ -141,4 +141,20 @@ inline constexpr double kHarrisRelaxation = 0.1 * kPrimalFeasibility;
 inline constexpr double kPdhgLoose = 1e-4;
 inline constexpr double kPdhgTight = 1e-8;
 
+// ---------------------------------------------------------------------------------------
+// Cuts
+// ---------------------------------------------------------------------------------------
+
+/// Maximum density (nonzero structural coefficients / original structural columns) for a cut
+/// to be accepted. A performance/robustness filter to keep the LP relaxation sparse.
+inline constexpr double kCutMaxDensity = 0.2;
+
+/// Maximum ratio of max(abs(coeff)) / min(abs(coeff)) for materially nonzero coefficients.
+/// Prevents extreme coefficient scaling from ruining the numerical stability of the LP.
+inline constexpr double kCutMaxCoefficientRatio = 1e6;
+
+/// Minimum root-LP violation for a cut to be accepted. Valid cuts that are not violated
+/// or barely violated are safely rejected to save LP solves.
+inline constexpr double kCutViolationTolerance = 1e-5;
+
 }  // namespace sankhya::tol
