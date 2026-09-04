@@ -437,13 +437,35 @@ def main() -> int:
     # instances none of which trigger those reductions.
     if args.require_verified:
         rejected = [row["instance"] for row in rows if row["independently_verified"] == 0]
-        if rejected:
-            print(f"REJECTED BY THE VERIFIER: {len(rejected)} instance(s): "
-                  f"{', '.join(rejected)}")
-            print("An answer the verifier rejects is internally inconsistent, which is a bug "
-                  "whatever the objective says.")
+
+        # A DOWNGRADED OPTIMALITY CLAIM COUNTS AS A REJECTION TOO (#157).
+        #
+        # The verifier only checks the dual conditions when the solver claims optimality,
+        # and that is right: kFeasible is a solver declining to make the claim. But there is
+        # a second way to arrive at kFeasible - the engine claimed optimal and our own status
+        # check in solve.cpp caught the duals violating tolerance and overrode it. That is
+        # not declining a claim; it is making one and being caught. And it was invisible
+        # here: the status is no longer "optimal", so the verifier skipped the duals, so
+        # nothing was rejected, and recipe dropped from a pass to a silent non-pass on the
+        # #149 merge with the gate green. The stricter our own check, the less this gate
+        # saw. Every override writes a message beginning with the same words, so it is
+        # matched on those - a string this project owns, not a heuristic.
+        self_rejected = [row["instance"] for row in rows
+                         if str(row.get("message", "")).startswith("engine reported optimal but")
+                         and row["instance"] not in rejected]
+
+        if rejected or self_rejected:
+            if rejected:
+                print(f"REJECTED BY THE VERIFIER: {len(rejected)} instance(s): "
+                      f"{', '.join(rejected)}")
+            if self_rejected:
+                print(f"OPTIMALITY CLAIM REJECTED BY OUR OWN CHECK: {len(self_rejected)} "
+                      f"instance(s): {', '.join(self_rejected)}")
+            print("An answer that fails an independent check - or that claimed optimality "
+                  "and failed our own - is internally inconsistent, which is a bug whatever "
+                  "the objective says.")
             return 1
-        print(f"no verifier rejections across {total} instance(s); "
+        print(f"no rejections across {total} instance(s); "
               f"{passes} also matched the published optimum")
         return 0
 
