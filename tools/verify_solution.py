@@ -703,14 +703,21 @@ def verify(model: Model, solution: Solution, primal_tol: float, dual_tol: float,
     else:
         # Reduced costs must satisfy d = c - A^T y. Recomputing catches a solver that reports
         # a dual vector inconsistent with the reduced costs it also reports.
-        worst, where = 0.0, ""
+        # Judged against the magnitude of the terms in c - A^T y, for the same reason the
+        # row activities are judged against theirs: it is a difference of quantities that
+        # cancel, and its achievable accuracy is set by their size. On grow7 the terms are
+        # of order 1e+07, so an absolute 1e-6 asks for 1e-13 relative.
+        worst, where, worst_abs = 0.0, "", 0.0
         for j, name in enumerate(model.col_names):
-            expected = cost[j] - sum(value * y[i] for i, value in model.entries[j])
+            terms = [value * y[i] for i, value in model.entries[j]]
+            expected = cost[j] - sum(terms)
             difference = abs(expected - d[j])
-            if difference > worst:
-                worst, where = difference, name
+            scale = max(1.0, abs(cost[j]), max((abs(t) for t in terms), default=0.0))
+            if difference / scale > worst:
+                worst, where, worst_abs = difference / scale, name, difference
         report.check(worst <= 1e-6, "reduced costs",
-                     f"max |c - A^T y - d| = {worst:.3e}" + (f" on {where}" if where else ""))
+                     f"max |c - A^T y - d| = {worst_abs:.3e} ({worst:.3e} relative to its terms)"
+                     + (f" on {where}" if where else ""))
 
     def sign_violation(multiplier: float, value: float, lower: float, upper: float) -> float:
         """How badly a multiplier's SIGN contradicts the bound it prices against.
@@ -737,21 +744,30 @@ def verify(model: Model, solution: Solution, primal_tol: float, dual_tol: float,
             return -multiplier
         return 0.0
 
-    worst, where = 0.0, ""
+    # Scaled like the reduced costs above: a sign violation of 6 on a reduced cost whose
+    # terms are of order 1e+07 is the precision floor, not a wrong sign.
+    worst, where, worst_abs = 0.0, "", 0.0
     for j, name in enumerate(model.col_names):
         violation = sign_violation(d[j], x[j], model.col_lower[j], model.col_upper[j])
-        if violation > worst:
-            worst, where = violation, name
+        scale = max(1.0, abs(cost[j]),
+                    max((abs(value * y[i]) for i, value in model.entries[j]), default=0.0))
+        if violation / scale > worst:
+            worst, where, worst_abs = violation / scale, name, violation
     report.check(worst <= dual_tol, "dual feasibility (columns)",
-                 f"worst {worst:.3e}" + (f" on {where}" if where else ""))
+                 f"worst {worst_abs:.3e} ({worst:.3e} relative)" + (f" on {where}" if where else ""))
 
-    worst, where = 0.0, ""
+    # A row price has no terms of its own to compare against, so it is judged relative to
+    # the size of the prices it sits among - a weaker test than the column one, and stated
+    # as such in model.hpp.
+    dual_norm = max(1.0, max((abs(v) for v in y), default=0.0))
+    worst, where, worst_abs = 0.0, "", 0.0
     for i, name in enumerate(model.row_names):
         violation = sign_violation(y[i], activity[i], model.row_lower[i], model.row_upper[i])
-        if violation > worst:
-            worst, where = violation, name
+        if violation / dual_norm > worst:
+            worst, where, worst_abs = violation / dual_norm, name, violation
     report.check(worst <= dual_tol, "dual feasibility (rows)",
-                 f"worst {worst:.3e}" + (f" on {where}" if where else ""))
+                 f"worst {worst_abs:.3e} ({worst:.3e} relative to |y|)"
+                 + (f" on {where}" if where else ""))
 
     # ---- Complementary slackness ----------------------------------------------------------
     # A multiplier may only be nonzero where its constraint is tight.

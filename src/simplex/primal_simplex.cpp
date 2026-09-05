@@ -1509,6 +1509,35 @@ Solution PrimalSimplex::run() {
         degenerate_run = 0;
         continue;
       }
+      // OPTIMALITY IS DECLARED ON FRESH FACTORS OR NOT AT ALL. "No column prices as
+      // improving" was decided from reduced costs computed by BTRAN through whatever eta
+      // file was in play, and on an ill-conditioned basis those can be wrong by more than
+      // the dual tolerance in either direction - so the test can pass on a basis that is
+      // not dual feasible. Measured on grow7: the exit basis reports a reduced cost off by
+      // 0.66, eight thousand times the tolerance, from fresh factors; the pricing that
+      // stopped there had seen a smaller number through the etas. On etamacro the same
+      // mechanism leaves a duality gap of 1.7e-09 the verifier rejects at 1e-09.
+      //
+      // So: if updates are in play, refactorize and go round once more. The top of the loop
+      // recomputes the reduced costs from the fresh factors; if a column now prices as
+      // improving the search continues from a point it should never have stopped at, and if
+      // none does, eta_count() is zero and this branch declares optimality with the duals
+      // it is about to report. It cannot loop: a refactorization empties the eta file, and
+      // only a pivot refills it.
+      if (m_ > 0 && lu_.eta_count() > 0) {
+        if (!refactorize()) {
+          return finish(SolveStatus::kNumericalError,
+                        fmt::format("basis became singular at iteration {}", iterations),
+                        iterations, timer.elapsed_seconds());
+        }
+        ++refactorizations_;
+        compute_basic_values();
+        logger_.verbose(
+            "iteration {}: no improving column through the eta file; re-pricing "
+            "on fresh factors before declaring optimality",
+            iterations);
+        continue;
+      }
       return finish(SolveStatus::kOptimal, {}, iterations, timer.elapsed_seconds());
     }
 
