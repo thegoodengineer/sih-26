@@ -1237,7 +1237,6 @@ Solution PrimalSimplex::finish(SolveStatus status, const std::string& message, C
   // one available. Restoring here, at the single choke point, means no exit can miss it.
   remove_perturbation();
 
-
   // The ratio of refactorizations to iterations is the cheapest available read on how well
   // the basis update is holding up: a run that refactorizes on most pivots has gained
   // nothing, and a high rejection count means the bases being produced are ill conditioned.
