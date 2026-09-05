@@ -1237,22 +1237,6 @@ Solution PrimalSimplex::finish(SolveStatus status, const std::string& message, C
   // one available. Restoring here, at the single choke point, means no exit can miss it.
   remove_perturbation();
 
-  // REPORT THE DUALS FROM FRESH FACTORS. The point x_B at an optimal exit has been through
-  // the accuracy check and the primal feasibility test; the duals have not. y comes from
-  // BTRAN of c_B through whatever eta file happens to be in play at the last iteration, and
-  // on an ill-conditioned final basis that can be wrong by far more than the point is:
-  // measured on grow7, a path that ends with the eta file in play reports a reduced cost off
-  // by 6.1 - seven percent of its own terms - while the objective agrees with HiGHS to
-  // 1e-10. The point was right and the certificate handed out with it was not. One
-  // refactorization at the exit, only when updates are in play, and the reported duals are
-  // the duals of the basis actually being claimed.
-  if (status == SolveStatus::kOptimal && m_ > 0 && lu_.eta_count() > 0) {
-    if (refactorize()) {
-      ++refactorizations_;
-      compute_basic_values();
-      compute_reduced_costs(false);
-    }
-  }
 
   // The ratio of refactorizations to iterations is the cheapest available read on how well
   // the basis update is holding up: a run that refactorizes on most pivots has gained
