@@ -40,19 +40,36 @@ def commit_order() -> list[str]:
     return out.stdout.split()
 
 
-def commit_of(path: Path) -> str:
-    """The commit recorded in a results CSV's first row."""
+def first_row(path: Path) -> dict:
+    """The first data row of a results CSV, or an empty dict if it cannot be read."""
     try:
         with path.open(newline="", encoding="utf-8") as handle:
             for row in csv.DictReader(handle):
-                return (row.get("git_commit") or "").strip()
+                return row
     except (OSError, ValueError):
         pass
-    return ""
+    return {}
+
+
+def commit_of(path: Path) -> str:
+    """The commit recorded in a results CSV's first row."""
+    return (first_row(path).get("git_commit") or "").strip()
+
+
+def is_default_run(path: Path) -> bool:
+    """False when the run was made with a non-default solver option.
+
+    netlib.py records --solver-option values in a `solver_options` column. Such a run is a
+    measurement OF an option, not the tier's evidence: the #66 re-measurement committed four
+    medium-tier CSVs at one commit, three with an option set, and they would otherwise tie
+    on git position and be ordered by mtime - which on a fresh clone is the checkout order.
+    A CSV without the column predates the option and counts as a default run.
+    """
+    return not (first_row(path).get("solver_options") or "").strip()
 
 
 def latest(pattern: str) -> Path | None:
-    candidates = list(RESULTS_DIR.glob(pattern))
+    candidates = [path for path in RESULTS_DIR.glob(pattern) if is_default_run(path)]
     if not candidates:
         return None
 
