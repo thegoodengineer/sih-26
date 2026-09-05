@@ -111,10 +111,28 @@ def as_number(value) -> float | None:
 
 
 def git_commit() -> str:
+    """Short commit hash, with "-dirty" appended when tracked files are modified.
+
+    The commit names the CSV and is recorded in every row, and until now it named the
+    commit whether or not the tree matched it. Two benchmark runs from the same commit but
+    different working trees - a baseline and a branch with uncommitted changes - wrote the
+    SAME filename, the second overwrote the first, and the comparison that followed diffed
+    a file against itself and found no change. A CSV that claims to be evidence for a commit
+    while measuring something else is the exact failure CLAUDE.md's evidence rules exist to
+    prevent, so the marker goes in the name and in the column.
+
+    Untracked files are ignored: the fetched instances under data/netlib/ are untracked by
+    design and would otherwise mark every run dirty.
+    """
     try:
         result = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=REPO_ROOT,
                                 capture_output=True, text=True, check=False)
-        return result.stdout.strip() or "unknown"
+        commit = result.stdout.strip() or "unknown"
+        status = subprocess.run(["git", "status", "--porcelain", "--untracked-files=no"],
+                                cwd=REPO_ROOT, capture_output=True, text=True, check=False)
+        if status.stdout.strip():
+            commit += "-dirty"
+        return commit
     except OSError:
         return "unknown"
 
