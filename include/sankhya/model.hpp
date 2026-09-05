@@ -248,6 +248,24 @@ class Solution {
   /// The absolute figure is still what gets REPORTED, because it is the one a reader can
   /// check by hand against the model. This is what the status decision uses.
   double primal_infeasibility_scaled = 0.0;
+
+  /// The dual violations, each divided by the numerical scale of the quantity it was
+  /// measured on - the dual counterpart of primal_infeasibility_scaled, and needed for the
+  /// same model: grow7's dual infeasibility is 6.1 absolute against costs and prices of
+  /// order 1e+07, which is 6e-07 relative, i.e. a point at the precision floor being called
+  /// a failed optimality claim.
+  ///
+  /// A COLUMN'S scale is the larger of its cost and the largest term of A^T y in that
+  /// column: the reduced cost d_j = c_j - a_j^T y is a difference of those quantities, and
+  /// when they are large and nearly equal the leading digits cancel, so the achievable
+  /// accuracy of d_j is set by their size, exactly as a row activity's is by its terms.
+  ///
+  /// A ROW'S scale is the infinity norm of the whole dual vector. A row price has no terms
+  /// of its own to compare against - its sign condition is the condition - so the only
+  /// honest scale is the size of the prices it sits among. That is a weaker test than the
+  /// column one and is stated as such: it says "this price is small relative to its
+  /// neighbours", not "this price is right".
+  double dual_infeasibility_scaled = 0.0;
   double dual_infeasibility = 0.0;  ///< max violation of the reduced-cost sign conditions
   double complementarity_violation = 0.0;
   double integrality_violation = 0.0;
