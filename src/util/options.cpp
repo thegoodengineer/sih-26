@@ -122,12 +122,13 @@ const std::vector<OptionSpec>& Options::registry() {
                  {"auto", "simplex", "dual-simplex", "pdhg", "ipm"}});
     s.push_back({"pricing",
                  OptionType::String,
-                 std::string("dantzig"),
-                 "Simplex entering-variable rule: dantzig (default) or devex. Devex takes "
-                 "far fewer iterations but is NOT yet numerically safe - it costs two Netlib "
-                 "medium instances to a singular basis under either ratio test. Measured "
-                 "against the Harris two-pass ratio test (#67) and unchanged; see #66 for "
-                 "both sets of numbers.",
+                 std::string("devex"),
+                 "Simplex entering-variable rule: devex (default) or dantzig. Devex was "
+                 "opt-in while it drove two Netlib medium instances to a singular basis; "
+                 "that failure class was removed by #144 and #147, and re-measured on the "
+                 "medium tier devex solves the same 49 instances in a third fewer "
+                 "iterations and a third less time (#66). Dantzig is kept so the "
+                 "comparison can be regenerated.",
                  0.0,
                  0.0,
                  {"devex", "dantzig"}});

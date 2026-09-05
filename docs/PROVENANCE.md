@@ -67,7 +67,7 @@ mathematics, not transcribed from anyone's implementation.
 | Bounded-variable revised primal simplex | Dantzig, *Linear Programming and Extensions* (1963); Chvátal, *Linear Programming* (1983), ch. 3 and 8 | `src/simplex/primal_simplex.cpp` |
 | Piecewise-linear (composite) phase 1, no artificial variables | Maros, *Computational Techniques of the Simplex Method*, ch. 9 | `src/simplex/primal_simplex.cpp` |
 | Bland's anti-cycling rule | Chvátal, *Linear Programming*, ch. 3 | `src/simplex/primal_simplex.cpp` |
-| Devex pricing (opt-in; `--option pricing=devex`, #66) | Forrest & Goldfarb, *Steepest-edge simplex algorithms for linear programming*, Mathematical Programming 57 (1992); the approximation is Harris (1973), below | `src/simplex/primal_simplex.cpp` |
+| Devex pricing (default since #66 was re-measured; `--option pricing=dantzig` selects the old rule) | Forrest & Goldfarb, *Steepest-edge simplex algorithms for linear programming*, Mathematical Programming 57 (1992); the approximation is Harris (1973), below | `src/simplex/primal_simplex.cpp` |
 | Harris two-pass ratio test, long-step bound flipping (opt-in; `--option ratio_test=harris`, #67) | Harris, P.M.J., *Pivot selection methods of the Devex LP code*, Mathematical Programming 5 (1973), 1-28; long-step generalises the piecewise-linear phase 1 already cited to Maros below | `src/simplex/primal_simplex.cpp` |
 | Exact rational tableau simplex (test oracle) | Chvátal, *Linear Programming*, ch. 2–3 | `tests/oracles/rational_simplex.cpp` |
 | Primal-dual hybrid gradient (the base iteration) | Chambolle & Pock, *A first-order primal-dual algorithm for convex problems with applications to imaging*, JMIV 40(1), 2011, Algorithm 1 | `src/pdhg/pdhg.cpp` |
@@ -88,7 +88,8 @@ Phases 6 onwards add: dual revised simplex (Maros; Huangfu & Hall), Forrest–To
 (Forrest & Tomlin 1972), restarted PDHG (Applegate et al.; Lu & Yang, arXiv:2311.12180;
 arXiv:2507.14051), Mehrotra predictor–corrector (Nocedal & Wright; Gondzio), Gomory MIR and
 cover cuts (Marchand & Wolsey; Wolsey), and branch-and-cut search (Achterberg). Devex pricing
-and the Harris ratio test (#66, #67) have landed early, both opt-in - see the table above.
+(#66) has landed early and is the default; the Harris ratio test (#67) has landed and stays
+opt-in - see the table above.
 
 ---
 

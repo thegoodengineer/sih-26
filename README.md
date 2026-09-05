@@ -202,8 +202,8 @@ tracks every PS26119 requirement against what exists on `main`; section 6 of
 On speed against HiGHS: on the committed instances the two are **indistinguishable**, not
 faster. They solve in single-digit milliseconds and the timing envelopes overlap, so
 `bench/runners/compare.py` marks the rows it cannot separate and says so. The reproducible
-comparison is iteration count, where we are behind - Dantzig pricing against HiGHS's devex
-(#66).
+comparison is iteration count, where the gap narrowed by a third when devex pricing became
+the default (#66); HiGHS's devex still takes fewer.
 
 ## Licence
 

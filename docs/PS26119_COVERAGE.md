@@ -35,7 +35,7 @@ way an issue body is not, and every status here was checked against a specific c
 |---|---|---|
 | Sparse matrix techniques | **done** | CSC/CSR, sparse Markowitz LU with threshold stability |
 | Efficient numerical linear algebra | **done** | #49 scaling (Ruiz + Pock-Chambolle, default on), #50 basis update (product-form, with an FTRAN-residual accuracy check that forces refactorization). #144 (open, CI green) fixes `eliminate()` reporting the wrong singular column when an earlier column is merely unpivotable within the search budget — a prerequisite for basis repair, not the repair itself. |
-| Pricing | **partial** | Dantzig is the default; Devex (#66) landed in #126 and is selectable via `--option pricing=devex`, but stays opt-in — measured on the Netlib medium tier it turns `grow22` from `optimal` into a singular basis for no reduction in the singular-basis count elsewhere, so shipping it as the default would trade an iteration-count headline for a wrong answer. The Harris two-pass ratio test (#67) landed in #137 and is selectable via `--option ratio_test=harris`; it was built specifically to test whether it would fix that interaction, and measured, it does not — it trades `grow22` for no reduction in singular-basis failures, so it too stays opt-in. |
+| Pricing | **done** | Devex (#66) is the default. It landed in #126 as opt-in because it turned `grow22` and `scsd8` into singular bases; that failure class was removed by #144 and #147, and re-measured on the Netlib medium tier devex solves the same 49 instances in a third fewer iterations (34580 vs 51968) and a third less time, with no status change on any instance. Dantzig remains selectable via `--option pricing=dantzig` so the comparison can be regenerated. The Harris two-pass ratio test (#67) is selectable via `--option ratio_test=harris` and stays opt-in: re-measured alongside, it changes no status and costs time under Dantzig (274.8 s vs 191.0 s) while doing nothing for devex. |
 | Multi-core parallelization | **not started** | #57 |
 | GPU acceleration | **not started** | #16-#19. The engine it needs — restarted PDHG — exists, is verified, and solves the 5000x5000 instance in the demo on CPU. `--gpu` warns and falls back. |
 | **Not built on any existing solver** | **done** | `docs/PROVENANCE.md`, CI-enforced, live link list in demo section 1 |
@@ -98,8 +98,8 @@ What the count hides, same as before:
   engine it needs is written and demonstrated at 5000x5000; the remaining work is the CUDA
   backend, not the algorithm, and nothing here measures or claims a speed-up.
 - The **scale claim is one instance**, not a benchmark (#34).
-- Where this project is behind, it can say by how much and why: Dantzig pricing costs 2.16x
-  HiGHS's iterations (#66), and the two most direct candidate fixes (Devex, Harris) are both
-  built, measured, and both currently decline to become the default because the measurement
-  says they cost a correct answer somewhere on the medium tier. That is a stronger position
-  than a wall-clock number would be.
+- Where this project was behind, it can say by how much and why: Dantzig pricing cost 2.16x
+  HiGHS's iterations (#66). Devex was built, held back while the measurement said it cost a
+  correct answer on the medium tier, and made the default only once the basis-conditioning
+  fixes (#144, #147) removed that failure and the measurement was repeated. That is a
+  stronger position than a wall-clock number would be.
