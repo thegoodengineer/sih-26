@@ -1580,8 +1580,9 @@ Solution postsolve(const Result& result, const Model& original, const Solution& 
   // This pass replaced one that recomputed the REMOVED columns only, on the grounds that
   // a survivor's reduced cost was already right and recomputing it through different
   // floating-point operations turned an exact 0.0 on a free column of capri into -1.1e-16,
-  // which the verifier's |d| * slack product, with slack infinite, evaluated to inf. The
-  // verifier now judges an infinite slack by |d| alone, so that reason is gone.
+  // which the verifier's |d| * slack product, with slack infinite, evaluated to inf. That
+  // pass was too narrow - a survivor sharing a row postsolve priced has a reduced cost the
+  // engine never saw - and its instinct was right; see the selection below.
   //
   // Everything above sets col_dual as records are replayed, in reverse order, and several
   // of those replays price a column with reduced_cost_of() at a moment when some row it
@@ -1594,14 +1595,43 @@ Solution postsolve(const Result& result, const Model& original, const Solution& 
   // dangerous for.
   //
   // d = c - A^T y is not one property of the answer among several; it is the definition of
-  // d. So once every row dual is final, every column's reduced cost is set from it. A
-  // column the passes above priced correctly is unchanged by this; a column they priced
-  // against a stale row dual is corrected; and if a ROW dual is itself wrong, that now
-  // shows up as a sign violation on the columns it prices - which the status check and
-  // the verifier both test - instead of hiding behind a reduced cost that agreed with
-  // nothing.
+  // d. So once every row dual is final, every column's reduced cost that presolve could
+  // have changed is set from it. A column the passes above priced correctly is unchanged
+  // by this; a column they priced against a stale row dual is corrected; and if a ROW dual
+  // is itself wrong, that now shows up as a sign violation on the columns it prices -
+  // which the status check and the verifier both test - instead of hiding behind a
+  // reduced cost that agreed with nothing.
+  //
+  // NOT EVERY COLUMN, THOUGH. A survivor that presolve never touched keeps the engine's
+  // reduced cost, and the reason is the one the removed-columns-only pass gave: the
+  // engine's 0.0 on a basic column is exact by construction, and recomputing it through
+  // terms of order 1e+07 replaces that fact with a rounding residue. grow22 on the CI gate:
+  // XI1408, basic and interior by 1.3e+05, recomputed to -4.6e-11, and the verifier's
+  // complementarity product |d| * slack read 6.1e-06 against an absolute 1e-06. A column
+  // is recomputed when presolve could have changed the quantity: it was removed; or it has
+  // an original entry in a folded row (its cost was adjusted and its coefficients filled
+  // in, so the engine priced a different column, and that holds even when the folded row's
+  // final price is zero, because the fold also moved the eliminated column's own reduced
+  // cost into the survivor); or it has an original entry in any removed row that ended with
+  // a nonzero price, which the engine never saw.
+  std::vector<bool> recompute(static_cast<std::size_t>(original.num_cols()), false);
+  for (std::size_t u = 0; u < recompute.size(); ++u) {
+    recompute[u] = column_removed_at[u] < result.records.size();
+  }
+  ensure_original_rows();
+  for (Index i = 0; i < original.num_rows(); ++i) {
+    const auto u = static_cast<std::size_t>(i);
+    const bool removed = row_removed_at[u] < result.records.size();
+    if (!removed) continue;
+    if (!row_is_folded[u] && solution.row_dual[u] == 0.0) continue;
+    const ColumnView row_view = original_rows.row(i);  // `rows` holds COLUMN indices here
+    for (Index k = 0; k < row_view.size; ++k) {
+      recompute[static_cast<std::size_t>(row_view.rows[k])] = true;
+    }
+  }
   for (Index j = 0; j < original.num_cols(); ++j) {
     const auto u = static_cast<std::size_t>(j);
+    if (!recompute[u]) continue;
     double d = original.col_cost[u];
     const ColumnView view = original.matrix.column(j);
     for (Index k = 0; k < view.size; ++k) {
