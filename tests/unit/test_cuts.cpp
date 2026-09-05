@@ -424,8 +424,14 @@ TEST(KnapsackCoverCuts, CoverIsMinimal) {
   // The cover contains x1 (col 0) and x2 (col 1) both with coeff 1.
   bool found_col0 = false, found_col1 = false;
   for (std::size_t k = 0; k < cut->col_index.size(); ++k) {
-    if (cut->col_index[k] == 0) { found_col0 = true; EXPECT_DOUBLE_EQ(cut->coeff[k], 1.0); }
-    if (cut->col_index[k] == 1) { found_col1 = true; EXPECT_DOUBLE_EQ(cut->coeff[k], 1.0); }
+    if (cut->col_index[k] == 0) {
+      found_col0 = true;
+      EXPECT_DOUBLE_EQ(cut->coeff[k], 1.0);
+    }
+    if (cut->col_index[k] == 1) {
+      found_col1 = true;
+      EXPECT_DOUBLE_EQ(cut->coeff[k], 1.0);
+    }
   }
   EXPECT_TRUE(found_col0) << "x1 (col 0) should be in the cover";
   EXPECT_TRUE(found_col1) << "x2 (col 1) should be in the cover";
@@ -453,9 +459,8 @@ TEST(KnapsackCoverCuts, BaseCoverValidityAtAllBinaryPoints) {
     }
     if (knapsack_lhs > b) continue;  // not feasible for the knapsack constraint
     const double violation = cut_violation(*cut, x);
-    EXPECT_LE(violation, 1e-12)
-        << "cut violated at feasible binary point: mask=" << mask
-        << " violation=" << violation;
+    EXPECT_LE(violation, 1e-12) << "cut violated at feasible binary point: mask=" << mask
+                                << " violation=" << violation;
   }
 }
 
@@ -513,9 +518,18 @@ TEST(KnapsackCoverCuts, MultipleSequentialLiftings) {
   // x4 should have coefficient 0 (lifted, Z=1 gives alpha=0, so not included in output).
   bool found_x1 = false, found_x2 = false, found_x3 = false;
   for (std::size_t k = 0; k < cut->col_index.size(); ++k) {
-    if (cut->col_index[k] == 0) { found_x1 = true; EXPECT_DOUBLE_EQ(cut->coeff[k], 1.0); }
-    if (cut->col_index[k] == 1) { found_x2 = true; EXPECT_DOUBLE_EQ(cut->coeff[k], 1.0); }
-    if (cut->col_index[k] == 2) { found_x3 = true; EXPECT_DOUBLE_EQ(cut->coeff[k], 1.0); }
+    if (cut->col_index[k] == 0) {
+      found_x1 = true;
+      EXPECT_DOUBLE_EQ(cut->coeff[k], 1.0);
+    }
+    if (cut->col_index[k] == 1) {
+      found_x2 = true;
+      EXPECT_DOUBLE_EQ(cut->coeff[k], 1.0);
+    }
+    if (cut->col_index[k] == 2) {
+      found_x3 = true;
+      EXPECT_DOUBLE_EQ(cut->coeff[k], 1.0);
+    }
     // x4 with coefficient 0 should not appear.
     if (cut->col_index[k] == 3) {
       EXPECT_GT(cut->coeff[k], 0.0) << "x4 with zero coeff should not appear in the output";
@@ -721,10 +735,12 @@ TEST(KnapsackCoverCuts, ExactOracleValidityGate) {
   for (std::size_t mask = 0; mask < 8; ++mask) {
     std::vector<double> x(3);
     double knap = 0.0;
-    for (std::size_t j = 0; j < 3; ++j) { x[j] = static_cast<double>((mask >> j) & 1); knap += a[j] * x[j]; }
+    for (std::size_t j = 0; j < 3; ++j) {
+      x[j] = static_cast<double>((mask >> j) & 1);
+      knap += a[j] * x[j];
+    }
     if (knap > b) continue;
-    EXPECT_LE(cut_violation(*cut, x), 1e-12)
-        << "cut violated at feasible point mask=" << mask;
+    EXPECT_LE(cut_violation(*cut, x), 1e-12) << "cut violated at feasible point mask=" << mask;
   }
 }
 
@@ -747,10 +763,10 @@ TEST(KnapsackCoverCuts, TheHarnessCatchesADeliberatelyInvalidCoverCut) {
   // x = (0, 0, 1) is feasible (3*0+3*0+2*1=2<=4) but should violate the invalid cut.
   const std::vector<double> x_feasible = {0.0, 0.0, 1.0};
   const double violation = cut_violation(*cut, x_feasible);
-  EXPECT_GT(violation, 0.0)
-      << "HARNESS BROKEN: the deliberately invalid cut was not detected at feasible point (0,0,1)."
-      << " violation=" << violation
-      << ". The validity harness cannot be trusted.";
+  EXPECT_GT(violation, 0.0) << "HARNESS BROKEN: the deliberately invalid cut was not detected "
+                               "at feasible point (0,0,1)."
+                            << " violation=" << violation
+                            << ". The validity harness cannot be trusted.";
 }
 
 // =========================================================================================
@@ -795,7 +811,9 @@ std::vector<double> dense_transpose_solve(const std::vector<std::vector<double>>
 }
 
 TEST(BasisReconstruction, RejectsInvalidInputs) {
-  Model m; m.resize_columns(2); m.resize_rows(1);
+  Model m;
+  m.resize_columns(2);
+  m.resize_rows(1);
   Solution s;
 
   // Wrong dimensions
@@ -805,7 +823,7 @@ TEST(BasisReconstruction, RejectsInvalidInputs) {
 
   // Wrong basic count
   s.col_status = {BasisStatus::kBasic, BasisStatus::kAtLower};
-  s.row_status = {BasisStatus::kBasic}; // 2 basic vars, m = 1
+  s.row_status = {BasisStatus::kBasic};  // 2 basic vars, m = 1
   EXPECT_FALSE(mip::detail::get_tableau_for_testing(m, s, 0).has_value());
 }
 
@@ -815,9 +833,12 @@ TEST(BasisReconstruction, SmallHandbuiltBasis) {
   m.resize_columns(3);
   m.matrix.reset(2, 3);
   // Matrix: A_0 = [1, 2]^T, A_1 = [3, 4]^T, A_2 = [5, 6]^T
-  m.matrix.add_entry(0, 0, 1.0); m.matrix.add_entry(1, 0, 2.0);
-  m.matrix.add_entry(0, 1, 3.0); m.matrix.add_entry(1, 1, 4.0);
-  m.matrix.add_entry(0, 2, 5.0); m.matrix.add_entry(1, 2, 6.0);
+  m.matrix.add_entry(0, 0, 1.0);
+  m.matrix.add_entry(1, 0, 2.0);
+  m.matrix.add_entry(0, 1, 3.0);
+  m.matrix.add_entry(1, 1, 4.0);
+  m.matrix.add_entry(0, 2, 5.0);
+  m.matrix.add_entry(1, 2, 6.0);
   m.matrix.finalize();
 
   Solution s;
@@ -841,7 +862,7 @@ TEST(BasisReconstruction, SmallHandbuiltBasis) {
   ASSERT_TRUE(row0.has_value());
   EXPECT_TRUE(row0->basic_is_structural);
   EXPECT_EQ(row0->basic_index, 0);
-  EXPECT_DOUBLE_EQ(row0->rhs, 7.7); // verifies RHS = current basic variable value
+  EXPECT_DOUBLE_EQ(row0->rhs, 7.7);  // verifies RHS = current basic variable value
 
   auto row1 = mip::detail::get_tableau_for_testing(m, s, 1);
   ASSERT_TRUE(row1.has_value());
@@ -851,20 +872,20 @@ TEST(BasisReconstruction, SmallHandbuiltBasis) {
 
   // Independent validation: B[:,0]=A[:,0]=[1,2]^T, B[:,1]=-e_1=[0,-1]^T
   // B[i][j] = B_{ij}: B = [[1,0],[2,-1]]
-  std::vector<std::vector<double>> B = { { 1.0, 0.0 }, { 2.0, -1.0 } };
+  std::vector<std::vector<double>> B = {{1.0, 0.0}, {2.0, -1.0}};
 
   std::vector<double> z0 = dense_transpose_solve(B, 0);
   std::vector<double> z1 = dense_transpose_solve(B, 1);
 
-  EXPECT_DOUBLE_EQ(row0->structural_coefs[0], z0[0]*1.0 + z0[1]*2.0);
-  EXPECT_DOUBLE_EQ(row0->structural_coefs[1], z0[0]*3.0 + z0[1]*4.0);
-  EXPECT_DOUBLE_EQ(row0->structural_coefs[2], z0[0]*5.0 + z0[1]*6.0);
+  EXPECT_DOUBLE_EQ(row0->structural_coefs[0], z0[0] * 1.0 + z0[1] * 2.0);
+  EXPECT_DOUBLE_EQ(row0->structural_coefs[1], z0[0] * 3.0 + z0[1] * 4.0);
+  EXPECT_DOUBLE_EQ(row0->structural_coefs[2], z0[0] * 5.0 + z0[1] * 6.0);
   EXPECT_DOUBLE_EQ(row0->logical_coefs[0], -z0[0]);
   EXPECT_DOUBLE_EQ(row0->logical_coefs[1], -z0[1]);
 
-  EXPECT_DOUBLE_EQ(row1->structural_coefs[0], z1[0]*1.0 + z1[1]*2.0);
-  EXPECT_DOUBLE_EQ(row1->structural_coefs[1], z1[0]*3.0 + z1[1]*4.0);
-  EXPECT_DOUBLE_EQ(row1->structural_coefs[2], z1[0]*5.0 + z1[1]*6.0);
+  EXPECT_DOUBLE_EQ(row1->structural_coefs[0], z1[0] * 1.0 + z1[1] * 2.0);
+  EXPECT_DOUBLE_EQ(row1->structural_coefs[1], z1[0] * 3.0 + z1[1] * 4.0);
+  EXPECT_DOUBLE_EQ(row1->structural_coefs[2], z1[0] * 5.0 + z1[1] * 6.0);
   EXPECT_DOUBLE_EQ(row1->logical_coefs[0], -z1[0]);
   EXPECT_DOUBLE_EQ(row1->logical_coefs[1], -z1[1]);
 }
@@ -872,10 +893,13 @@ TEST(BasisReconstruction, SmallHandbuiltBasis) {
 TEST(BasisReconstruction, RealSolverValidation) {
   // Test I: Real Solver validation with mathematical identity z^T B = e_r^T
   Model m;
-  m.resize_columns(2); m.resize_rows(2);
+  m.resize_columns(2);
+  m.resize_rows(2);
   m.matrix.reset(2, 2);
-  m.matrix.add_entry(0, 0, 1.0); m.matrix.add_entry(0, 1, 1.0);
-  m.matrix.add_entry(1, 0, 2.0); m.matrix.add_entry(1, 1, 1.0);
+  m.matrix.add_entry(0, 0, 1.0);
+  m.matrix.add_entry(0, 1, 1.0);
+  m.matrix.add_entry(1, 0, 2.0);
+  m.matrix.add_entry(1, 1, 1.0);
   m.matrix.finalize();
   m.col_lower = {0.0, 0.0};
   m.col_upper = {kInfinity, kInfinity};
@@ -917,15 +941,19 @@ TEST(BasisReconstruction, RealSolverValidation) {
 
 TEST(BasisReconstruction, StrongBasisPermutationAndSparseLuOracle) {
   Model m;
-  m.resize_columns(3); m.resize_rows(3);
+  m.resize_columns(3);
+  m.resize_rows(3);
   m.matrix.reset(3, 3);
   // Matrix A:
   // [ 2  0  1 ]
   // [ 0  3  4 ]
   // [ 5  1  0 ]
-  m.matrix.add_entry(0, 0, 2.0); m.matrix.add_entry(2, 0, 5.0);
-  m.matrix.add_entry(1, 1, 3.0); m.matrix.add_entry(2, 1, 1.0);
-  m.matrix.add_entry(0, 2, 1.0); m.matrix.add_entry(1, 2, 4.0);
+  m.matrix.add_entry(0, 0, 2.0);
+  m.matrix.add_entry(2, 0, 5.0);
+  m.matrix.add_entry(1, 1, 3.0);
+  m.matrix.add_entry(2, 1, 1.0);
+  m.matrix.add_entry(0, 2, 1.0);
+  m.matrix.add_entry(1, 2, 4.0);
   m.matrix.finalize();
 
   Solution s;
@@ -941,19 +969,18 @@ TEST(BasisReconstruction, StrongBasisPermutationAndSparseLuOracle) {
   // Slot 1 -> col 2
   // Slot 2 -> row 0
 
-  s.col_status[0] = BasisStatus::kBasic; s.col_value[0] = 10.0;
-  s.col_status[2] = BasisStatus::kBasic; s.col_value[2] = 20.0;
-  s.row_status[0] = BasisStatus::kBasic; s.row_activity[0] = 30.0;
+  s.col_status[0] = BasisStatus::kBasic;
+  s.col_value[0] = 10.0;
+  s.col_status[2] = BasisStatus::kBasic;
+  s.col_value[2] = 20.0;
+  s.row_status[0] = BasisStatus::kBasic;
+  s.row_activity[0] = 30.0;
 
   // Expected deterministic B = [ A_0, A_2, -e_0 ]
   // B = [ 2  1 -1 ]
   //     [ 0  4  0 ]
   //     [ 5  0  0 ]
-  std::vector<std::vector<double>> B = {
-      { 2.0, 1.0, -1.0 },
-      { 0.0, 4.0,  0.0 },
-      { 5.0, 0.0,  0.0 }
-  };
+  std::vector<std::vector<double>> B = {{2.0, 1.0, -1.0}, {0.0, 4.0, 0.0}, {5.0, 0.0, 0.0}};
 
   for (Index r = 0; r < 3; ++r) {
     auto row = mip::detail::get_tableau_for_testing(m, s, r);
@@ -982,13 +1009,14 @@ TEST(BasisReconstruction, StrongBasisPermutationAndSparseLuOracle) {
 
     // Also verify alpha = -z for ALL logical columns
     for (Index i = 0; i < 3; ++i) {
-      EXPECT_NEAR(row->logical_coefs[static_cast<std::size_t>(i)], -z_dense[static_cast<std::size_t>(i)], 1e-9);
+      EXPECT_NEAR(row->logical_coefs[static_cast<std::size_t>(i)],
+                  -z_dense[static_cast<std::size_t>(i)], 1e-9);
     }
 
     // Verify all structural coefficients against dense Z
-    EXPECT_NEAR(row->structural_coefs[0], z_dense[0]*2.0 + z_dense[2]*5.0, 1e-9);
-    EXPECT_NEAR(row->structural_coefs[1], z_dense[1]*3.0 + z_dense[2]*1.0, 1e-9);
-    EXPECT_NEAR(row->structural_coefs[2], z_dense[0]*1.0 + z_dense[1]*4.0, 1e-9);
+    EXPECT_NEAR(row->structural_coefs[0], z_dense[0] * 2.0 + z_dense[2] * 5.0, 1e-9);
+    EXPECT_NEAR(row->structural_coefs[1], z_dense[1] * 3.0 + z_dense[2] * 1.0, 1e-9);
+    EXPECT_NEAR(row->structural_coefs[2], z_dense[0] * 1.0 + z_dense[1] * 4.0, 1e-9);
   }
 }
 
@@ -999,7 +1027,8 @@ TEST(BasisReconstruction, StrongBasisPermutationAndSparseLuOracle) {
 // Test A: Cut.AllIntegerLower
 TEST(GmiCut, AllIntegerLower) {
   Model m;
-  m.resize_columns(3); m.resize_rows(1);
+  m.resize_columns(3);
+  m.resize_rows(1);
   m.matrix.reset(1, 3);
   m.matrix.add_entry(0, 0, 1.0);
   m.matrix.add_entry(0, 1, 1.2);
@@ -1025,17 +1054,22 @@ TEST(GmiCut, AllIntegerLower) {
   EXPECT_NEAR(cut->coeff[2], -65.0 / 12.0, 1e-9);
   EXPECT_NEAR(cut->rhs, -5.0 / 3.0, 1e-9);
 
-  double eval_int = cut->coeff[0]*(-2.0) + cut->coeff[1]*(2.0) + cut->coeff[2]*(0.0);
+  double eval_int = cut->coeff[0] * (-2.0) + cut->coeff[1] * (2.0) + cut->coeff[2] * (0.0);
   EXPECT_LE(eval_int, cut->rhs + 1e-9);
 
-  double eval_lp = cut->coeff[0]*(-2.4) + cut->coeff[1]*(2.0) + cut->coeff[2]*(0.0);
+  double eval_lp = cut->coeff[0] * (-2.4) + cut->coeff[1] * (2.0) + cut->coeff[2] * (0.0);
   EXPECT_GT(eval_lp, cut->rhs + 1e-4);
 }
 
 // Test B: Cut.IntegerAtUpperPositiveAlpha
 TEST(GmiCut, IntegerAtUpperPositiveAlpha) {
-  Model m; m.resize_columns(3); m.resize_rows(1); m.matrix.reset(1, 3);
-  m.matrix.add_entry(0, 0, 1.0); m.matrix.add_entry(0, 1, 1.5); m.matrix.add_entry(0, 2, 0.2);
+  Model m;
+  m.resize_columns(3);
+  m.resize_rows(1);
+  m.matrix.reset(1, 3);
+  m.matrix.add_entry(0, 0, 1.0);
+  m.matrix.add_entry(0, 1, 1.5);
+  m.matrix.add_entry(0, 2, 0.2);
   m.matrix.finalize();
   m.col_type = {VarType::kInteger, VarType::kInteger, VarType::kInteger};
   m.col_lower = {-kInfinity, 0.0, 1.0};
@@ -1046,7 +1080,8 @@ TEST(GmiCut, IntegerAtUpperPositiveAlpha) {
   Solution s;
   s.col_status = {BasisStatus::kBasic, BasisStatus::kAtUpper, BasisStatus::kAtLower};
   s.col_value = {-4.7, 3.0, 1.0};
-  s.row_status = {BasisStatus::kAtLower}; s.row_activity = {0.0};
+  s.row_status = {BasisStatus::kAtLower};
+  s.row_activity = {0.0};
 
   auto cut = mip::generate_gmi_cut(m, s, 0);
   ASSERT_TRUE(cut.has_value());
@@ -1056,24 +1091,31 @@ TEST(GmiCut, IntegerAtUpperPositiveAlpha) {
   EXPECT_NEAR(cut->coeff[2], -20.0 / 21.0, 1e-9);
   EXPECT_NEAR(cut->rhs, 10.0 / 21.0, 1e-9);
 
-  double eval_int = cut->coeff[0]*(-4.0) + cut->coeff[1]*(3.0) + cut->coeff[2]*(1.0);
+  double eval_int = cut->coeff[0] * (-4.0) + cut->coeff[1] * (3.0) + cut->coeff[2] * (1.0);
   EXPECT_LE(eval_int, cut->rhs + 1e-9);
 }
 
 // Test C: Cut.IntegerAtUpperNegativeAlpha
 TEST(GmiCut, IntegerAtUpperNegativeAlpha) {
-  Model m; m.resize_columns(3); m.resize_rows(1); m.matrix.reset(1, 3);
-  m.matrix.add_entry(0, 0, 1.0); m.matrix.add_entry(0, 1, -1.5); m.matrix.add_entry(0, 2, 0.2);
+  Model m;
+  m.resize_columns(3);
+  m.resize_rows(1);
+  m.matrix.reset(1, 3);
+  m.matrix.add_entry(0, 0, 1.0);
+  m.matrix.add_entry(0, 1, -1.5);
+  m.matrix.add_entry(0, 2, 0.2);
   m.matrix.finalize();
   m.col_type = {VarType::kInteger, VarType::kInteger, VarType::kInteger};
   m.col_lower = {-kInfinity, 0.0, 1.0};
   m.col_upper = {kInfinity, 3.0, kInfinity};
-  m.row_lower = {0.0}; m.row_upper = {kInfinity};
+  m.row_lower = {0.0};
+  m.row_upper = {kInfinity};
 
   Solution s;
   s.col_status = {BasisStatus::kBasic, BasisStatus::kAtUpper, BasisStatus::kAtLower};
   s.col_value = {4.3, 3.0, 1.0};
-  s.row_status = {BasisStatus::kAtLower}; s.row_activity = {0.0};
+  s.row_status = {BasisStatus::kAtLower};
+  s.row_activity = {0.0};
 
   auto cut = mip::generate_gmi_cut(m, s, 0);
   ASSERT_TRUE(cut.has_value());
@@ -1083,23 +1125,31 @@ TEST(GmiCut, IntegerAtUpperNegativeAlpha) {
   EXPECT_NEAR(cut->coeff[2], -20.0 / 21.0, 1e-9);
   EXPECT_NEAR(cut->rhs, 10.0 / 21.0, 1e-9);
 
-  double eval_int = cut->coeff[0]*(5.0) + cut->coeff[1]*(3.0) + cut->coeff[2]*(1.0);
+  double eval_int = cut->coeff[0] * (5.0) + cut->coeff[1] * (3.0) + cut->coeff[2] * (1.0);
   EXPECT_LE(eval_int, cut->rhs + 1e-9);
 }
 
 // Test D: Cut.ContinuousPositive
 TEST(GmiCut, ContinuousPositive) {
-  Model m; m.resize_columns(3); m.resize_rows(1); m.matrix.reset(1, 3);
-  m.matrix.add_entry(0, 0, 1.0); m.matrix.add_entry(0, 1, 1.2); m.matrix.add_entry(0, 2, 0.8);
+  Model m;
+  m.resize_columns(3);
+  m.resize_rows(1);
+  m.matrix.reset(1, 3);
+  m.matrix.add_entry(0, 0, 1.0);
+  m.matrix.add_entry(0, 1, 1.2);
+  m.matrix.add_entry(0, 2, 0.8);
   m.matrix.finalize();
   m.col_type = {VarType::kInteger, VarType::kInteger, VarType::kContinuous};
-  m.col_lower = {-kInfinity, 1.0, 2.0}; m.col_upper = {kInfinity, kInfinity, kInfinity};
-  m.row_lower = {0.0}; m.row_upper = {kInfinity};
+  m.col_lower = {-kInfinity, 1.0, 2.0};
+  m.col_upper = {kInfinity, kInfinity, kInfinity};
+  m.row_lower = {0.0};
+  m.row_upper = {kInfinity};
 
   Solution s;
   s.col_status = {BasisStatus::kBasic, BasisStatus::kAtLower, BasisStatus::kAtLower};
   s.col_value = {-2.8, 1.0, 2.0};
-  s.row_status = {BasisStatus::kAtLower}; s.row_activity = {0.0};
+  s.row_status = {BasisStatus::kAtLower};
+  s.row_activity = {0.0};
 
   auto cut = mip::generate_gmi_cut(m, s, 0);
   ASSERT_TRUE(cut.has_value());
@@ -1107,56 +1157,82 @@ TEST(GmiCut, ContinuousPositive) {
 
 // Test E: Cut.ContinuousNegative
 TEST(GmiCut, ContinuousNegative) {
-  Model m; m.resize_columns(3); m.resize_rows(1); m.matrix.reset(1, 3);
-  m.matrix.add_entry(0, 0, 1.0); m.matrix.add_entry(0, 1, 1.2); m.matrix.add_entry(0, 2, -0.8);
+  Model m;
+  m.resize_columns(3);
+  m.resize_rows(1);
+  m.matrix.reset(1, 3);
+  m.matrix.add_entry(0, 0, 1.0);
+  m.matrix.add_entry(0, 1, 1.2);
+  m.matrix.add_entry(0, 2, -0.8);
   m.matrix.finalize();
   m.col_type = {VarType::kInteger, VarType::kInteger, VarType::kContinuous};
-  m.col_lower = {-kInfinity, 1.0, 2.0}; m.col_upper = {kInfinity, kInfinity, kInfinity};
-  m.row_lower = {0.0}; m.row_upper = {kInfinity};
+  m.col_lower = {-kInfinity, 1.0, 2.0};
+  m.col_upper = {kInfinity, kInfinity, kInfinity};
+  m.row_lower = {0.0};
+  m.row_upper = {kInfinity};
 
   Solution s;
   s.col_status = {BasisStatus::kBasic, BasisStatus::kAtLower, BasisStatus::kAtLower};
   s.col_value = {0.4, 1.0, 2.0};
-  s.row_status = {BasisStatus::kAtLower}; s.row_activity = {0.0};
+  s.row_status = {BasisStatus::kAtLower};
+  s.row_activity = {0.0};
 
   auto cut = mip::generate_gmi_cut(m, s, 0);
   ASSERT_TRUE(cut.has_value());
 
-  EXPECT_NEAR(cut->coeff[0], -5.0/3.0, 1e-9);
+  EXPECT_NEAR(cut->coeff[0], -5.0 / 3.0, 1e-9);
   EXPECT_NEAR(cut->coeff[1], -2.5, 1e-9);
   EXPECT_NEAR(cut->coeff[2], 0.0, 1e-9);
-  EXPECT_NEAR(cut->rhs, -25.0/6.0, 1e-9);
+  EXPECT_NEAR(cut->rhs, -25.0 / 6.0, 1e-9);
 
-  double eval_int = cut->coeff[0]*(-2.0) + cut->coeff[1]*(3.0) + cut->coeff[2]*(2.0);
+  double eval_int = cut->coeff[0] * (-2.0) + cut->coeff[1] * (3.0) + cut->coeff[2] * (2.0);
   EXPECT_LE(eval_int, cut->rhs + 1e-9);
 }
 
 // Test F: Cut.LogicalLower
 TEST(GmiCut, LogicalLower) {
-  Model m; m.resize_columns(2); m.resize_rows(1); m.matrix.reset(1, 2);
-  m.matrix.add_entry(0, 0, 1.0); m.matrix.add_entry(0, 1, 1.5); m.matrix.finalize();
+  Model m;
+  m.resize_columns(2);
+  m.resize_rows(1);
+  m.matrix.reset(1, 2);
+  m.matrix.add_entry(0, 0, 1.0);
+  m.matrix.add_entry(0, 1, 1.5);
+  m.matrix.finalize();
   m.col_type = {VarType::kInteger, VarType::kInteger};
-  m.col_lower = {-kInfinity, 0.0}; m.col_upper = {kInfinity, kInfinity};
-  m.row_lower = {0.0}; m.row_upper = {kInfinity};
+  m.col_lower = {-kInfinity, 0.0};
+  m.col_upper = {kInfinity, kInfinity};
+  m.row_lower = {0.0};
+  m.row_upper = {kInfinity};
 
-  Solution s; s.col_status = {BasisStatus::kBasic, BasisStatus::kAtLower};
-  s.col_value = {-1.5, 1.0}; s.row_status = {BasisStatus::kAtLower}; s.row_activity = {0.0};
+  Solution s;
+  s.col_status = {BasisStatus::kBasic, BasisStatus::kAtLower};
+  s.col_value = {-1.5, 1.0};
+  s.row_status = {BasisStatus::kAtLower};
+  s.row_activity = {0.0};
   auto cut = mip::generate_gmi_cut(m, s, 0);
   ASSERT_TRUE(cut.has_value());
 }
 
 // Test G: Cut.LogicalUpper
 TEST(GmiCut, LogicalUpper) {
-  Model m; m.resize_columns(2); m.resize_rows(1); m.matrix.reset(1, 2);
-  m.matrix.add_entry(0, 0, 1.0); m.matrix.add_entry(0, 1, 1.5); m.matrix.finalize();
+  Model m;
+  m.resize_columns(2);
+  m.resize_rows(1);
+  m.matrix.reset(1, 2);
+  m.matrix.add_entry(0, 0, 1.0);
+  m.matrix.add_entry(0, 1, 1.5);
+  m.matrix.finalize();
   m.col_type = {VarType::kInteger, VarType::kInteger};
-  m.col_lower = {-kInfinity, 1.0}; m.col_upper = {kInfinity, kInfinity};
-  m.row_lower = {-kInfinity}; m.row_upper = {5.0};
+  m.col_lower = {-kInfinity, 1.0};
+  m.col_upper = {kInfinity, kInfinity};
+  m.row_lower = {-kInfinity};
+  m.row_upper = {5.0};
 
   Solution s;
   s.col_status = {BasisStatus::kBasic, BasisStatus::kAtLower};
   s.col_value = {3.5, 1.0};
-  s.row_status = {BasisStatus::kAtUpper}; s.row_activity = {5.0};
+  s.row_status = {BasisStatus::kAtUpper};
+  s.row_activity = {5.0};
 
   auto cut = mip::generate_gmi_cut(m, s, 0);
   ASSERT_TRUE(cut.has_value());
@@ -1165,26 +1241,36 @@ TEST(GmiCut, LogicalUpper) {
   EXPECT_NEAR(cut->coeff[1], 2.0, 1e-9);
   EXPECT_NEAR(cut->rhs, 8.0, 1e-9);
 
-  EXPECT_LE(cut->coeff[0]*3.0 + cut->coeff[1]*1.0, cut->rhs + 1e-9);
+  EXPECT_LE(cut->coeff[0] * 3.0 + cut->coeff[1] * 1.0, cut->rhs + 1e-9);
 }
 
 // Test H: Cut.MixedCase
 TEST(GmiCut, MixedCase) {
-  Model m; m.resize_columns(5); m.resize_rows(2); m.matrix.reset(2, 5);
-  m.matrix.add_entry(0, 0, 2.0); m.matrix.add_entry(1, 0, 1.0);
-  m.matrix.add_entry(0, 1, 1.0); m.matrix.add_entry(1, 1, 3.0);
-  m.matrix.add_entry(0, 2, 1.0); m.matrix.add_entry(1, 2, -1.0);
-  m.matrix.add_entry(0, 3, -1.5); m.matrix.add_entry(1, 3, 1.0);
-  m.matrix.add_entry(0, 4, 3.0); m.matrix.add_entry(1, 4, 1.0);
+  Model m;
+  m.resize_columns(5);
+  m.resize_rows(2);
+  m.matrix.reset(2, 5);
+  m.matrix.add_entry(0, 0, 2.0);
+  m.matrix.add_entry(1, 0, 1.0);
+  m.matrix.add_entry(0, 1, 1.0);
+  m.matrix.add_entry(1, 1, 3.0);
+  m.matrix.add_entry(0, 2, 1.0);
+  m.matrix.add_entry(1, 2, -1.0);
+  m.matrix.add_entry(0, 3, -1.5);
+  m.matrix.add_entry(1, 3, 1.0);
+  m.matrix.add_entry(0, 4, 3.0);
+  m.matrix.add_entry(1, 4, 1.0);
   m.matrix.finalize();
-  m.col_type = {VarType::kInteger, VarType::kInteger, VarType::kInteger, VarType::kInteger, VarType::kContinuous};
+  m.col_type = {VarType::kInteger, VarType::kInteger, VarType::kInteger, VarType::kInteger,
+                VarType::kContinuous};
   m.col_lower = {-kInfinity, -kInfinity, 1.0, -kInfinity, 0.0};
   m.col_upper = {kInfinity, kInfinity, kInfinity, 2.0, kInfinity};
   m.row_lower = {-kInfinity, 0.0};
   m.row_upper = {5.0, kInfinity};
 
   Solution s;
-  s.col_status = {BasisStatus::kBasic, BasisStatus::kBasic, BasisStatus::kAtLower, BasisStatus::kAtUpper, BasisStatus::kAtLower};
+  s.col_status = {BasisStatus::kBasic, BasisStatus::kBasic, BasisStatus::kAtLower,
+                  BasisStatus::kAtUpper, BasisStatus::kAtLower};
   s.col_value = {4.4, -1.8, 1.0, 2.0, 0.0};
   s.row_status = {BasisStatus::kAtUpper, BasisStatus::kAtLower};
   s.row_activity = {5.0, 0.0};
@@ -1194,80 +1280,131 @@ TEST(GmiCut, MixedCase) {
 
   EXPECT_NEAR(cut->coeff[0], 2.5, 1e-9);
   EXPECT_NEAR(cut->coeff[1], 0.0, 1e-9);
-  EXPECT_NEAR(cut->coeff[2], 5.0/3.0, 1e-9);
+  EXPECT_NEAR(cut->coeff[2], 5.0 / 3.0, 1e-9);
   EXPECT_NEAR(cut->coeff[3], -2.5, 1e-9);
   EXPECT_NEAR(cut->coeff[4], 0.0, 1e-9);
-  EXPECT_NEAR(cut->rhs, 20.0/3.0, 1e-9);
+  EXPECT_NEAR(cut->rhs, 20.0 / 3.0, 1e-9);
 
-  double eval_int = cut->coeff[0]*(4.0) + cut->coeff[1]*(-1.0) + cut->coeff[2]*(1.0) + cut->coeff[3]*(2.0) + cut->coeff[4]*(0.0);
+  double eval_int = cut->coeff[0] * (4.0) + cut->coeff[1] * (-1.0) + cut->coeff[2] * (1.0) +
+                    cut->coeff[3] * (2.0) + cut->coeff[4] * (0.0);
   EXPECT_LE(eval_int, cut->rhs + 1e-9);
 
-  double eval_lp = cut->coeff[0]*(4.4) + cut->coeff[1]*(-1.8) + cut->coeff[2]*(1.0) + cut->coeff[3]*(2.0) + cut->coeff[4]*(0.0);
+  double eval_lp = cut->coeff[0] * (4.4) + cut->coeff[1] * (-1.8) + cut->coeff[2] * (1.0) +
+                   cut->coeff[3] * (2.0) + cut->coeff[4] * (0.0);
   EXPECT_GT(eval_lp, cut->rhs + 1e-4);
 }
 
 // Test I: NearIntegralBasic
 TEST(GmiCut, NearIntegralBasic) {
-  Model m; m.resize_columns(2); m.resize_rows(1); m.matrix.reset(1, 2);
-  m.matrix.add_entry(0, 0, 1.0); m.matrix.add_entry(0, 1, 1.0); m.matrix.finalize();
+  Model m;
+  m.resize_columns(2);
+  m.resize_rows(1);
+  m.matrix.reset(1, 2);
+  m.matrix.add_entry(0, 0, 1.0);
+  m.matrix.add_entry(0, 1, 1.0);
+  m.matrix.finalize();
   m.col_type = {VarType::kInteger, VarType::kInteger};
-  Solution s; s.col_status = {BasisStatus::kBasic, BasisStatus::kAtLower};
-  s.col_value = {3.0 + (tol::kIntegrality / 2.0), 1.0}; s.row_status = {BasisStatus::kAtLower};
+  Solution s;
+  s.col_status = {BasisStatus::kBasic, BasisStatus::kAtLower};
+  s.col_value = {3.0 + (tol::kIntegrality / 2.0), 1.0};
+  s.row_status = {BasisStatus::kAtLower};
   EXPECT_FALSE(mip::generate_gmi_cut(m, s, 0).has_value());
 }
 
 // Test J: NearIntegralIntegerCoefficient
 TEST(GmiCut, NearIntegralIntegerCoefficient) {
-  Model m; m.resize_columns(2); m.resize_rows(1); m.matrix.reset(1, 2);
-  m.matrix.add_entry(0, 0, 1.0); m.matrix.add_entry(0, 1, 1.0 + (tol::kIntegrality / 2.0)); m.matrix.finalize();
+  Model m;
+  m.resize_columns(2);
+  m.resize_rows(1);
+  m.matrix.reset(1, 2);
+  m.matrix.add_entry(0, 0, 1.0);
+  m.matrix.add_entry(0, 1, 1.0 + (tol::kIntegrality / 2.0));
+  m.matrix.finalize();
   m.col_type = {VarType::kInteger, VarType::kInteger};
-  m.col_lower = {0.0, 0.0}; m.col_upper = {kInfinity, kInfinity};
-  m.row_lower = {0.0}; m.row_upper = {kInfinity};
-  Solution s; s.col_status = {BasisStatus::kBasic, BasisStatus::kAtLower};
-  s.col_value = {3.5, 1.0}; s.row_status = {BasisStatus::kAtLower}; s.row_activity = {0.0};
+  m.col_lower = {0.0, 0.0};
+  m.col_upper = {kInfinity, kInfinity};
+  m.row_lower = {0.0};
+  m.row_upper = {kInfinity};
+  Solution s;
+  s.col_status = {BasisStatus::kBasic, BasisStatus::kAtLower};
+  s.col_value = {3.5, 1.0};
+  s.row_status = {BasisStatus::kAtLower};
+  s.row_activity = {0.0};
   EXPECT_FALSE(mip::generate_gmi_cut(m, s, 0).has_value());
 }
 
 // Test K: ContinuousBasic
 TEST(GmiCut, ContinuousBasic) {
-  Model m; m.resize_columns(2); m.resize_rows(1); m.matrix.reset(1, 2);
-  m.matrix.add_entry(0, 0, 1.0); m.matrix.add_entry(0, 1, 1.0); m.matrix.finalize();
+  Model m;
+  m.resize_columns(2);
+  m.resize_rows(1);
+  m.matrix.reset(1, 2);
+  m.matrix.add_entry(0, 0, 1.0);
+  m.matrix.add_entry(0, 1, 1.0);
+  m.matrix.finalize();
   m.col_type = {VarType::kContinuous, VarType::kInteger};
-  Solution s; s.col_status = {BasisStatus::kBasic, BasisStatus::kAtLower};
-  s.col_value = {3.5, 1.0}; s.row_status = {BasisStatus::kAtLower};
+  Solution s;
+  s.col_status = {BasisStatus::kBasic, BasisStatus::kAtLower};
+  s.col_value = {3.5, 1.0};
+  s.row_status = {BasisStatus::kAtLower};
   EXPECT_FALSE(mip::generate_gmi_cut(m, s, 0).has_value());
 }
 
 // Test L: LogicalBasic
 TEST(GmiCut, LogicalBasic) {
-  Model m; m.resize_columns(2); m.resize_rows(1); m.matrix.reset(1, 2);
-  m.matrix.add_entry(0, 0, 1.0); m.matrix.add_entry(0, 1, 1.0); m.matrix.finalize();
+  Model m;
+  m.resize_columns(2);
+  m.resize_rows(1);
+  m.matrix.reset(1, 2);
+  m.matrix.add_entry(0, 0, 1.0);
+  m.matrix.add_entry(0, 1, 1.0);
+  m.matrix.finalize();
   m.col_type = {VarType::kInteger, VarType::kInteger};
-  Solution s; s.col_status = {BasisStatus::kAtLower, BasisStatus::kAtLower};
-  s.col_value = {0.0, 0.0}; s.row_status = {BasisStatus::kBasic};
+  Solution s;
+  s.col_status = {BasisStatus::kAtLower, BasisStatus::kAtLower};
+  s.col_value = {0.0, 0.0};
+  s.row_status = {BasisStatus::kBasic};
   s.row_activity = {3.5};
   EXPECT_FALSE(mip::generate_gmi_cut(m, s, 0).has_value());
 }
 
 // Test M: FreeNonbasic
 TEST(GmiCut, FreeNonbasic) {
-  Model m; m.resize_columns(2); m.resize_rows(1); m.matrix.reset(1, 2);
-  m.matrix.add_entry(0, 0, 1.0); m.matrix.add_entry(0, 1, 1.5); m.matrix.finalize();
+  Model m;
+  m.resize_columns(2);
+  m.resize_rows(1);
+  m.matrix.reset(1, 2);
+  m.matrix.add_entry(0, 0, 1.0);
+  m.matrix.add_entry(0, 1, 1.5);
+  m.matrix.finalize();
   m.col_type = {VarType::kInteger, VarType::kInteger};
-  Solution s; s.col_status = {BasisStatus::kBasic, BasisStatus::kNonbasicFree};
-  s.col_value = {3.5, 0.0}; s.row_status = {BasisStatus::kAtLower}; s.row_activity = {0.0};
+  Solution s;
+  s.col_status = {BasisStatus::kBasic, BasisStatus::kNonbasicFree};
+  s.col_value = {3.5, 0.0};
+  s.row_status = {BasisStatus::kAtLower};
+  s.row_activity = {0.0};
   EXPECT_FALSE(mip::generate_gmi_cut(m, s, 0).has_value());
 }
 
 // Test N: FixedNonbasic
 TEST(GmiCut, FixedNonbasic) {
-  Model m; m.resize_columns(2); m.resize_rows(1); m.matrix.reset(1, 2);
-  m.matrix.add_entry(0, 0, 1.0); m.matrix.add_entry(0, 1, 1.5); m.matrix.finalize();
+  Model m;
+  m.resize_columns(2);
+  m.resize_rows(1);
+  m.matrix.reset(1, 2);
+  m.matrix.add_entry(0, 0, 1.0);
+  m.matrix.add_entry(0, 1, 1.5);
+  m.matrix.finalize();
   m.col_type = {VarType::kInteger, VarType::kInteger};
-  m.col_lower = {0.0, 1.0}; m.col_upper = {kInfinity, 1.0};
-  m.row_lower = {0.0}; m.row_upper = {kInfinity};
-  Solution s; s.col_status = {BasisStatus::kBasic, BasisStatus::kFixed};
-  s.col_value = {3.5, 1.0}; s.row_status = {BasisStatus::kAtLower}; s.row_activity = {0.0};
+  m.col_lower = {0.0, 1.0};
+  m.col_upper = {kInfinity, 1.0};
+  m.row_lower = {0.0};
+  m.row_upper = {kInfinity};
+  Solution s;
+  s.col_status = {BasisStatus::kBasic, BasisStatus::kFixed};
+  s.col_value = {3.5, 1.0};
+  s.row_status = {BasisStatus::kAtLower};
+  s.row_activity = {0.0};
   auto cut = mip::generate_gmi_cut(m, s, 0);
   ASSERT_TRUE(cut.has_value());
   EXPECT_DOUBLE_EQ(cut->coeff[1], -3.0);
@@ -1275,29 +1412,48 @@ TEST(GmiCut, FixedNonbasic) {
 
 // Test O: IntegralTableau
 TEST(GmiCut, IntegralTableau) {
-  Model m; m.resize_columns(2); m.resize_rows(1); m.matrix.reset(1, 2);
-  m.matrix.add_entry(0, 0, 1.0); m.matrix.add_entry(0, 1, 2.0); m.matrix.finalize();
+  Model m;
+  m.resize_columns(2);
+  m.resize_rows(1);
+  m.matrix.reset(1, 2);
+  m.matrix.add_entry(0, 0, 1.0);
+  m.matrix.add_entry(0, 1, 2.0);
+  m.matrix.finalize();
   m.col_type = {VarType::kInteger, VarType::kInteger};
-  m.col_lower = {0.0, 0.0}; m.col_upper = {kInfinity, kInfinity};
-  m.row_lower = {0.0}; m.row_upper = {kInfinity};
-  Solution s; s.col_status = {BasisStatus::kBasic, BasisStatus::kAtLower};
-  s.col_value = {3.0, 0.0}; s.row_status = {BasisStatus::kAtLower}; s.row_activity = {0.0};
+  m.col_lower = {0.0, 0.0};
+  m.col_upper = {kInfinity, kInfinity};
+  m.row_lower = {0.0};
+  m.row_upper = {kInfinity};
+  Solution s;
+  s.col_status = {BasisStatus::kBasic, BasisStatus::kAtLower};
+  s.col_value = {3.0, 0.0};
+  s.row_status = {BasisStatus::kAtLower};
+  s.row_activity = {0.0};
   EXPECT_FALSE(mip::generate_gmi_cut(m, s, 0).has_value());
 }
 
 // Independent GMI Formula Test
 TEST(GmiCut, IndependentFormulaCheck) {
-  Model m; m.resize_columns(2); m.resize_rows(1); m.matrix.reset(1, 2);
-  m.matrix.add_entry(0, 0, 1.0); m.matrix.add_entry(0, 1, 1.2); m.matrix.finalize();
+  Model m;
+  m.resize_columns(2);
+  m.resize_rows(1);
+  m.matrix.reset(1, 2);
+  m.matrix.add_entry(0, 0, 1.0);
+  m.matrix.add_entry(0, 1, 1.2);
+  m.matrix.finalize();
   m.col_type = {VarType::kInteger, VarType::kInteger};
-  m.col_lower = {-kInfinity, 0.0}; m.col_upper = {kInfinity, kInfinity};
-  m.row_lower = {0.0}; m.row_upper = {kInfinity};
-  Solution s; s.col_status = {BasisStatus::kBasic, BasisStatus::kAtLower};
-  s.col_value = {1.8, 0.0}; s.row_status = {BasisStatus::kAtLower}; s.row_activity = {0.0};
+  m.col_lower = {-kInfinity, 0.0};
+  m.col_upper = {kInfinity, kInfinity};
+  m.row_lower = {0.0};
+  m.row_upper = {kInfinity};
+  Solution s;
+  s.col_status = {BasisStatus::kBasic, BasisStatus::kAtLower};
+  s.col_value = {1.8, 0.0};
+  s.row_status = {BasisStatus::kAtLower};
+  s.row_activity = {0.0};
   auto cut = mip::generate_gmi_cut(m, s, 0);
   ASSERT_TRUE(cut.has_value());
 }
-
 
 // =========================================================================================
 // GMI Stage 3B Correctness Gate Tests
@@ -1317,11 +1473,12 @@ TEST(GmiCut, RealSankhyaOptimumValid_WithExactOracle) {
   lp.lower = {0, 0, 0};
   lp.upper = {1, 1, 1};
   lp.integral = {1, 1, 1};
-  lp.c = {-1, -2, -3}; // minimize -x1 - 2x2 - 3x3 => maximize x1 + 2x2 + 3x3
+  lp.c = {-1, -2, -3};  // minimize -x1 - 2x2 - 3x3 => maximize x1 + 2x2 + 3x3
 
   Model m = oracle::to_model(lp);
   m.col_type = {VarType::kContinuous, VarType::kContinuous, VarType::kContinuous};
-  Options opts; opts.set_bool("log_to_console", false);
+  Options opts;
+  opts.set_bool("log_to_console", false);
   Logger logger(nullptr);
   Solution sol = solve(m, opts);
   m.col_type = {VarType::kInteger, VarType::kInteger, VarType::kInteger};
@@ -1353,7 +1510,8 @@ TEST(GmiCut, RealSankhyaOptimumValid_WithExactOracle) {
   double eval = 0.0;
   for (Index j = 0; j < 3; ++j) {
     auto j_sz = static_cast<std::size_t>(j);
-    double x_val = static_cast<double>(exact_res.x[j_sz].numerator()) / static_cast<double>(exact_res.x[j_sz].denominator());
+    double x_val = static_cast<double>(exact_res.x[j_sz].numerator()) /
+                   static_cast<double>(exact_res.x[j_sz].denominator());
     eval += cut->coeff[j_sz] * x_val;
   }
   EXPECT_LE(eval, cut->rhs + 1e-6);
@@ -1364,16 +1522,23 @@ TEST(GmiCut, ExhaustiveValidity) {
   // Max x1 + 2x2
   // s.t. 3x1 + 4x2 <= 10
   // x1, x2 in [0, 3], integer
-  Model m; m.resize_columns(2); m.resize_rows(1); m.matrix.reset(1, 2);
-  m.matrix.add_entry(0, 0, 3.0); m.matrix.add_entry(0, 1, 4.0);
+  Model m;
+  m.resize_columns(2);
+  m.resize_rows(1);
+  m.matrix.reset(1, 2);
+  m.matrix.add_entry(0, 0, 3.0);
+  m.matrix.add_entry(0, 1, 4.0);
   m.matrix.finalize();
   m.col_type = {VarType::kInteger, VarType::kInteger};
-  m.col_lower = {0.0, 0.0}; m.col_upper = {3.0, 3.0};
+  m.col_lower = {0.0, 0.0};
+  m.col_upper = {3.0, 3.0};
   m.col_cost = {-1.0, -2.0};
-  m.row_lower = {-kInfinity}; m.row_upper = {10.0};
+  m.row_lower = {-kInfinity};
+  m.row_upper = {10.0};
 
   m.col_type = {VarType::kContinuous, VarType::kContinuous};
-  Options opts; opts.set_bool("log_to_console", false);
+  Options opts;
+  opts.set_bool("log_to_console", false);
   Solution sol = solve(m, opts);
   m.col_type = {VarType::kInteger, VarType::kInteger};
   ASSERT_EQ(sol.status, SolveStatus::kOptimal);
@@ -1396,7 +1561,7 @@ TEST(GmiCut, ExhaustiveValidity) {
   ASSERT_TRUE(cut.has_value());
 
   // LP point should violate the cut
-  double eval_lp = cut->coeff[0]*sol.col_value[0] + cut->coeff[1]*sol.col_value[1];
+  double eval_lp = cut->coeff[0] * sol.col_value[0] + cut->coeff[1] * sol.col_value[1];
   EXPECT_GT(eval_lp, cut->rhs + 1e-4);
 
   // Enumerate all feasible points in the bounded box [0, 3] x [0, 3]
@@ -1406,78 +1571,110 @@ TEST(GmiCut, ExhaustiveValidity) {
       double s0 = 3.0 * x1 + 4.0 * x2;
 
       // 2. Check bounds
-      if (s0 > 10.0) continue; // violated row upper bound
+      if (s0 > 10.0) continue;  // violated row upper bound
 
       // 3. Evaluate generated GMI cut
-      double eval_int = cut->coeff[0]*x1 + cut->coeff[1]*x2;
-      EXPECT_LE(eval_int, cut->rhs + 1e-9) << "Excluded integer point: (" << x1 << ", " << x2 << ")";
+      double eval_int = cut->coeff[0] * x1 + cut->coeff[1] * x2;
+      EXPECT_LE(eval_int, cut->rhs + 1e-9)
+          << "Excluded integer point: (" << x1 << ", " << x2 << ")";
     }
   }
 }
 
 // Negative Control A: Wrong Upper Bound Sign
 TEST(GmiCut, NegativeControl_WrongUpperBoundSign) {
-  Model m_neg; m_neg.resize_columns(2); m_neg.resize_rows(1); m_neg.matrix.reset(1, 2);
-  m_neg.matrix.add_entry(0, 0, 1.0); m_neg.matrix.add_entry(0, 1, -0.2); m_neg.matrix.finalize();
+  Model m_neg;
+  m_neg.resize_columns(2);
+  m_neg.resize_rows(1);
+  m_neg.matrix.reset(1, 2);
+  m_neg.matrix.add_entry(0, 0, 1.0);
+  m_neg.matrix.add_entry(0, 1, -0.2);
+  m_neg.matrix.finalize();
   m_neg.col_type = {VarType::kInteger, VarType::kInteger};
-  m_neg.col_lower = {0.0, 0.0}; m_neg.col_upper = {kInfinity, 2.0};
-  m_neg.row_lower = {1.0}; m_neg.row_upper = {1.0};
+  m_neg.col_lower = {0.0, 0.0};
+  m_neg.col_upper = {kInfinity, 2.0};
+  m_neg.row_lower = {1.0};
+  m_neg.row_upper = {1.0};
 
-  Solution s_neg; s_neg.col_status = {BasisStatus::kBasic, BasisStatus::kAtUpper};
-  s_neg.col_value = {1.4, 2.0}; s_neg.row_status = {BasisStatus::kFixed}; s_neg.row_activity = {1.0};
+  Solution s_neg;
+  s_neg.col_status = {BasisStatus::kBasic, BasisStatus::kAtUpper};
+  s_neg.col_value = {1.4, 2.0};
+  s_neg.row_status = {BasisStatus::kFixed};
+  s_neg.row_activity = {1.0};
 
   auto cut_valid = mip::generate_gmi_cut(m_neg, s_neg, 0);
   ASSERT_TRUE(cut_valid.has_value());
 
   // Feasible point (1, 0)
-  double eval_int_valid = cut_valid->coeff[0]*1.0 + cut_valid->coeff[1]*0.0;
+  double eval_int_valid = cut_valid->coeff[0] * 1.0 + cut_valid->coeff[1] * 0.0;
   EXPECT_LE(eval_int_valid, cut_valid->rhs + 1e-9);
 
   // Corrupt beta manually:
   // pi = 0.5, U = 2. valid beta_raw = 0. corrupted beta_raw = 1 + 0.5(2) = 2.
   // corrupted rhs = -2.
   double corrupted_rhs = -2.0;
-  EXPECT_GT(eval_int_valid, corrupted_rhs + 1e-9) << "Corrupted upper bound sign should reject (1,0)";
+  EXPECT_GT(eval_int_valid, corrupted_rhs + 1e-9)
+      << "Corrupted upper bound sign should reject (1,0)";
 }
 
 // Negative Control B: Wrong Logical Substitution Sign
 TEST(GmiCut, NegativeControl_WrongLogicalSubstitutionSign) {
-  Model m; m.resize_columns(2); m.resize_rows(1); m.matrix.reset(1, 2);
-  m.matrix.add_entry(0, 0, 1.0); m.matrix.add_entry(0, 1, 0.5); m.matrix.finalize();
+  Model m;
+  m.resize_columns(2);
+  m.resize_rows(1);
+  m.matrix.reset(1, 2);
+  m.matrix.add_entry(0, 0, 1.0);
+  m.matrix.add_entry(0, 1, 0.5);
+  m.matrix.finalize();
   m.col_type = {VarType::kInteger, VarType::kInteger};
-  m.col_lower = {0.0, 0.0}; m.col_upper = {kInfinity, kInfinity};
-  m.row_lower = {0.0}; m.row_upper = {kInfinity};
+  m.col_lower = {0.0, 0.0};
+  m.col_upper = {kInfinity, kInfinity};
+  m.row_lower = {0.0};
+  m.row_upper = {kInfinity};
 
-  Solution s; s.col_status = {BasisStatus::kBasic, BasisStatus::kAtLower};
-  s.col_value = {2.5, 0.0}; s.row_status = {BasisStatus::kAtLower}; s.row_activity = {0.0};
+  Solution s;
+  s.col_status = {BasisStatus::kBasic, BasisStatus::kAtLower};
+  s.col_value = {2.5, 0.0};
+  s.row_status = {BasisStatus::kAtLower};
+  s.row_activity = {0.0};
 
   auto cut = mip::generate_gmi_cut(m, s, 0);
   ASSERT_TRUE(cut.has_value());
 
-  double eval_valid = cut->coeff[0]*1.0 + cut->coeff[1]*1.0;
+  double eval_valid = cut->coeff[0] * 1.0 + cut->coeff[1] * 1.0;
   EXPECT_LE(eval_valid, cut->rhs + 1e-9);
 
   // Corrupted cut
   double corr_coeff_0 = 2.0;
   double corr_coeff_1 = 0.0;
-  double eval_corr = corr_coeff_0*1.0 + corr_coeff_1*1.0;
+  double eval_corr = corr_coeff_0 * 1.0 + corr_coeff_1 * 1.0;
   EXPECT_GT(eval_corr, cut->rhs + 1e-9) << "Wrong logical sign rejects feasible point (1, 1)";
 }
 
 // Negative Control C: Wrong RHS Constant
 TEST(GmiCut, NegativeControl_WrongRhsConstant) {
-  Model m; m.resize_columns(2); m.resize_rows(1); m.matrix.reset(1, 2);
-  m.matrix.add_entry(0, 0, 1.0); m.matrix.add_entry(0, 1, 0.5); m.matrix.finalize();
+  Model m;
+  m.resize_columns(2);
+  m.resize_rows(1);
+  m.matrix.reset(1, 2);
+  m.matrix.add_entry(0, 0, 1.0);
+  m.matrix.add_entry(0, 1, 0.5);
+  m.matrix.finalize();
   m.col_type = {VarType::kInteger, VarType::kInteger};
-  m.col_lower = {0.0, 0.0}; m.col_upper = {kInfinity, kInfinity};
-  m.row_lower = {0.0}; m.row_upper = {kInfinity};
-  Solution s; s.col_status = {BasisStatus::kBasic, BasisStatus::kAtLower};
-  s.col_value = {2.5, 0.0}; s.row_status = {BasisStatus::kAtLower}; s.row_activity = {0.0};
+  m.col_lower = {0.0, 0.0};
+  m.col_upper = {kInfinity, kInfinity};
+  m.row_lower = {0.0};
+  m.row_upper = {kInfinity};
+  Solution s;
+  s.col_status = {BasisStatus::kBasic, BasisStatus::kAtLower};
+  s.col_value = {2.5, 0.0};
+  s.row_status = {BasisStatus::kAtLower};
+  s.row_activity = {0.0};
 
   auto cut = mip::generate_gmi_cut(m, s, 0);
   ASSERT_TRUE(cut.has_value());
 
-  double eval_valid = cut->coeff[0]*0.0 + cut->coeff[1]*1.0;
+  double eval_valid = cut->coeff[0] * 0.0 + cut->coeff[1] * 1.0;
   EXPECT_LE(eval_valid, cut->rhs + 1e-9);
 
   double corr_rhs = cut->rhs - 2.0;
@@ -1486,23 +1683,33 @@ TEST(GmiCut, NegativeControl_WrongRhsConstant) {
 
 // Negative Control D: Intentional Zero Snap
 TEST(GmiCut, NegativeControl_IntentionalZeroSnap_Real) {
-  Model m; m.resize_columns(2); m.resize_rows(1); m.matrix.reset(1, 2);
-  m.matrix.add_entry(0, 0, 1.0); m.matrix.add_entry(0, 1, 0.1); m.matrix.finalize();
+  Model m;
+  m.resize_columns(2);
+  m.resize_rows(1);
+  m.matrix.reset(1, 2);
+  m.matrix.add_entry(0, 0, 1.0);
+  m.matrix.add_entry(0, 1, 0.1);
+  m.matrix.finalize();
   m.col_type = {VarType::kInteger, VarType::kInteger};
-  m.col_lower = {0.0, 0.0}; m.col_upper = {kInfinity, kInfinity};
-  m.row_lower = {1.5}; m.row_upper = {1.5};
-  Solution s; s.col_status = {BasisStatus::kBasic, BasisStatus::kAtLower};
-  s.col_value = {1.5, 0.0}; s.row_status = {BasisStatus::kFixed}; s.row_activity = {1.5};
+  m.col_lower = {0.0, 0.0};
+  m.col_upper = {kInfinity, kInfinity};
+  m.row_lower = {1.5};
+  m.row_upper = {1.5};
+  Solution s;
+  s.col_status = {BasisStatus::kBasic, BasisStatus::kAtLower};
+  s.col_value = {1.5, 0.0};
+  s.row_status = {BasisStatus::kFixed};
+  s.row_activity = {1.5};
 
   auto cut = mip::generate_gmi_cut(m, s, 0);
   ASSERT_TRUE(cut.has_value());
 
-  double eval_valid = cut->coeff[0]*1.0 + cut->coeff[1]*5.0;
+  double eval_valid = cut->coeff[0] * 1.0 + cut->coeff[1] * 5.0;
   EXPECT_LE(eval_valid, cut->rhs + 1e-9);
 
   // Corrupt: snap fj to zero => coeff[1] = 0
   double corr_coeff_1 = 0.0;
-  double eval_corr = cut->coeff[0]*1.0 + corr_coeff_1*5.0;
+  double eval_corr = cut->coeff[0] * 1.0 + corr_coeff_1 * 5.0;
   EXPECT_GT(eval_corr, cut->rhs + 1e-9) << "Zero snap rejects feasible point (1, 5)";
 }
 
@@ -1513,17 +1720,23 @@ TEST(GmiCut, NegativeControl_IntentionalZeroSnap_Real) {
 // Test A, B, C: RootGmiContext behavior and factorization amortization
 TEST(RootGmiContext, FactorizationAmortization) {
   Model m;
-  m.resize_columns(3); m.resize_rows(2);
+  m.resize_columns(3);
+  m.resize_rows(2);
   m.matrix.reset(2, 3);
   // x0 + x1 + x2 <= 2.5
   // x0 - x1 <= 0.5
-  m.matrix.add_entry(0, 0, 1.0); m.matrix.add_entry(0, 1, 1.0); m.matrix.add_entry(0, 2, 1.0);
-  m.matrix.add_entry(1, 0, 1.0); m.matrix.add_entry(1, 1, -1.0);
+  m.matrix.add_entry(0, 0, 1.0);
+  m.matrix.add_entry(0, 1, 1.0);
+  m.matrix.add_entry(0, 2, 1.0);
+  m.matrix.add_entry(1, 0, 1.0);
+  m.matrix.add_entry(1, 1, -1.0);
   m.matrix.finalize();
 
   m.col_type = {VarType::kInteger, VarType::kInteger, VarType::kContinuous};
-  m.col_lower = {0.0, 0.0, 0.0}; m.col_upper = {kInfinity, kInfinity, kInfinity};
-  m.row_lower = {-kInfinity, -kInfinity}; m.row_upper = {2.5, 0.5};
+  m.col_lower = {0.0, 0.0, 0.0};
+  m.col_upper = {kInfinity, kInfinity, kInfinity};
+  m.row_lower = {-kInfinity, -kInfinity};
+  m.row_upper = {2.5, 0.5};
 
   Solution s;
   s.col_status = {BasisStatus::kBasic, BasisStatus::kBasic, BasisStatus::kAtLower};
@@ -1556,13 +1769,23 @@ TEST(RootGmiContext, FactorizationAmortization) {
 
 // Test D: Production multi-row generator matches old API exactly
 TEST(RootGmiContext, MatchesReferenceImplementation) {
-  Model m; m.resize_columns(2); m.resize_rows(1); m.matrix.reset(1, 2);
-  m.matrix.add_entry(0, 0, 1.0); m.matrix.add_entry(0, 1, 1.2); m.matrix.finalize();
+  Model m;
+  m.resize_columns(2);
+  m.resize_rows(1);
+  m.matrix.reset(1, 2);
+  m.matrix.add_entry(0, 0, 1.0);
+  m.matrix.add_entry(0, 1, 1.2);
+  m.matrix.finalize();
   m.col_type = {VarType::kInteger, VarType::kInteger};
-  m.col_lower = {-kInfinity, 0.0}; m.col_upper = {kInfinity, kInfinity};
-  m.row_lower = {0.0}; m.row_upper = {kInfinity};
-  Solution s; s.col_status = {BasisStatus::kBasic, BasisStatus::kAtLower};
-  s.col_value = {1.8, 0.0}; s.row_status = {BasisStatus::kAtLower}; s.row_activity = {0.0};
+  m.col_lower = {-kInfinity, 0.0};
+  m.col_upper = {kInfinity, kInfinity};
+  m.row_lower = {0.0};
+  m.row_upper = {kInfinity};
+  Solution s;
+  s.col_status = {BasisStatus::kBasic, BasisStatus::kAtLower};
+  s.col_value = {1.8, 0.0};
+  s.row_status = {BasisStatus::kAtLower};
+  s.row_activity = {0.0};
 
   auto cuts = mip::generate_gmi_cuts(m, s);
   ASSERT_EQ(cuts.size(), 1);
@@ -1579,27 +1802,40 @@ TEST(RootGmiContext, MatchesReferenceImplementation) {
 
 // Test G, H, I, J, K, L: RootGmiContext edge cases
 TEST(RootGmiContext, RejectionConditions) {
-  Model m; m.resize_columns(2); m.resize_rows(1); m.matrix.reset(1, 2);
-  m.matrix.add_entry(0, 0, 1.0); m.matrix.add_entry(0, 1, 1.0); m.matrix.finalize();
+  Model m;
+  m.resize_columns(2);
+  m.resize_rows(1);
+  m.matrix.reset(1, 2);
+  m.matrix.add_entry(0, 0, 1.0);
+  m.matrix.add_entry(0, 1, 1.0);
+  m.matrix.finalize();
   m.col_type = {VarType::kInteger, VarType::kInteger};
-  m.col_lower = {0.0, 0.0}; m.col_upper = {kInfinity, kInfinity};
-  m.row_lower = {-kInfinity}; m.row_upper = {2.0};
+  m.col_lower = {0.0, 0.0};
+  m.col_upper = {kInfinity, kInfinity};
+  m.row_lower = {-kInfinity};
+  m.row_upper = {2.0};
 
   Solution s;
   // H: Integral root
   s.col_status = {BasisStatus::kBasic, BasisStatus::kAtLower};
-  s.col_value = {2.0, 0.0}; s.row_status = {BasisStatus::kAtUpper}; s.row_activity = {2.0};
+  s.col_value = {2.0, 0.0};
+  s.row_status = {BasisStatus::kAtUpper};
+  s.row_activity = {2.0};
   EXPECT_EQ(mip::generate_gmi_cuts(m, s).size(), 0);
 
   // I: Logical-only basics
   s.col_status = {BasisStatus::kAtLower, BasisStatus::kAtLower};
-  s.col_value = {0.0, 0.0}; s.row_status = {BasisStatus::kBasic}; s.row_activity = {0.0};
+  s.col_value = {0.0, 0.0};
+  s.row_status = {BasisStatus::kBasic};
+  s.row_activity = {0.0};
   EXPECT_EQ(mip::generate_gmi_cuts(m, s).size(), 0);
 
   // J: Continuous structural basics
   m.col_type = {VarType::kContinuous, VarType::kContinuous};
   s.col_status = {BasisStatus::kBasic, BasisStatus::kAtLower};
-  s.col_value = {1.5, 0.0}; s.row_status = {BasisStatus::kAtUpper}; s.row_activity = {1.5};
+  s.col_value = {1.5, 0.0};
+  s.row_status = {BasisStatus::kAtUpper};
+  s.row_activity = {1.5};
   EXPECT_EQ(mip::generate_gmi_cuts(m, s).size(), 0);
 
   // K: Invalid basis
@@ -1611,7 +1847,6 @@ TEST(RootGmiContext, RejectionConditions) {
 }  // namespace
 }  // namespace sankhya
 
-
 // =========================================================================================
 // Cut Filtering and Deduplication Tests (Stage 4C)
 // =========================================================================================
@@ -1621,19 +1856,21 @@ using namespace sankhya::mip;
 
 TEST(CutFiltering, RejectsNonfinite) {
   Model model;
-  model.col_cost.assign(5, 0.0); // padded
+  model.col_cost.assign(5, 0.0);  // padded
   Solution sol;
   sol.col_value.push_back(0.0);
 
   Cut c;
-  c.coeff = {std::numeric_limits<double>::infinity()}; c.coeff.resize(5, 0.0);
+  c.coeff = {std::numeric_limits<double>::infinity()};
+  c.coeff.resize(5, 0.0);
   c.rhs = 1.0;
 
   auto res = filter_and_deduplicate_cuts(model, sol, {c});
   ASSERT_EQ(res.size(), 1);
   EXPECT_EQ(res[0].reason, CutFilterReason::kNonfinite);
 
-  c.coeff = {1.0}; c.coeff.resize(5, 0.0);
+  c.coeff = {1.0};
+  c.coeff.resize(5, 0.0);
   c.rhs = std::numeric_limits<double>::quiet_NaN();
   res = filter_and_deduplicate_cuts(model, sol, {c});
   ASSERT_EQ(res.size(), 1);
@@ -1647,8 +1884,9 @@ TEST(CutFiltering, RejectsEmptySupport) {
   sol.col_value.assign(5, 0.0);
 
   Cut c;
-  c.coeff = {1e-12}; c.coeff.resize(5, 0.0);
-  c.rhs = -1.0; // Highly violated if LHS is 0
+  c.coeff = {1e-12};
+  c.coeff.resize(5, 0.0);
+  c.rhs = -1.0;  // Highly violated if LHS is 0
 
   auto res = filter_and_deduplicate_cuts(model, sol, {c});
   ASSERT_EQ(res.size(), 1);
@@ -1657,7 +1895,7 @@ TEST(CutFiltering, RejectsEmptySupport) {
 
 TEST(CutFiltering, DensityThresholds) {
   Model model;
-  model.col_cost.assign(10, 0.0); // 10 cols
+  model.col_cost.assign(10, 0.0);  // 10 cols
   Solution sol;
   sol.col_value.assign(10, 0.0);
 
@@ -1687,14 +1925,16 @@ TEST(CutFiltering, CoefficientRatio) {
   sol.col_value.assign(10, 0.0);
 
   Cut c;
-  c.coeff = {1.0, 1e7}; c.coeff.resize(10, 0.0);
+  c.coeff = {1.0, 1e7};
+  c.coeff.resize(10, 0.0);
   c.rhs = -1.0;
 
   auto res = filter_and_deduplicate_cuts(model, sol, {c});
   ASSERT_EQ(res.size(), 1);
   EXPECT_EQ(res[0].reason, CutFilterReason::kCoefficientRatio);
 
-  c.coeff = {1.0, 1e5}; c.coeff.resize(10, 0.0);
+  c.coeff = {1.0, 1e5};
+  c.coeff.resize(10, 0.0);
   res = filter_and_deduplicate_cuts(model, sol, {c});
   ASSERT_EQ(res.size(), 1);
   EXPECT_EQ(res[0].reason, CutFilterReason::kAccepted);
@@ -1707,14 +1947,15 @@ TEST(CutFiltering, RootLPViolation) {
   sol.col_value.assign(5, 0.0);
 
   Cut c;
-  c.coeff = {1.0}; c.coeff.resize(5, 0.0); // LHS = 0.0
-  c.rhs = 0.0; // Violation = 0.0, kCutViolationTolerance is 1e-5
+  c.coeff = {1.0};
+  c.coeff.resize(5, 0.0);  // LHS = 0.0
+  c.rhs = 0.0;             // Violation = 0.0, kCutViolationTolerance is 1e-5
 
   auto res = filter_and_deduplicate_cuts(model, sol, {c});
   ASSERT_EQ(res.size(), 1);
   EXPECT_EQ(res[0].reason, CutFilterReason::kInsufficientViolation);
 
-  c.rhs = -1e-4; // Violation = 1e-4 > 1e-5
+  c.rhs = -1e-4;  // Violation = 1e-4 > 1e-5
   res = filter_and_deduplicate_cuts(model, sol, {c});
   ASSERT_EQ(res.size(), 1);
   EXPECT_EQ(res[0].reason, CutFilterReason::kAccepted);
@@ -1727,7 +1968,8 @@ TEST(CutFiltering, DoesNotModifyCutData) {
   sol.col_value.assign(5, 0.0);
 
   Cut c;
-  c.coeff = {1.234}; c.coeff.resize(5, 0.0);
+  c.coeff = {1.234};
+  c.coeff.resize(5, 0.0);
   c.rhs = -5.678;
 
   auto res = filter_and_deduplicate_cuts(model, sol, {c});
@@ -1738,7 +1980,8 @@ TEST(CutFiltering, DoesNotModifyCutData) {
 
   Cut c_rej;
   c_rej.coeff = {1.0};
-  c_rej.rhs = 0.0; // Insufficient violation
+  c_rej.coeff.resize(5, 0.0);
+  c_rej.rhs = 0.0;  // Insufficient violation
   auto res_rej = filter_and_deduplicate_cuts(model, sol, {c_rej});
   ASSERT_EQ(res_rej.size(), 1);
   EXPECT_EQ(res_rej[0].reason, CutFilterReason::kInsufficientViolation);
@@ -1754,11 +1997,16 @@ TEST(CutFiltering, DeduplicationPositive) {
 
   // A.
   Cut c1, c2;
-  c1.coeff = {1.0, 1.0, 0.0}; c1.coeff.resize(15, 0.0); c1.rhs = 1.0;
-  c2.coeff = {2.0, 2.0, 0.0}; c2.coeff.resize(15, 0.0); c2.rhs = 2.0;
+  c1.coeff = {1.0, 1.0, 0.0};
+  c1.coeff.resize(15, 0.0);
+  c1.rhs = 1.0;
+  c2.coeff = {2.0, 2.0, 0.0};
+  c2.coeff.resize(15, 0.0);
+  c2.rhs = 2.0;
 
   // Make c1 and c2 violated so they pass violation test
-  sol.col_value = {2.0, 2.0, 0.0}; sol.col_value.resize(15, 0.0);
+  sol.col_value = {2.0, 2.0, 0.0};
+  sol.col_value.resize(15, 0.0);
 
   auto res = filter_and_deduplicate_cuts(model, sol, {c1, c2});
   ASSERT_EQ(res.size(), 2);
@@ -1766,16 +2014,26 @@ TEST(CutFiltering, DeduplicationPositive) {
   EXPECT_EQ(res[1].reason, CutFilterReason::kDuplicate);
 
   // B.
-  c1.coeff = {-1.0, 2.0, 0.0}; c1.coeff.resize(15, 0.0); c1.rhs = 3.0;
-  c2.coeff = {-2.0, 4.0, 0.0}; c2.coeff.resize(15, 0.0); c2.rhs = 6.0;
-  sol.col_value = {0.0, 4.0, 0.0}; sol.col_value.resize(15, 0.0); // LHS=8 for c1
+  c1.coeff = {-1.0, 2.0, 0.0};
+  c1.coeff.resize(15, 0.0);
+  c1.rhs = 3.0;
+  c2.coeff = {-2.0, 4.0, 0.0};
+  c2.coeff.resize(15, 0.0);
+  c2.rhs = 6.0;
+  sol.col_value = {0.0, 4.0, 0.0};
+  sol.col_value.resize(15, 0.0);  // LHS=8 for c1
   res = filter_and_deduplicate_cuts(model, sol, {c1, c2});
   EXPECT_EQ(res[1].reason, CutFilterReason::kDuplicate);
 
   // C.
-  c1.coeff = {0.5, -3.0, 1.0}; c1.coeff.resize(15, 0.0); c1.rhs = 2.0;
-  c2.coeff = {2.0, -12.0, 4.0}; c2.coeff.resize(15, 0.0); c2.rhs = 8.0;
-  sol.col_value = {10.0, 0.0, 0.0}; sol.col_value.resize(15, 0.0); // LHS=5 for c1
+  c1.coeff = {0.5, -3.0, 1.0};
+  c1.coeff.resize(15, 0.0);
+  c1.rhs = 2.0;
+  c2.coeff = {2.0, -12.0, 4.0};
+  c2.coeff.resize(15, 0.0);
+  c2.rhs = 8.0;
+  sol.col_value = {10.0, 0.0, 0.0};
+  sol.col_value.resize(15, 0.0);  // LHS=5 for c1
   res = filter_and_deduplicate_cuts(model, sol, {c1, c2});
   EXPECT_EQ(res[1].reason, CutFilterReason::kDuplicate);
 }
@@ -1788,28 +2046,44 @@ TEST(CutFiltering, DeduplicationNegative) {
 
   // A.
   Cut c1, c2;
-  c1.coeff = {1.0, 0.0, 0.0}; c1.coeff.resize(15, 0.0); c1.rhs = 1.0;
-  c2.coeff = {2.0, 0.0, 0.0}; c2.coeff.resize(15, 0.0); c2.rhs = 3.0; // Not proportional RHS
+  c1.coeff = {1.0, 0.0, 0.0};
+  c1.coeff.resize(15, 0.0);
+  c1.rhs = 1.0;
+  c2.coeff = {2.0, 0.0, 0.0};
+  c2.coeff.resize(15, 0.0);
+  c2.rhs = 3.0;  // Not proportional RHS
   auto res = filter_and_deduplicate_cuts(model, sol, {c1, c2});
   ASSERT_EQ(res.size(), 2);
   EXPECT_EQ(res[0].reason, CutFilterReason::kAccepted);
   EXPECT_EQ(res[1].reason, CutFilterReason::kAccepted);
 
   // B.
-  c1.coeff = {1.0, 1.0, 0.0}; c1.coeff.resize(15, 0.0); c1.rhs = 1.0;
-  c2.coeff = {2.0, 2.0, 0.0}; c2.coeff.resize(15, 0.0); c2.rhs = 2.1;
+  c1.coeff = {1.0, 1.0, 0.0};
+  c1.coeff.resize(15, 0.0);
+  c1.rhs = 1.0;
+  c2.coeff = {2.0, 2.0, 0.0};
+  c2.coeff.resize(15, 0.0);
+  c2.rhs = 2.1;
   res = filter_and_deduplicate_cuts(model, sol, {c1, c2});
   EXPECT_EQ(res[1].reason, CutFilterReason::kAccepted);
 
   // C.
-  c1.coeff = {1.0, 2.0, 0.0}; c1.coeff.resize(15, 0.0); c1.rhs = 4.0;
-  c2.coeff = {1.0, 2.0, 0.0}; c2.coeff.resize(15, 0.0); c2.rhs = 5.0;
+  c1.coeff = {1.0, 2.0, 0.0};
+  c1.coeff.resize(15, 0.0);
+  c1.rhs = 4.0;
+  c2.coeff = {1.0, 2.0, 0.0};
+  c2.coeff.resize(15, 0.0);
+  c2.rhs = 5.0;
   res = filter_and_deduplicate_cuts(model, sol, {c1, c2});
   EXPECT_EQ(res[1].reason, CutFilterReason::kAccepted);
 
   // D.
-  c1.coeff = {1.0, 1.0, 0.0}; c1.coeff.resize(15, 0.0); c1.rhs = 2.0;
-  c2.coeff = {1.0, 0.0, 1.0}; c2.coeff.resize(15, 0.0); c2.rhs = 2.0;
+  c1.coeff = {1.0, 1.0, 0.0};
+  c1.coeff.resize(15, 0.0);
+  c1.rhs = 2.0;
+  c2.coeff = {1.0, 0.0, 1.0};
+  c2.coeff.resize(15, 0.0);
+  c2.rhs = 2.0;
   res = filter_and_deduplicate_cuts(model, sol, {c1, c2});
   EXPECT_EQ(res[1].reason, CutFilterReason::kAccepted);
 }
@@ -1824,7 +2098,7 @@ TEST(CutFiltering, CombinedFilterTest) {
   Cut c1;
   c1.coeff.assign(10, 0.0);
   c1.coeff[0] = 1.0;
-  c1.rhs = -1.0; // Violated since LHS=0
+  c1.rhs = -1.0;  // Violated since LHS=0
 
   // 2. dense cut
   Cut c2;
@@ -1842,7 +2116,7 @@ TEST(CutFiltering, CombinedFilterTest) {
   Cut c4;
   c4.coeff.assign(10, 0.0);
   c4.coeff[0] = 1.0;
-  c4.rhs = 1.0; // LHS=0 < 1.0 (Valid, but not violated)
+  c4.rhs = 1.0;  // LHS=0 < 1.0 (Valid, but not violated)
 
   // 5. NaN cut
   Cut c5;
@@ -1874,27 +2148,48 @@ TEST(CutFiltering, DeduplicationScaleAwarePositive) {
   sol.col_value.assign(15, 0.0);
 
   // A. [1e6, 2e6] <= 3e6 and [1, 2] <= 3
-  Cut c1; c1.coeff = {1e6, 2e6, 0.0}; c1.coeff.resize(15, 0.0); c1.rhs = 3e6;
-  Cut c2; c2.coeff = {1.0, 2.0, 0.0}; c2.coeff.resize(15, 0.0); c2.rhs = 3.0;
-  sol.col_value = {0.0, 3.0, 0.0}; sol.col_value.resize(15, 0.0); // Make them violated
+  Cut c1;
+  c1.coeff = {1e6, 2e6, 0.0};
+  c1.coeff.resize(15, 0.0);
+  c1.rhs = 3e6;
+  Cut c2;
+  c2.coeff = {1.0, 2.0, 0.0};
+  c2.coeff.resize(15, 0.0);
+  c2.rhs = 3.0;
+  sol.col_value = {0.0, 3.0, 0.0};
+  sol.col_value.resize(15, 0.0);  // Make them violated
   auto resA = filter_and_deduplicate_cuts(model, sol, {c1, c2});
   EXPECT_EQ(resA.size(), 2);
   EXPECT_EQ(resA[0].reason, CutFilterReason::kAccepted);
   EXPECT_EQ(resA[1].reason, CutFilterReason::kDuplicate);
 
   // C. Very small but proportionally identical coefficients
-  Cut c3; c3.coeff = {1e-5, 2e-5, 0.0}; c3.coeff.resize(15, 0.0); c3.rhs = 3e-5;
-  Cut c4; c4.coeff = {1.0, 2.0, 0.0}; c4.coeff.resize(15, 0.0); c4.rhs = 3.0;
-  sol.col_value = {0.0, 3.0, 0.0}; sol.col_value.resize(15, 0.0);
+  Cut c3;
+  c3.coeff = {1e-5, 2e-5, 0.0};
+  c3.coeff.resize(15, 0.0);
+  c3.rhs = 3e-5;
+  Cut c4;
+  c4.coeff = {1.0, 2.0, 0.0};
+  c4.coeff.resize(15, 0.0);
+  c4.rhs = 3.0;
+  sol.col_value = {0.0, 3.0, 0.0};
+  sol.col_value.resize(15, 0.0);
   auto resC = filter_and_deduplicate_cuts(model, sol, {c3, c4});
   EXPECT_EQ(resC.size(), 2);
   EXPECT_EQ(resC[0].reason, CutFilterReason::kAccepted);
   EXPECT_EQ(resC[1].reason, CutFilterReason::kDuplicate);
 
   // E. Large RHS proportionality
-  Cut c5; c5.coeff = {1.0, 2.0, 0.0}; c5.coeff.resize(15, 0.0); c5.rhs = 1.0;
-  Cut c6; c6.coeff = {1e6, 2e6, 0.0}; c6.coeff.resize(15, 0.0); c6.rhs = 1e6;
-  sol.col_value = {0.0, 3.0, 0.0}; sol.col_value.resize(15, 0.0);
+  Cut c5;
+  c5.coeff = {1.0, 2.0, 0.0};
+  c5.coeff.resize(15, 0.0);
+  c5.rhs = 1.0;
+  Cut c6;
+  c6.coeff = {1e6, 2e6, 0.0};
+  c6.coeff.resize(15, 0.0);
+  c6.rhs = 1e6;
+  sol.col_value = {0.0, 3.0, 0.0};
+  sol.col_value.resize(15, 0.0);
   auto resE = filter_and_deduplicate_cuts(model, sol, {c5, c6});
   EXPECT_EQ(resE.size(), 2);
   EXPECT_EQ(resE[0].reason, CutFilterReason::kAccepted);
@@ -1908,27 +2203,48 @@ TEST(CutFiltering, DeduplicationScaleAwareNegative) {
   sol.col_value.assign(15, 0.0);
 
   // B. [1e6, 2e6] <= 3e6 and [1, 2.0001] <= 3
-  Cut c1; c1.coeff = {1e6, 2e6, 0.0}; c1.coeff.resize(15, 0.0); c1.rhs = 3e6;
-  Cut c2; c2.coeff = {1.0, 2.0001, 0.0}; c2.coeff.resize(15, 0.0); c2.rhs = 3.0;
-  sol.col_value = {0.0, 3.0, 0.0}; sol.col_value.resize(15, 0.0);
+  Cut c1;
+  c1.coeff = {1e6, 2e6, 0.0};
+  c1.coeff.resize(15, 0.0);
+  c1.rhs = 3e6;
+  Cut c2;
+  c2.coeff = {1.0, 2.0001, 0.0};
+  c2.coeff.resize(15, 0.0);
+  c2.rhs = 3.0;
+  sol.col_value = {0.0, 3.0, 0.0};
+  sol.col_value.resize(15, 0.0);
   auto resB = filter_and_deduplicate_cuts(model, sol, {c1, c2});
   EXPECT_EQ(resB.size(), 2);
   EXPECT_EQ(resB[0].reason, CutFilterReason::kAccepted);
   EXPECT_EQ(resB[1].reason, CutFilterReason::kAccepted);
 
   // D. Very small but genuinely different coefficients
-  Cut c3; c3.coeff = {1e-5, 2e-5, 0.0}; c3.coeff.resize(15, 0.0); c3.rhs = 3e-5;
-  Cut c4; c4.coeff = {1.0, 2.1, 0.0}; c4.coeff.resize(15, 0.0); c4.rhs = 3.0;
-  sol.col_value = {0.0, 3.0, 0.0}; sol.col_value.resize(15, 0.0);
+  Cut c3;
+  c3.coeff = {1e-5, 2e-5, 0.0};
+  c3.coeff.resize(15, 0.0);
+  c3.rhs = 3e-5;
+  Cut c4;
+  c4.coeff = {1.0, 2.1, 0.0};
+  c4.coeff.resize(15, 0.0);
+  c4.rhs = 3.0;
+  sol.col_value = {0.0, 3.0, 0.0};
+  sol.col_value.resize(15, 0.0);
   auto resD = filter_and_deduplicate_cuts(model, sol, {c3, c4});
   EXPECT_EQ(resD.size(), 2);
   EXPECT_EQ(resD[0].reason, CutFilterReason::kAccepted);
   EXPECT_EQ(resD[1].reason, CutFilterReason::kAccepted);
 
   // F. Same coefficients but non-proportional RHS
-  Cut c5; c5.coeff = {1.0, 2.0, 0.0}; c5.coeff.resize(15, 0.0); c5.rhs = 3.0;
-  Cut c6; c6.coeff = {1.0, 2.0, 0.0}; c6.coeff.resize(15, 0.0); c6.rhs = 4.0;
-  sol.col_value = {0.0, 5.0, 0.0}; sol.col_value.resize(15, 0.0);
+  Cut c5;
+  c5.coeff = {1.0, 2.0, 0.0};
+  c5.coeff.resize(15, 0.0);
+  c5.rhs = 3.0;
+  Cut c6;
+  c6.coeff = {1.0, 2.0, 0.0};
+  c6.coeff.resize(15, 0.0);
+  c6.rhs = 4.0;
+  sol.col_value = {0.0, 5.0, 0.0};
+  sol.col_value.resize(15, 0.0);
   auto resF = filter_and_deduplicate_cuts(model, sol, {c5, c6});
   EXPECT_EQ(resF.size(), 2);
   EXPECT_EQ(resF[0].reason, CutFilterReason::kAccepted);

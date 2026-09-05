@@ -749,7 +749,8 @@ Solution BranchAndBound::run() {
           working_ = std::move(pre_cut_model);
           scaling_ = std::move(pre_cut_scaling);
           relaxation = std::move(initial_relaxation);
-          logger_.info("Root cuts induced failure: {}; rolled back to initial relaxation", to_string(final_relaxation.status));
+          logger_.info("Root cuts induced failure: {}; rolled back to initial relaxation",
+                       to_string(final_relaxation.status));
         }
       }
     }

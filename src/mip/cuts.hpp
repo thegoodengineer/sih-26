@@ -76,8 +76,8 @@ struct ReconstructedTableauRow {
 ///     row is separated by it.
 struct KnapsackCoverCut {
   std::vector<Index> col_index;  ///< original model column indices, ascending
-  std::vector<double> coeff;    ///< per-column coefficient (>= 0)
-  double rhs = 0.0;             ///< right-hand side (|C| - 1)
+  std::vector<double> coeff;     ///< per-column coefficient (>= 0)
+  double rhs = 0.0;              ///< right-hand side (|C| - 1)
 };
 
 /// Try to generate a lifted knapsack cover cut from row `row` of `model`.
@@ -98,7 +98,7 @@ struct KnapsackCoverCut {
 ///
 /// The function does NOT append the cut to `model`. The caller is responsible for that.
 [[nodiscard]] std::optional<KnapsackCoverCut> generate_knapsack_cover_cut(const Model& model,
-                                                                           Index row);
+                                                                          Index row);
 
 // =========================================================================================
 // Gomory mixed-integer cuts (Stage 3B)
@@ -121,12 +121,12 @@ struct Cut {
 /// Returns std::nullopt if the basic variable is not eligible, the fraction is
 /// near-integral, or a numerically ambiguous state is encountered.
 [[nodiscard]] std::optional<Cut> generate_gmi_cut(const Model& model, const Solution& solution,
-                                                     Index basis_row);
+                                                  Index basis_row);
 
 /// Reusable production context for multi-row GMI generation.
 /// Performs exactly one basis reconstruction and one SparseLu factorization.
 struct RootGmiContext {
-  std::vector<bool> slot_is_structural;
+  std::vector<unsigned char> slot_is_structural;
   std::vector<Index> slot_original_index;
   std::vector<double> logical_values;
   std::vector<Index> logical_rows;
@@ -144,12 +144,13 @@ struct RootGmiContext {
   RootGmiContext& operator=(RootGmiContext&&) = delete;
 
   /// Get the tableau row for a specific basis slot without re-factorizing.
-  [[nodiscard]] std::optional<detail::ReconstructedTableauRow> tableau_row(const Model& model, const Solution& solution, Index basis_row) const;
+  [[nodiscard]] std::optional<detail::ReconstructedTableauRow> tableau_row(
+      const Model& model, const Solution& solution, Index basis_row) const;
 };
 
 /// Production multi-row GMI generator.
-/// Iterates over all fractional basic structural integer variables, generating one cut per eligible row.
-/// Returns candidates in deterministic basis-slot order.
+/// Iterates over all fractional basic structural integer variables, generating one cut per
+/// eligible row. Returns candidates in deterministic basis-slot order.
 [[nodiscard]] std::vector<Cut> generate_gmi_cuts(const Model& model, const Solution& solution);
 
 // =========================================================================================
@@ -175,9 +176,11 @@ struct FilteredCut {
 
 /// Validates, filters, and deduplicates a set of candidate cuts.
 ///
-/// Enforces density, coefficient-ratio, and root-LP violation policies, and rejects numerical duplicates.
-/// Returns the complete set of candidates (accepted and rejected) without modifying their original mathematical representation.
-[[nodiscard]] std::vector<FilteredCut> filter_and_deduplicate_cuts(const Model& model, const Solution& root_solution, const std::vector<Cut>& candidates);
+/// Enforces density, coefficient-ratio, and root-LP violation policies, and rejects numerical
+/// duplicates. Returns the complete set of candidates (accepted and rejected) without modifying
+/// their original mathematical representation.
+[[nodiscard]] std::vector<FilteredCut> filter_and_deduplicate_cuts(
+    const Model& model, const Solution& root_solution, const std::vector<Cut>& candidates);
 
 /// Round the bounds of rows whose activity must be integral.
 ///

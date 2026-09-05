@@ -9,9 +9,9 @@
 #include <optional>
 #include <vector>
 
+#include "la/lu.hpp"
 #include "sankhya/sparse.hpp"
 #include "sankhya/tolerances.hpp"
-#include "la/lu.hpp"
 
 namespace sankhya::mip {
 namespace {
@@ -167,7 +167,7 @@ struct KnapsackVar {
 /// Returns indices INTO `vars` forming the minimal cover, in ascending order (0,1,...).
 /// Returns empty when no cover exists (total weight <= b).
 [[nodiscard]] std::vector<std::size_t> find_minimal_cover(const std::vector<KnapsackVar>& vars,
-                                                           double b) {
+                                                          double b) {
   double sum = 0.0;
   std::vector<std::size_t> cover;
   for (std::size_t k = 0; k < vars.size(); ++k) {
@@ -423,8 +423,9 @@ RowTightening tighten_integral_rows(Model* model, Logger& logger) {
 
 namespace detail {
 
-std::optional<ReconstructedTableauRow> get_tableau_for_testing(
-    const Model& model, const Solution& solution, Index basis_row) {
+std::optional<ReconstructedTableauRow> get_tableau_for_testing(const Model& model,
+                                                               const Solution& solution,
+                                                               Index basis_row) {
   const Index m = model.num_rows();
   const Index n = model.num_cols();
   if (static_cast<std::size_t>(n) != solution.col_status.size() ||
@@ -480,7 +481,8 @@ std::optional<ReconstructedTableauRow> get_tableau_for_testing(
   }
 
   SparseLu lu;
-  if (!lu.factorize(columns, m, tol::kPivotTolerance, tol::kMarkowitzThreshold)) return std::nullopt;
+  if (!lu.factorize(columns, m, tol::kPivotTolerance, tol::kMarkowitzThreshold))
+    return std::nullopt;
 
   std::vector<double> z(static_cast<std::size_t>(m), 0.0);
   z[static_cast<std::size_t>(basis_row)] = 1.0;
@@ -522,7 +524,8 @@ std::optional<ReconstructedTableauRow> get_tableau_for_testing(
 
 namespace {
 
-std::optional<Cut> compute_gmi_from_tableau(const Model& model, const detail::ReconstructedTableauRow& tableau) {
+std::optional<Cut> compute_gmi_from_tableau(const Model& model,
+                                            const detail::ReconstructedTableauRow& tableau) {
   if (!tableau.basic_is_structural) return std::nullopt;
   if (model.col_type[static_cast<std::size_t>(tableau.basic_index)] != VarType::kInteger) {
     return std::nullopt;
@@ -678,9 +681,10 @@ std::optional<Cut> compute_gmi_from_tableau(const Model& model, const detail::Re
   return cut;
 }
 
-} // namespace
+}  // namespace
 
-std::optional<Cut> generate_gmi_cut(const Model& model, const Solution& solution, Index basis_row) {
+std::optional<Cut> generate_gmi_cut(const Model& model, const Solution& solution,
+                                    Index basis_row) {
   auto tableau_opt = detail::get_tableau_for_testing(model, solution, basis_row);
   if (!tableau_opt) return std::nullopt;
   return compute_gmi_from_tableau(model, *tableau_opt);
@@ -714,7 +718,7 @@ RootGmiContext::RootGmiContext(const Model& model, const Solution& solution) {
 
   for (Index j = 0; j < n; ++j) {
     if (solution.col_status[static_cast<std::size_t>(j)] == BasisStatus::kBasic) {
-      slot_is_structural[static_cast<std::size_t>(slot)] = true;
+      slot_is_structural[static_cast<std::size_t>(slot)] = 1;
       slot_original_index[static_cast<std::size_t>(slot)] = j;
       const ColumnView cview = model.matrix.column(j);
       LuColumn lucol;
@@ -728,7 +732,7 @@ RootGmiContext::RootGmiContext(const Model& model, const Solution& solution) {
 
   for (Index i = 0; i < m; ++i) {
     if (solution.row_status[static_cast<std::size_t>(i)] == BasisStatus::kBasic) {
-      slot_is_structural[static_cast<std::size_t>(slot)] = false;
+      slot_is_structural[static_cast<std::size_t>(slot)] = 0;
       slot_original_index[static_cast<std::size_t>(slot)] = i;
       logical_rows[static_cast<std::size_t>(slot)] = i;
       LuColumn lucol;
@@ -747,7 +751,8 @@ RootGmiContext::RootGmiContext(const Model& model, const Solution& solution) {
   is_valid = true;
 }
 
-std::optional<detail::ReconstructedTableauRow> RootGmiContext::tableau_row(const Model& model, const Solution& solution, Index basis_row) const {
+std::optional<detail::ReconstructedTableauRow> RootGmiContext::tableau_row(
+    const Model& model, const Solution& solution, Index basis_row) const {
   if (!is_valid) return std::nullopt;
   const Index m = model.num_rows();
   const Index n = model.num_cols();
@@ -759,7 +764,7 @@ std::optional<detail::ReconstructedTableauRow> RootGmiContext::tableau_row(const
 
   detail::ReconstructedTableauRow row;
   row.basis_row = basis_row;
-  row.basic_is_structural = slot_is_structural[static_cast<std::size_t>(basis_row)];
+  row.basic_is_structural = slot_is_structural[static_cast<std::size_t>(basis_row)] != 0;
   row.basic_index = slot_original_index[static_cast<std::size_t>(basis_row)];
 
   if (row.basic_is_structural) {
@@ -819,16 +824,18 @@ std::vector<Cut> generate_gmi_cuts(const Model& model, const Solution& solution)
 // Cut Filtering and Deduplication
 // =========================================================================================
 
-std::vector<FilteredCut> filter_and_deduplicate_cuts(const Model& model, const Solution& root_solution, const std::vector<Cut>& candidates) {
+std::vector<FilteredCut> filter_and_deduplicate_cuts(const Model& model,
+                                                     const Solution& root_solution,
+                                                     const std::vector<Cut>& candidates) {
   std::vector<FilteredCut> results;
   results.reserve(candidates.size());
 
   const Index n = model.num_cols();
-  if (n < 0) return results; // Safety check
+  if (n < 0) return results;  // Safety check
 
   for (const Cut& c : candidates) {
     FilteredCut fc;
-    fc.cut = c; // Copy candidate (filtering never modifies coefficients or RHS)
+    fc.cut = c;  // Copy candidate (filtering never modifies coefficients or RHS)
     fc.reason = CutFilterReason::kAccepted;
 
     // 1. Finite-value check
@@ -892,7 +899,8 @@ std::vector<FilteredCut> filter_and_deduplicate_cuts(const Model& model, const S
     // Root-LP violation filter
     double lhs = 0.0;
     for (Index j = 0; j < n; ++j) {
-      lhs += c.coeff[static_cast<std::size_t>(j)] * root_solution.col_value[static_cast<std::size_t>(j)];
+      lhs += c.coeff[static_cast<std::size_t>(j)] *
+             root_solution.col_value[static_cast<std::size_t>(j)];
     }
     double violation = lhs - c.rhs;
     if (violation <= tol::kCutViolationTolerance) {
@@ -916,7 +924,7 @@ std::vector<FilteredCut> filter_and_deduplicate_cuts(const Model& model, const S
         }
       }
 
-      if (first_nonzero == -1) continue; // Should not happen for accepted cuts
+      if (first_nonzero == -1) continue;  // Should not happen for accepted cuts
 
       double A_j = accepted_c.coeff[static_cast<std::size_t>(first_nonzero)];
       double C_j = c.coeff[static_cast<std::size_t>(first_nonzero)];
@@ -943,7 +951,8 @@ std::vector<FilteredCut> filter_and_deduplicate_cuts(const Model& model, const S
       if (identical) {
         double a_rhs = c.rhs;
         double b_rhs = lambda * accepted_c.rhs;
-        if (std::abs(a_rhs - b_rhs) <= tol::kZeroDrop * std::max({1.0, std::abs(a_rhs), std::abs(b_rhs)})) {
+        if (std::abs(a_rhs - b_rhs) <=
+            tol::kZeroDrop * std::max({1.0, std::abs(a_rhs), std::abs(b_rhs)})) {
           is_duplicate = true;
           break;
         }
