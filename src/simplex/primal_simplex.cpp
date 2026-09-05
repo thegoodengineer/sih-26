@@ -224,14 +224,6 @@ class PrimalSimplex {
   /// so no round-off accumulates across pivots.
   void compute_basic_values();
 
-  /// Clean up the basic values with iterative refinement (#72). Returns the residual norm
-  /// before refinement; `after` receives the norm once it has finished.
-  double refine_basic_values(double* after);
-
-  /// The right-hand side B x_B = rhs is built from, shared by compute_basic_values() and
-  /// the refinement so the two cannot disagree about what system is being solved.
-  void build_rhs(std::vector<double>* rhs) const;
-
   [[nodiscard]] Position position_of(Index basic_slot) const;
   /// Largest single bound violation over the basic variables. THIS is the feasibility test.
   ///
@@ -345,9 +337,6 @@ class PrimalSimplex {
   /// for why it must not be seconds.
   double eta_work_since_refactor_ = 0.0;
   double refactor_work_ratio_ = 128.0;
-
-  /// Iterative refinement steps taken on the final basis (#72).
-  Count refinement_steps_ = 0;
 
   SparseLu lu_;
 
@@ -825,116 +814,17 @@ void PrimalSimplex::remove_perturbation() {
   compute_basic_values();
 }
 
-void PrimalSimplex::build_rhs(std::vector<double>* rhs) const {
+void PrimalSimplex::compute_basic_values() {
   // [A | -I][x ; s] = 0, so B x_B = -N x_N.
-  rhs->assign(static_cast<std::size_t>(m_), 0.0);
+  std::vector<double> rhs(static_cast<std::size_t>(m_), 0.0);
   for (Index k = 0; k < total_; ++k) {
     if (basis_position_[static_cast<std::size_t>(k)] >= 0) continue;
     const double value = nonbasic_value_[static_cast<std::size_t>(k)];
     if (value == 0.0) continue;
     for_each_entry(k, [&](Index row, double coefficient) {
-      (*rhs)[static_cast<std::size_t>(row)] -= coefficient * value;
+      rhs[static_cast<std::size_t>(row)] -= coefficient * value;
     });
   }
-}
-
-/// Largest number of refinement steps taken on the final basis (#72).
-///
-/// Refinement converges in two or three steps when it converges at all: each one buys back
-/// roughly the digits the factorization lost, and once the correction stops shrinking, more
-/// steps only re-solve the same system. Four is generous and bounds a pathological case.
-constexpr Count kMaxRefinementSteps = 4;
-
-/// Infinity norm of a vector.
-[[nodiscard]] double max_abs(const std::vector<double>& v) {
-  double worst = 0.0;
-  for (const double x : v) worst = std::max(worst, std::fabs(x));
-  return worst;
-}
-
-double PrimalSimplex::refine_basic_values(double* after) {
-  // ITERATIVE REFINEMENT (#72). Reference: Wilkinson, "Rounding Errors in Algebraic
-  // Processes" (1963), section on the iterative improvement of computed solutions.
-  //
-  // x_B was obtained by solving B x_B = b with factors that carry rounding error, so it
-  // solves a nearby system rather than that one. The residual r = b - B x_B measures the
-  // difference, and B dx = r solved with the SAME factors gives a correction accurate enough
-  // to recover much of what was lost - the factors need only be good enough to compute a
-  // correction, not the answer, which is why this works at all and why it is cheap.
-  //
-  // Measured on the full Netlib set, seven instances converge to a point whose objective
-  // disagrees with the published optimum past 1e-6 while being right to five or six figures:
-  // nesm at 2.6e-06, scrs8 3.4e-06, ganges 5.7e-06, 80bau3b 8.1e-06. Those are answers a few
-  // digits short, which is precisely what refinement is for.
-  //
-  // THE RESIDUAL IS ACCUMULATED WITH COMPENSATED SUMMATION (Neumaier 1974), not because the
-  // sum is long but because it is a DIFFERENCE OF NEARLY EQUAL QUANTITIES. b and B x_B agree
-  // to nearly every digit they have - that is what makes x_B a solution - so the leading
-  // digits cancel and what survives is the part that plain double addition has already
-  // thrown away. Computing r in the same precision as the thing it is correcting would leave
-  // nothing to correct with.
-  std::vector<double> rhs;
-  build_rhs(&rhs);
-
-  std::vector<double> residual(static_cast<std::size_t>(m_), 0.0);
-  std::vector<double> compensation(static_cast<std::size_t>(m_), 0.0);
-
-  const auto compute_residual = [&]() {
-    residual = rhs;
-    compensation.assign(static_cast<std::size_t>(m_), 0.0);
-    for (Index slot = 0; slot < m_; ++slot) {
-      const double x = x_basic_[static_cast<std::size_t>(slot)];
-      if (x == 0.0) continue;
-      const Index k = basis_[static_cast<std::size_t>(slot)];
-      for_each_entry(k, [&](Index row, double coefficient) {
-        const auto r = static_cast<std::size_t>(row);
-        const double term = -coefficient * x;
-        const double sum = residual[r] + term;
-        // Neumaier: the lost low-order part depends on which operand is larger.
-        compensation[r] += (std::fabs(residual[r]) >= std::fabs(term))
-                               ? (residual[r] - sum) + term
-                               : (term - sum) + residual[r];
-        residual[r] = sum;
-      });
-    }
-    for (Index i = 0; i < m_; ++i) {
-      residual[static_cast<std::size_t>(i)] += compensation[static_cast<std::size_t>(i)];
-    }
-  };
-
-  compute_residual();
-  const double before = max_abs(residual);
-  double current = before;
-
-  for (Count step = 0; step < kMaxRefinementSteps; ++step) {
-    if (current == 0.0) break;
-    std::vector<double> correction = residual;
-    lu_.solve(correction.data());
-    for (Index i = 0; i < m_; ++i) {
-      x_basic_[static_cast<std::size_t>(i)] += correction[static_cast<std::size_t>(i)];
-    }
-    ++refinement_steps_;
-
-    compute_residual();
-    const double next = max_abs(residual);
-    // STOP WHEN IT STOPS HELPING. A correction that does not shrink the residual is noise,
-    // and applying more of them walks the point around at the precision floor rather than
-    // toward anything. Half is a loose test deliberately: refinement that is working reduces
-    // the residual by orders of magnitude, so anything close to a no-op is a no-op.
-    if (next >= 0.5 * current) {
-      current = next;
-      break;
-    }
-    current = next;
-  }
-
-  *after = current;
-  return before;
-}
-
-void PrimalSimplex::compute_basic_values() {
-  std::vector<double> rhs;
-  build_rhs(&rhs);
   lu_.solve(rhs.data());
   x_basic_ = std::move(rhs);
 }
@@ -1400,22 +1290,6 @@ Solution PrimalSimplex::finish(SolveStatus status, const std::string& message, C
   // quietly, slightly wrong - which is the failure mode this codebase treats as the worst
   // one available. Restoring here, at the single choke point, means no exit can miss it.
   remove_perturbation();
-
-  // ITERATIVE REFINEMENT of the final basic values (#72), on the optimal exit only.
-  //
-  // Refining a failed solve would be worse than useless: it polishes a point that is not the
-  // answer, and the issue is explicit that refinement must not become a way to quietly meet
-  // a tolerance the factorization should have met. So it runs where the basis is claimed to
-  // be the right one, and BOTH residuals are logged whenever it changes anything - a point
-  // that only holds together after refinement is a fact worth recording, not hiding.
-  if (status == SolveStatus::kOptimal && m_ > 0) {
-    double after = 0.0;
-    const double before = refine_basic_values(&after);
-    if (refinement_steps_ > 0 && before > 0.0) {
-      logger_.info("Iterative refinement: residual {:.3e} -> {:.3e} over {} step(s)", before,
-                   after, refinement_steps_);
-    }
-  }
 
   // The ratio of refactorizations to iterations is the cheapest available read on how well
   // the basis update is holding up: a run that refactorizes on most pivots has gained
