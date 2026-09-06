@@ -411,6 +411,84 @@ def full_section(path: Path | None) -> str:
     return netlib_section(path)
 
 
+def mittelmann_section(path: Path | None) -> str:
+    """Mittelmann's LP set (#60): the scale evidence, which is a table of named failures.
+
+    No published optimum exists for these instances - Mittelmann's page publishes solver
+    TIMES - so a row cannot be a pass against a number. What the runner records instead is
+    the status inside the limit, the verifier's verdict on any solution written, and HiGHS's
+    objective as a separate process under the same limit. The point of the section is that
+    every instance beyond Netlib's size is named with the outcome it had, rather than the
+    page stopping where the solver does.
+    """
+    if path is None:
+        return chr(10).join([
+            "Not yet run at this commit. Reproduce with:",
+            "",
+            "```",
+            "python bench/runners/fetch_mittelmann.py",
+            "python bench/runners/mittelmann.py --time-limit 300",
+            "```",
+            "",
+        ])
+    rows = read_csv(path)
+    if not rows:
+        return "No Mittelmann results recorded yet." + chr(10)
+    commit = rows[0].get("git_commit", "unknown")
+    machine = rows[0].get("machine", "unknown")
+    limit = as_float(rows[0], "time_limit")
+    solved = [r for r in rows if r.get("status") == "optimal"]
+    passed = [r for r in rows if r.get("passed") == "1"]
+    highs_solved = [r for r in rows if as_float(r, "highs_objective") is not None]
+    out = [
+        f"Source CSV: `bench/results/{path.name}`  ",
+        f"Commit `{commit}` · machine `{machine}` · time limit "
+        f"{'-' if limit is None else f'{limit:g}'} s per instance, both solvers",
+        "",
+        f"**{len(solved)} of {len(rows)}** instances reached `optimal` inside the limit; "
+        f"**{len(passed)} of {len(rows)}** also passed the independent verifier and agree "
+        f"with HiGHS. HiGHS, run as a separate process under the same limit, finished "
+        f"**{len(highs_solved)} of {len(rows)}**.",
+        "",
+        "These are the smallest archives in Mittelmann's LP directory and they are still one "
+        "to two orders of magnitude beyond Netlib's largest instance. No published optimum "
+        "exists for them, so there is no pass-against-a-number column: the outcome is the "
+        "status, the verifier's verdict where a solution was written, and HiGHS's objective "
+        "where HiGHS finished. `our objective` on a `time_limit` row is the last iterate's "
+        "value, not a bound, and is printed only so that a later run can be compared with it.",
+        "",
+        "| instance | rows | cols | nonzeros | status | our objective | HiGHS objective | "
+        "rel. diff | iters | solver time (s) | verified |",
+        "|---|---:|---:|---:|---|---:|---:|---:|---:|---:|:--:|",
+    ]
+    for row in sorted(rows, key=lambda r: r["instance"]):
+        ours = as_float(row, "our_objective")
+        highs = as_float(row, "highs_objective")
+        # A relative difference to HiGHS is only meaningful for an answer; the objective
+        # on a time_limit row is the last iterate's and comparing it would print a
+        # distance nobody should read.
+        diff = as_float(row, "relative_difference") if row.get("status") == "optimal" else None
+        seconds = as_float(row, "solver_seconds")
+        verified = str(row.get("independently_verified", "")).strip()
+        mark = {"1": "yes", "0": "**NO**", "true": "yes", "false": "**NO**"}.get(verified, "-")
+        highs_cell = (f"{highs:.10g}" if highs is not None
+                      else (row.get("highs_objective") or "-").replace("|", "/"))
+        out.append(
+            f"| `{row['instance']}` | {row.get('rows', '')} | {row.get('columns', '')} "
+            f"| {row.get('nonzeros', '')} | {row.get('status', '')} "
+            f"| {'-' if ours is None else f'{ours:.10g}'} | {highs_cell} "
+            f"| {'-' if diff is None or not math.isfinite(diff) else f'{diff:.1e}'} "
+            f"| {row.get('iterations', '')} "
+            f"| {'-' if seconds is None else f'{seconds:.1f}'} | {mark} |")
+    unsolved = sorted(r["instance"] for r in rows if r.get("status") != "optimal")
+    if unsolved:
+        out += ["", "**Not solved inside the limit**, named rather than dropped: "
+                + ", ".join(f"`{n}`" for n in unsolved) + ".", ""]
+    else:
+        out += ["", "Every instance in the set finished inside the limit.", ""]
+    return chr(10).join(out)
+
+
 def milp_section(path: Path | None) -> str:
     """MIPLIB, where TWO questions have to be answered separately.
 
@@ -573,6 +651,7 @@ def main() -> int:
     medium_csv = newest("netlib-medium-*.csv")
     full_csv = newest("netlib-full-*.csv")
     milp_csv = newest("miplib-*.csv")
+    mittelmann_csv = newest("mittelmann-*.csv")
     compare_small_csv = newest("compare-highs-small-*.csv")
     compare_medium_csv = newest("compare-highs-medium-*.csv")
     compare_csv = compare_medium_csv or compare_small_csv or newest("compare-highs-*.csv")
@@ -628,6 +707,15 @@ makes them the easier half of the library by construction; this is the number Ph
 ">= 95% of Netlib" exit criterion is measured against, and the one the README quotes.
 
 {full_section(full_csv)}
+### 1d. Beyond Netlib — Mittelmann's LP set
+
+Netlib's largest instance has about 6,000 rows. PS26119 asks about "thousands to millions
+of variables", and the only honest way to say where this solver stands on that is to run
+instances of that size and name what happens. These are the eight smallest archives in
+Mittelmann's LP test set (`bench/runners/fetch_mittelmann.py`, provenance in
+`data/mittelmann/reference.json`).
+
+{mittelmann_section(mittelmann_csv)}
 ---
 
 ## 2. MIPLIB — the mixed-integer side
@@ -687,18 +775,21 @@ of Beale and Kuhn.
 
 ## 6. What these numbers do not say
 
-- **Nothing here supports a claim about large models.** The medium tier is capped at
-  instances Netlib publishes with a few hundred rows. PS26119 asks about "thousands to
-  millions of variables"; that is not demonstrated anywhere on this page, and no pass rate
-  above substitutes for it. Tracked as part of #54.
+- **Nothing here supports a claim about large models.** Section 1d is the evidence at
+  the scale PS26119's "thousands to millions of variables" means, and it is a table of
+  named time limits: the solver reaches Netlib's largest instances and stops there. No
+  pass rate above substitutes for that table. Tracked as part of #54.
 - Wall-clock times at this size are dominated by process start-up and file reading, so
   ratios between solvers are not meaningful until the instances get big enough to matter.
-  The comparison in section 3 uses solver-internal time on both sides for that reason.
+  The comparison in section 4 uses solver-internal time on both sides for that reason.
 - The failures in section 1b are real and are not going to be quietly dropped from a later
   edition of this file. Each one carries the issue tracking it.
-- The largest remaining gap is not on this page at all: there is no QP engine, no
-  interior-point method and no GPU backend, all three named in PS26119. `docs/PROVENANCE.md`
-  and issue #54 carry the full accounting.
+- Two engines named in PS26119 are not measured on this page. The interior-point method
+  (`algorithm=ipm`, #56) is opt-in and produces no basis, so it is not the engine behind any
+  table above; its own Netlib run is committed as `netlib-full-*-ipm.csv` and quoted in
+  `docs/PS26119_COVERAGE.md`, not here, because a run made with a non-default option is a
+  measurement of that option rather than the tier's evidence. There is no GPU backend on
+  `main` (#16-#19). `docs/PROVENANCE.md` and issue #54 carry the full accounting.
 """
 
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)

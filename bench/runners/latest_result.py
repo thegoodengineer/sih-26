@@ -93,6 +93,35 @@ def latest(pattern: str) -> Path | None:
     return sorted(candidates, key=rank)[0]
 
 
+def failure_reason(row: dict) -> str:
+    """Why a netlib.py row is not a pass, in the words the demo uses.
+
+    The order is the order of evidence: a status other than optimal is the solver's own
+    verdict; an optimal answer the verifier rejected is a certificate problem; an optimal,
+    verified answer that misses the published value is a disagreement with Netlib's table,
+    which on this set is a stale table more often than a wrong answer (README, "The failures
+    are worth naming").
+    """
+    status = (row.get("status") or "unknown").strip()
+    if status != "optimal":
+        return status.replace("_", " ")
+    if (row.get("independently_verified") or "").strip() in ("0", "false"):
+        return "verifier rejected the certificate"
+    return "published value differs"
+
+
+def failure_line(rows: list[dict]) -> str:
+    failed = [row for row in rows if row.get("passed") != "1"]
+    if not failed:
+        return f"0 of {len(rows)} failed"
+    groups: dict[str, list[str]] = {}
+    for row in failed:
+        groups.setdefault(failure_reason(row), []).append(row.get("instance", "?"))
+    parts = [f"{len(names)} {reason} ({', '.join(sorted(names))})"
+             for reason, names in sorted(groups.items(), key=lambda kv: -len(kv[1]))]
+    return f"{len(failed)} of {len(rows)} not passed: " + "; ".join(parts)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("pattern", help='e.g. "netlib-medium-*.csv"')
@@ -104,6 +133,12 @@ def main() -> int:
                              "MIPLIB ones do not - asking for --summary there silently "
                              "reports 0, which reads as a total failure rather than as the "
                              "wrong question.")
+    parser.add_argument("--failures", action="store_true",
+                        help="print one line naming every instance that did not pass, grouped "
+                             "by why. The demo's closing section carried this breakdown as "
+                             "hand-written prose, and it was stale within a day of every "
+                             "solver change - understating and overstating by turns. Read "
+                             "from the CSV it cannot drift.")
     args = parser.parse_args()
 
     path = latest(args.pattern)
@@ -113,7 +148,7 @@ def main() -> int:
             return 0
         return 1
 
-    if not args.summary and not args.status_counts:
+    if not args.summary and not args.status_counts and not args.failures:
         print(path)
         return 0
 
@@ -133,6 +168,9 @@ def main() -> int:
                                                             if k not in preferred)
         parts = [f"{seen[k]} {k.replace('_', ' ')}" for k in order]
         print(f"{len(rows)} instances: {', '.join(parts)}, measured on commit {commit}")
+        return 0
+    if args.failures:
+        print(failure_line(rows))
         return 0
     passed = sum(1 for row in rows if row.get("passed") == "1")
     commit = rows[0].get("git_commit", "?") if rows else "?"
