@@ -139,6 +139,17 @@ fi
 "$PYTHON" bench/runners/netlib.py --binary "$BIN" --time-limit 60 \
   ${NETLIB_OUT[@]+"${NETLIB_OUT[@]}"} || skip "Netlib benchmark" "see the output above"
 
+# ---- 3b. Robustness: where the solver stops working (#71) ----------------------------------
+rule "Robustness sweep: each numerical hazard pushed until the answer or its certificate moves"
+printf 'Every instance has an optimum known by construction; a pass needs the status, the\n'
+printf 'objective and the independent verifier. docs/BENCHMARKS.md section 5 is this table.\n\n'
+ROBUST_OUT=()
+if [ "$BUILD_TYPE" != "Release" ]; then
+  ROBUST_OUT=(--out "${TMPDIR:-/tmp}/robustness-$BUILD_TYPE-scratch.csv")
+fi
+"$PYTHON" bench/runners/robustness.py --binary "$BIN" \
+  ${ROBUST_OUT[@]+"${ROBUST_OUT[@]}"} || skip "robustness sweep" "see the output above"
+
 # ---- 4. Comparison against an established solver -------------------------------------------
 rule "Compared against HiGHS, as PS26119 requires"
 if [ "$BUILD_TYPE" != "Release" ]; then
