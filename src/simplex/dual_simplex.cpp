@@ -76,7 +76,27 @@ constexpr double kDualWeightResetThreshold = 1e6;
 /// the BTRAN of e_r) and along the entering COLUMN (from the FTRAN of a_q) beyond which the
 /// factors are not trusted for this pivot. The two are the same number computed through
 /// different solves; on faithful factors they agree to rounding.
+///
+/// 1e-8, MEASURED. pilot87 hands over on "pivot -5.304e+01 along the column against
+/// -5.304e+01 along the row on fresh factors": seven digits of agreement, on a basis whose
+/// smallest factorization pivot is 1.6e-7. Loosening this to 1e-6 to let that pivot through
+/// was tried: the dual then took it, and the bases it produced from there went singular past
+/// the repair limit in 6 s, on both the scaled and the unscaled attempt - a numerical error
+/// where the hand-over reaches a verified feasible point. The disagreement is a symptom of
+/// the basis, not of the tolerance, and the primal loop is the right place to be on it.
 constexpr double kPivotAgreement = 1e-8;
+
+/// COST PERTURBATION, the dual's analogue of the primal loop's bound perturbation. A dual
+/// degenerate vertex has many reduced costs at exactly zero, so the dual ratio test ties
+/// and the dual step is zero; dfl001 spent 1001 consecutive iterations that way and was
+/// handed to the primal, which then needed 15,000 phase-1 iterations. Each NONBASIC cost is
+/// shifted by this fraction of max(1, |c_j|), times the same deterministic per-variable
+/// factor the bound perturbation uses, in the direction that keeps its reduced cost dual
+/// feasible. Nonbasic only: y = B^-T c_B is untouched, so every other reduced cost is too.
+///
+/// 1e-6 and not kPerturbationSize's 1e-9: the shift has to exceed the dual tolerance the
+/// ratio test judges ties by (1e-7), or it changes nothing the test can see.
+constexpr double kDualCostPerturbation = 1e-6;
 
 }  // namespace
 
@@ -399,10 +419,12 @@ std::optional<Solution> Simplex::dual_loop(Timer& timer, Count* iterations_io) {
         "Dual simplex: {} at iteration {}; the primal simplex continues from this "
         "basis",
         why, iterations);
+    remove_cost_perturbation();
     remove_artificial_bounds();
     return std::nullopt;
   };
   const auto singular = [&]() {
+    remove_cost_perturbation();
     remove_artificial_bounds();
     return finish(SolveStatus::kNumericalError,
                   fmt::format("basis became singular at iteration {}", iterations), iterations,
@@ -441,6 +463,12 @@ std::optional<Solution> Simplex::dual_loop(Timer& timer, Count* iterations_io) {
       if (any_artificial_bound_active()) {
         return hand_over("optimal for the boxed problem with an artificial bound active");
       }
+      // OPTIMAL FOR THE PERTURBED COSTS IS NOT OPTIMAL, exactly as the primal loop says of
+      // its perturbed bounds. The point is primal feasible, and with the exact costs back
+      // it is a phase-2 start for the primal loop: usually a handful of pivots.
+      if (cost_perturbed_) {
+        return hand_over("optimal under cost perturbation; exact costs restored");
+      }
       remove_artificial_bounds();
       return finish(SolveStatus::kOptimal, {}, iterations, timer.elapsed_seconds());
     }
@@ -464,6 +492,7 @@ std::optional<Solution> Simplex::dual_loop(Timer& timer, Count* iterations_io) {
       if (any_artificial_bound()) {
         return hand_over("no dual ratio-test candidate while artificial bounds are in play");
       }
+      remove_cost_perturbation();
       // THE SAME CAUTION THE PRIMAL APPLIES TO ITS PHASE-1 STALL. "No candidate" is a Farkas
       // certificate in exact arithmetic; in floating point it ignores every column whose
       // pivot-row entry is below kPivotTolerance, and on a violation within a few orders of
@@ -510,6 +539,10 @@ std::optional<Solution> Simplex::dual_loop(Timer& timer, Count* iterations_io) {
     // at a few dozen iterations and reads exactly this; finish() itself only ever states a
     // bound for an optimal exit.
     const auto stop_at_limit = [&](SolveStatus status, const std::string& why) {
+      // Exact costs first: the bound below is the objective of the basic solution, and a
+      // perturbed cost vector would put a perturbation-sized error into a number that
+      // branch and bound prunes against.
+      remove_cost_perturbation();
       const bool bound_is_valid = !any_artificial_bound();
       const double bound = minimization_objective();
       remove_artificial_bounds();
@@ -571,6 +604,18 @@ std::optional<Solution> Simplex::dual_loop(Timer& timer, Count* iterations_io) {
     const double dual_step = reduced_cost_[e] / pivot_by_row;
     if (std::fabs(dual_step) <= tol::kRatioTestFeasibility) {
       ++degenerate_run;
+      // PERTURB BEFORE HANDING OVER. The primal loop is the last resort, and on dfl001 it
+      // cost 15,000 phase-1 iterations; breaking the ties costs one pass over the costs.
+      // The pivot in hand is discarded and the iteration taken again from the perturbed
+      // reduced costs, which the ratio test now sees as distinct.
+      if (!cost_perturbed_ && degenerate_run > kPerturbationTrigger) {
+        logger_.verbose(
+            "{} consecutive dual-degenerate iterations at iteration {}: perturbing costs",
+            degenerate_run, iterations);
+        perturb_costs();
+        degenerate_run = 0;
+        continue;
+      }
       if (degenerate_run > kStallLimit) {
         return hand_over(
             fmt::format("{} consecutive dual-degenerate iterations", degenerate_run));
@@ -617,6 +662,36 @@ std::optional<Solution> Simplex::dual_loop(Timer& timer, Count* iterations_io) {
   }
 }
 
+void Simplex::perturb_costs() {
+  if (cost_perturbed_) return;
+  unperturbed_cost_ = cost_;
+  for (Index k = 0; k < total_; ++k) {
+    const auto u = static_cast<std::size_t>(k);
+    if (basis_position_[u] >= 0) continue;
+    // The per-variable factor in (0.25, 1] that perturbation_for() encodes, rescaled from
+    // the bound perturbation's size to the cost one's, times the cost's own magnitude.
+    const double factor = perturbation_for(k) / kPerturbationSize;
+    const double shift = kDualCostPerturbation * factor * std::max(1.0, std::fabs(cost_[u]));
+    if (status_[u] == BasisStatus::kAtLower) {
+      cost_[u] += shift;  // d_j = c_j - a_j^T y grows: further inside dual feasibility
+    } else if (status_[u] == BasisStatus::kAtUpper) {
+      cost_[u] -= shift;  // d_j shrinks: further inside on the upper side
+    }
+    // Fixed and free nonbasic columns are left alone: a fixed one has no sign condition
+    // to protect, and a free one must keep its reduced cost at zero.
+  }
+  cost_perturbed_ = true;
+  ++cost_perturbations_;
+  compute_reduced_costs(false);
+}
+
+void Simplex::remove_cost_perturbation() {
+  if (!cost_perturbed_) return;
+  cost_ = unperturbed_cost_;
+  cost_perturbed_ = false;
+  compute_reduced_costs(false);
+}
+
 Solution Simplex::run_dual(const WarmStart* warm) {
   Timer timer;
   algorithm_name_ = "simplex-dual";
@@ -629,8 +704,10 @@ Solution Simplex::run_dual(const WarmStart* warm) {
   Count iterations = 0;
   std::optional<Solution> done = dual_loop(timer, &iterations);
   if (bound_flips_ > 0 || dual_iterations_ > 0) {
-    logger_.verbose("dual simplex: {} iterations, {} bound flips, {} weight resets",
-                    dual_iterations_, bound_flips_, dual_weight_resets_);
+    logger_.verbose(
+        "dual simplex: {} iterations, {} bound flips, {} weight resets, {} cost "
+        "perturbation(s)",
+        dual_iterations_, bound_flips_, dual_weight_resets_, cost_perturbations_);
   }
   if (done) return *done;
   algorithm_name_ = "simplex-dual+primal";
