@@ -35,7 +35,7 @@ arithmetic starts, and a negative pivot is returned as the certificate. Reportin
 optimum as a global one is the single most damaging thing this dispatcher could do, so it
 does not — see the Evidence rules in [`CLAUDE.md`](CLAUDE.md).
 
-Benchmark results against Netlib, headline first: **77 of 89** on the full set — matched to
+Benchmark results against Netlib, headline first: **79 of 89** on the full set — matched to
 the published optimum to a relative 1e-6 *and* passed independent verification — measured
 on `main` at `adcee1b` (`bench/results/netlib-full-adcee1b.csv`). The narrower tiers read
 higher (**48 of 50** on the medium tier, **9 of 9** on the small set the demo runs) because
@@ -44,7 +44,7 @@ set is the number Phase 6's ">= 95% of Netlib" criterion is measured against, so
 one quoted here. See [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md), generated from the CSVs in
 `bench/results/` so it cannot drift.
 
-The 12 failures are worth naming, and most of them are not wrong answers. Every one that
+The 10 failures are worth naming, and most of them are not wrong answers. Every one that
 produces an answer was cross-checked against **HiGHS**, a mature third-party solver run as a
 separate process, by `bench/runners/cross_check_highs.py`
 (`bench/results/cross-check-highs-adcee1b.csv`):
@@ -52,20 +52,26 @@ separate process, by `bench/runners/cross_check_highs.py`
 | what it is | count | instances |
 |---|---|---|
 | our answer verifies as optimal and agrees with HiGHS; Netlib's published table is the outlier (`e226` by its objective constant, the rest by up to 1.3e-03) | **7** | `80bau3b`, `e226`, `ganges`, `greenbea`, `greenbeb`, `nesm`, `scrs8` |
-| ran out of time at 120 s in the benchmark run; `fit2p` finished inside the cross-check's own 120 s and agrees with HiGHS to 5.6e-11, the other two have only a last iterate to show | **3** | `dfl001`, `fit2p`, `pilot87` |
+| ran out of time at 120 s; the last iterate is not an answer and is not compared | **1** | `dfl001` |
 | the answer agrees with HiGHS to 3.0e-07 and verifies; our own dual-feasibility check downgrades the status to `feasible`, and Netlib's table is off by 1.5e-04 | **1** | `pilot` |
 | the solver declined to answer: its phase-1 ratio test found no blocking variable and it reported a numerical error rather than a claim it could not stand behind | **1** | `maros-r7` |
 
 So: **on every Netlib instance where this solver produces a final answer, that answer agrees
-with HiGHS.** What remains is speed on three instances, our own status reporting on one, and
-one instance without an answer.
+with HiGHS.** What remains is speed on one instance, our own status reporting on one, and one
+instance without an answer.
 
-The machine state is part of the evidence, so it is stated: that run was made with the
-laptop on battery. On the 84 instances whose iteration counts were identical to the run of
-the same solver source at the tip of #169 (`bench/results/netlib-full-59ac6e3.csv`, **79 of
-89**), solver time was 2.2x longer on battery, and that alone is what moved `fit2p` (optimal
-in 50 s on AC) and `pilot87` (55 s) across the limit. Iteration counts, the answers and the
-verifier's verdicts are identical between the two runs; only the clock differs.
+The machine's speed state is part of the evidence, so it is stated. The same solver source
+was run three times on the same laptop: at the tip of #169 on a cool machine
+(`bench/results/netlib-full-59ac6e3.csv`, 79 of 89), on `main` on battery (77 of 89, kept
+beside the run logs, not committed), and on `main` on AC after six hours of continuous
+benchmarking (the committed CSV, 79 of 89). On the 85 instances whose iteration counts are
+identical across the runs, the committed run's solver time is 1.48x the cool machine's,
+with the CPU reporting 71-97% of its maximum frequency while it ran; the battery run was
+slower still. Iteration counts, answers and the verifier's verdicts do not move between
+the runs. What moves is which side of the 120 s limit `fit2p` (102.7 s here, 50 s cool,
+over the limit on battery) and `pilot87` (56.0 s here) land on, so the pass count on this
+laptop is 77 or 79 depending on its temperature and power source, and the table above is
+the AC run.
 
 This mattered because our own verifier could not settle it — it re-derives the answer from
 the same file we read, so agreeing with it shows only that our two readers agree, and both
@@ -86,7 +92,7 @@ That is a better class of problem to have, and a different roadmap: speed on the
 largest instances rather than robustness. Tracked in #34.
 
 MIPLIB 2017 is benchmarked too: **13 of 30** easy instances reach the published optimum,
-**6 of 30** also prove it (`bench/results/miplib-adcee1b.csv`, 60 s, the same battery run) —
+**6 of 30** also prove it (`bench/results/miplib-adcee1b.csv`, 60 s, the same AC run) —
 branch and bound now has reliability branching and warm-started node LPs, but no cutting
 planes (#23), so it finds good incumbents far more often than it closes the bound. For
 scale beyond what Netlib tests, `bench/runners/generate_large_lp.py` builds sparse LPs of
@@ -207,7 +213,7 @@ tracks every PS26119 requirement against what exists on `main`; section 6 of
 | not implemented | note |
 |---|---|
 | **GPU acceleration** | The first-order method it needs exists and runs on CPU. The CUDA backend is unwritten (#16-#19); `--gpu` warns and falls back. No speed-up is claimed. |
-| **Scale** | The largest Netlib instance solved is `fit2d`, 25x10500 with 129018 nonzeros, in 1.4 s; the slowest solved is `d2q06c`, 2171x5167, at 43.1 s; `dfl001` (6071x12230), `fit2p` and `pilot87` hit the 120 s limit (`bench/results/netlib-full-adcee1b.csv`). On Mittelmann's eight smallest LPs, 14,646 to 376,500 rows, the result is 0 of 8 inside 300 s (`bench/results/mittelmann-ca64dd5.csv`). A generated 5000x5000 instance is also demonstrated against an optimum known by construction. Nothing here supports the *"millions of variables"* end of the problem statement; the Mittelmann table is where that claim would have to start. |
+| **Scale** | The largest Netlib instance solved is `fit2d`, 25x10500 with 129018 nonzeros, in 0.4 s; the slowest solved is `fit2p`, 3000x13525, at 102.7 s; `dfl001` (6071x12230) hits the 120 s limit (`bench/results/netlib-full-adcee1b.csv`). On Mittelmann's eight smallest LPs, 14,646 to 376,500 rows, the result is 0 of 8 inside 300 s (`docs/BENCHMARKS.md` section 1d). A generated 5000x5000 instance is also demonstrated against an optimum known by construction. Nothing here supports the *"millions of variables"* end of the problem statement; the Mittelmann table is where that claim would have to start. |
 | **Interior point as a default** | An interior-point method exists (#56, `--option algorithm=ipm`, Mehrotra predictor-corrector over a from-scratch sparse LDL^T) and is opt-in: it produces no basis, so it cannot warm-start branch and bound and cannot certify infeasibility, and on the full Netlib set it verifies fewer instances than the dual simplex (`docs/PS26119_COVERAGE.md`). The default continuous engine is the simplex. |
 | **Cutting planes** | Branch and bound has reliability branching (pseudocosts with strong branching, #69) and warm-started dual node LPs (#65), but no Gomory, MIR or cover cuts (#23). This is why MIPLIB proves few optima. |
 | **Non-convex QP** | Refused deliberately, with an LDL^T certificate. A local optimum reported as a global one is not something this solver will do. |
