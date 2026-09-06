@@ -324,21 +324,30 @@ void Solution::recompute_quality(const Model& model) {
     // PRODUCT |multiplier| * slack - continuous in the slack, so a rounding-width
     // displacement costs a rounding-width amount and not the whole price.
     //
-    // The product is judged relative to |multiplier| * scale, where scale is the numerical
-    // scale of the primal quantity: that reduces to "relative slack" for a multiplier of
-    // any size and to nothing for a vanishing one, which is what complementarity means.
+    // The product is judged relative to the numerical scale of BOTH its factors: the
+    // multiplier's - column_scale for a reduced cost, the dual norm for a row price, the
+    // same denominators the sign conditions use - times the primal quantity's. An earlier
+    // version divided by |multiplier| * primal scale, which for any multiplier smaller than
+    // one over the primal scale is the absolute product against 1e-7: an absolute test in
+    // objective units, stricter than the verifier's own 1e-6 by a decade. It held while
+    // postsolve left the engine's exact 0.0 on basic columns; once every reduced cost is
+    // recomputed as c - A^T y (#157) a basic column carries a rounding residue of 1e-10
+    // from terms of order 1e+02..1e+04, times an interior value of a few hundred: greenbea
+    // 1.2e-7, pilot 3.4e-7, both downgraded to `feasible` on points the verifier accepts.
+    // A residue that is zero at the precision of its terms must count as zero here too.
     const auto nearest_bound_distance = [](double value, double lo, double hi) {
       double distance = kInfinity;
       if (is_finite_bound(lo)) distance = std::min(distance, std::fabs(value - lo));
       if (is_finite_bound(hi)) distance = std::min(distance, std::fabs(value - hi));
       return distance;
     };
-    const auto record_complementarity = [&](double multiplier, double slack, double scale) {
+    const auto record_complementarity = [&](double multiplier, double slack,
+                                            double multiplier_scale, double primal_scale) {
       if (multiplier == 0.0 || !is_finite_bound(slack)) return;
       const double product = multiplier * slack;
       complementarity_violation = std::max(complementarity_violation, product);
-      dual_infeasibility_scaled =
-          std::max(dual_infeasibility_scaled, product / std::max(1.0, multiplier * scale));
+      dual_infeasibility_scaled = std::max(
+          dual_infeasibility_scaled, product / std::max(1.0, multiplier_scale * primal_scale));
     };
     // THE REPORTED DUALS MUST AGREE WITH EACH OTHER. col_dual is supposed to be
     // c - A^T row_dual; nothing below can tell if it is not, because every test takes both
@@ -382,7 +391,7 @@ void Solution::recompute_quality(const Model& model) {
       // Sign: a positive reduced cost prices the lower bound, a negative one the upper.
       if (d > 0.0 && !is_finite_bound(lo)) record_dual(d, scale);
       if (d < 0.0 && !is_finite_bound(hi)) record_dual(-d, scale);
-      record_complementarity(std::fabs(d), nearest_bound_distance(x, lo, hi),
+      record_complementarity(std::fabs(d), nearest_bound_distance(x, lo, hi), scale,
                              std::max(1.0, std::fabs(x)));
     }
 
@@ -402,7 +411,8 @@ void Solution::recompute_quality(const Model& model) {
       const double price_scale = std::max(1.0, dual_norm);
       if (y > 0.0 && !is_finite_bound(lo)) record_dual(y, price_scale);
       if (y < 0.0 && !is_finite_bound(hi)) record_dual(-y, price_scale);
-      record_complementarity(std::fabs(y), nearest_bound_distance(a, lo, hi), row_scale[u]);
+      record_complementarity(std::fabs(y), nearest_bound_distance(a, lo, hi), price_scale,
+                             row_scale[u]);
     }
   }
 
