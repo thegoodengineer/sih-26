@@ -55,6 +55,10 @@ constexpr int kStallLimit = 20 * tol::kBlandSwitchIterations;
 constexpr Count kMaxBasisRepairs = 8;
 
 constexpr double kPerturbationSize = 1e-9;
+
+/// Refinement steps on the final basis (#72). Each is two triangular solves; the residual
+/// usually drops by the factor's condition margin per step and stops improving by the third.
+constexpr int kMaxRefinementSteps = 3;
 constexpr int kPerturbationTrigger = kStallLimit / 2;
 
 /// Deterministic per-variable shift in (0, kPerturbationSize].
@@ -234,6 +238,22 @@ class Simplex {
 
   /// Put the true bounds back. Called before optimality can be reported.
   void remove_perturbation();
+
+  /// ITERATIVE REFINEMENT OF THE FINAL BASIS (#72). Wilkinson, "Rounding Errors in
+  /// Algebraic Processes" (1963), ch. 4; the residual is accumulated with the error-free
+  /// transformations of Ogita, Rump & Oishi, "Accurate sum and dot product", SIAM J. Sci.
+  /// Comput. 26 (2005), so it is correct to roughly double working precision, which is what
+  /// makes a refinement step recover digits rather than reshuffle them.
+  ///
+  /// Both systems, from the same factors: the primal B x_B = -N x_N and the dual
+  /// B^T y = c_B. Refining one without the other produces a point whose reduced costs no
+  /// longer describe it - the primal-only version of this regressed ganges. Stops when the
+  /// residual stops shrinking or after kMaxRefinementSteps; never changes a status. Fills
+  /// refinement_steps_ and the two residuals for the log and the stats JSON.
+  void refine_final_basis();
+  Count refinement_steps_ = 0;
+  double residual_before_refinement_ = 0.0;
+  double residual_after_refinement_ = 0.0;
 
   /// x_B = B^{-1} (-N x_N). Recomputed from the bounds every iteration rather than updated,
   /// so no round-off accumulates across pivots.
