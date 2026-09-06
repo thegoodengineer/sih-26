@@ -503,23 +503,32 @@ std::optional<Solution> Simplex::dual_loop(Timer& timer, Count* iterations_io) {
     const double x_now = x_basic_[static_cast<std::size_t>(leaving_slot)];
     const double target = to_upper ? upper_[l] : lower_[l];
     const double residual = to_upper ? x_now - target : target - x_now;
+    // A LIMIT EXIT STILL CARRIES A BOUND. The basis is dual feasible at every iteration of
+    // this loop, so the objective of its (primal infeasible) basic solution is the dual
+    // objective: a valid bound on the LP optimum - as long as no artificial bound is in
+    // play, since those bound a different problem. Strong branching (#69) caps its probes
+    // at a few dozen iterations and reads exactly this; finish() itself only ever states a
+    // bound for an optimal exit.
+    const auto stop_at_limit = [&](SolveStatus status, const std::string& why) {
+      const bool bound_is_valid = !any_artificial_bound();
+      const double bound = minimization_objective();
+      remove_artificial_bounds();
+      compute_reduced_costs(false);
+      Solution stopped = finish(status, why, iterations, timer.elapsed_seconds());
+      if (bound_is_valid) stopped.dual_bound = bound;
+      return stopped;
+    };
     const auto count_iteration = [&]() -> std::optional<Solution> {
       ++iterations;
       ++dual_iterations_;
       if (iteration_limit_ >= 0 && iterations >= iteration_limit_) {
-        remove_artificial_bounds();
-        compute_reduced_costs(false);
-        return finish(SolveStatus::kIterationLimit,
-                      fmt::format("iteration limit {} reached", iteration_limit_), iterations,
-                      timer.elapsed_seconds());
+        return stop_at_limit(SolveStatus::kIterationLimit,
+                             fmt::format("iteration limit {} reached", iteration_limit_));
       }
       const double elapsed = timer.elapsed_seconds();
       if (elapsed > time_limit_) {
-        remove_artificial_bounds();
-        compute_reduced_costs(false);
-        return finish(SolveStatus::kTimeLimit,
-                      fmt::format("time limit {:g}s reached", time_limit_), iterations,
-                      elapsed);
+        return stop_at_limit(SolveStatus::kTimeLimit,
+                             fmt::format("time limit {:g}s reached", time_limit_));
       }
       return std::nullopt;
     };

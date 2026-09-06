@@ -122,6 +122,16 @@ const std::vector<OptionSpec>& Options::registry() {
                  0.0,
                  0.0,
                  {"auto", "simplex", "dual-simplex", "pdhg", "ipm"}});
+    s.push_back({"mip_branching",
+                 OptionType::String,
+                 std::string("reliability"),
+                 "Branching rule: reliability (default; #69 - pseudocosts once a column has "
+                 "been branched on kPseudocostReliability times in a direction, strong "
+                 "branching with capped warm-started dual solves until then, product "
+                 "score) or most-fractional (the rule this replaced, kept for comparison).",
+                 0.0,
+                 0.0,
+                 {"reliability", "most-fractional"}});
     s.push_back({"mip_node_engine",
                  OptionType::String,
                  std::string("dual"),
