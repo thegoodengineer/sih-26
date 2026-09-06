@@ -576,9 +576,10 @@ Result presolve(const Model& model, const Options& options, Logger& logger) {
         // A column ALREADY the subject of a kSingletonRow reduction (its bound tightened or
         // fully explained by that row) cannot enter a doubleton either, in either role - see
         // singleton_row_touched's field comment for why: two rows would then be contending
-        // over the same column's stationarity, and postsolve processes kSingletonRow duals in
-        // a pass that runs unconditionally before this doubleton's own, with no way to revise
-        // a price it already fixed.
+        // over the same column's stationarity, and postsolve's dual passes decide each row
+        // from its own record with one unknown at a time; they run to a fixed point (#157),
+        // which propagates a price between records but cannot solve two rows' prices for one
+        // column jointly.
         if (work.singleton_row_touched[ue] || work.singleton_row_touched[uk]) continue;
 
         const double rhs = work.row_lower[r];  // == work.row_upper[r], within `feasibility`
@@ -1193,6 +1194,12 @@ Solution postsolve(const Result& result, const Model& original, const Solution& 
 
   const auto process_singleton_row = [&](const Record& it) {
     const auto c = static_cast<std::size_t>(it.column);
+    // This row's own placeholder is restored first. The dual passes below run to a fixed
+    // point (#157), and on a repeat pass reduced_cost_of(it.column) would otherwise include
+    // the price this very record set last time, pricing the row against itself. On the
+    // first pass both are already the placeholder and this changes nothing.
+    solution.row_dual[static_cast<std::size_t>(it.index)] = 0.0;
+    solution.row_status[static_cast<std::size_t>(it.index)] = BasisStatus::kBasic;
     const double x = solution.col_value[c];
     const double lo = original.col_lower[c];
     const double hi = original.col_upper[c];
@@ -1290,203 +1297,347 @@ Solution postsolve(const Result& result, const Model& original, const Solution& 
     dual_finalized[c] = true;
   };
 
-  std::vector<const Record*> deferred_singleton_rows;
-  for (auto it = result.records.rbegin(); it != result.records.rend(); ++it) {
-    if (it->kind != Record::Kind::kSingletonRow) continue;
-    if (std::fabs(it->coefficient) <= tol::kZeroDrop) continue;
-    if (depends_on_unresolved_fold(it->column)) {
-      deferred_singleton_rows.push_back(&*it);
-      continue;
-    }
-    process_singleton_row(*it);
-  }
-
-  // kFreeColumnSingleton and kDoubletonEquation duals.
+  // THE DUAL PASSES RUN TO A FIXED POINT (#157). Three stages follow: the singleton rows
+  // in reverse record order, then the free-column-singleton and doubleton folds in reverse
+  // record order, then the singleton rows whose column touches a folded row it never
+  // received the fold of (deferred, see depends_on_unresolved_fold). Every stage prices a
+  // row from the duals known at that moment, and a row priced in a LATER stage can change
+  // the reduced cost of a column priced in an earlier one.
   //
-  // A free-column-singleton's column is UNBOUNDED on both sides by definition, so it is
-  // always interior at the optimum and its reduced cost must be EXACTLY zero - that alone
-  // pins the row's dual from stationarity. A doubleton's eliminated column carries its own
-  // real bounds, though, and can legitimately end up sitting AT one of them (the very first
-  // fuzzed instance to combine a doubleton with a resulting singleton row did exactly this),
-  // in which case zero is not what its reduced cost has to be - only SIGN-admissible, exactly
-  // the question kSingletonRow above already answers for its own column. So both kinds share
-  // that same logic here rather than assuming the zero case unconditionally: price the row
-  // only if the column's natural reduced cost (row's own dual still the placeholder 0, via
-  // row_is_folded) is not already admissible for whichever bound it is at - and because this
-  // row is always an EQUALITY, the price it would need has no sign restriction to fail: it is
-  // adopted outright once we have decided a price is needed at all.
-  for (std::size_t idx = result.records.size(); idx-- > 0;) {
-    const Record& record = result.records[idx];
-    if (record.kind != Record::Kind::kFreeColumnSingleton &&
-        record.kind != Record::Kind::kDoubletonEquation) {
-      continue;
+  // ganges: CONT4701 (= 160) pins X4701, which also has a -1 in CONT4601. CONT4601 became
+  // a singleton row only after X4701 and X4801 were fixed, and its own column sits in the
+  // doubleton row CONT4501, so its record is deferred past the folds. CONT4701's record
+  // is not - neither of X4701's rows is folded - and is priced in the first stage with
+  // CONT4601 still at the placeholder 0: d = 0, declined. CONT4601 is then priced at
+  // -0.714 in the deferred stage, and X4701, interior, ends with d = -0.714. Twelve
+  // columns of that shape on ganges, and the same story on perold, pilot, greenbea and
+  // greenbeb: the point right, the certificate rejected.
+  //
+  // Records depend only on records replayed before them in reverse order - a row removed
+  // BEFORE a column was fixed either had that column as its only entry (then it is the
+  // fixing row itself), or folded its cost into the column (then reduced_cost_of skips
+  // it), or was redundant (dual 0) - so the dependency graph is acyclic, and repeating the
+  // three stages is a Gauss-Seidel iteration that reaches the exact fixed point in as
+  // many passes as the graph is deep, with identical arithmetic on every pass after that
+  // (so the change test below hits exactly zero; it is not a tolerance race). Each pass
+  // re-decides from scratch: dual_finalized is cleared, and every priced row restores its
+  // own placeholder before pricing itself again, so no row is priced against its own
+  // previous price. Pass 1 is the old behaviour exactly; the passes after it are what
+  // fixes the five instances above. Bounded, because a bug in the acyclicity argument
+  // must show up as a wrong certificate and not as a hang.
+  constexpr int kMaxDualPasses = 8;
+  std::vector<const Record*> deferred_singleton_rows;
+  for (int pass = 0; pass < kMaxDualPasses; ++pass) {
+    const std::vector<double> row_dual_before = solution.row_dual;
+    std::fill(dual_finalized.begin(), dual_finalized.end(), false);
+    deferred_singleton_rows.clear();
+
+    for (auto it = result.records.rbegin(); it != result.records.rend(); ++it) {
+      if (it->kind != Record::Kind::kSingletonRow) continue;
+      if (std::fabs(it->coefficient) <= tol::kZeroDrop) continue;
+      if (depends_on_unresolved_fold(it->column)) {
+        deferred_singleton_rows.push_back(&*it);
+        continue;
+      }
+      process_singleton_row(*it);
     }
-    if (std::fabs(record.coefficient) <= tol::kZeroDrop) continue;
-    const auto c = static_cast<std::size_t>(record.column);
 
-    // Doubleton, unless `keep` was already priced by something else entirely (a kSingletonRow
-    // from fill-in turning keep's OTHER row into one - see dual_finalized's declaration).
+    // kFreeColumnSingleton and kDoubletonEquation duals.
     //
-    // THE IDENTITY THIS RELIES ON. reduced_cost_of(elim) and reduced_cost_of(keep) both fold
-    // in every OTHER live row each column touches - an untouched original row, or one fill-in
-    // gave it, effective_coefficient and extra_rows_for_column make no difference between the
-    // two. That is a pure change of variables (substituting elim = (rhs - b*keep)/a into
-    // every row it used to touch), so it does NOT introduce a second unknown: it can be shown
-    // algebraically that reduced_cost_of(keep), computed this way, is EXACTLY d_keep evaluated
-    // at Y = y_from_elim = reduced_cost_of(elim)/a - the same Y that would zero elim's own
-    // reduced cost, regardless of whether elim actually NEEDS to be zero there. That gives the
-    // general formula
-    //     d_elim(Y) = reduced_cost_of(elim) - a*Y
-    //     d_keep(Y) = reduced_cost_of(keep) - b*(Y - y_from_elim)
-    // valid whether or not keep has any other row at all (when it has none, reduced_cost_of
-    // (keep) is just adjusted_cost[keep] and y_from_elim collapses to the old eliminated_cost
-    // / a "baseline" - the same formula, just written generally).
-    //
-    // A version of this that anchored keep's formula on eliminated_cost/a UNCONDITIONALLY,
-    // and skipped touching keep's dual whenever it had another row on the theory that
-    // reduced_cost_of(keep) was already final, passed every hand-written test but failed a
-    // fuzzed instance where `elim` sat AT its own bound (not interior) while `keep` - reached
-    // only through fill-in - was genuinely interior: the row's price was decided from elim
-    // alone, correctly admissible for elim, while leaving keep's already-computed (but
-    // WRONGLY anchored) reduced cost nonzero. y_from_elim, not eliminated_cost/a, is the
-    // correct anchor whenever elim itself has other rows of its own - and using it costs
-    // nothing in the simpler case, since the two coincide there.
-    //
-    // UNLIKE A FREE-COLUMN-SINGLETON, THE ELIMINATED COLUMN IS NOT ASSUMED FREE: it keeps its
-    // own real bounds, so it - not just the partner - can independently force this row's
-    // dual. `min x + 2y s.t. x + y = 4, x,y >= 0` is the minimal case: y sits at its own bound
-    // with an admissible sign no matter what the row's dual is, so a check that only asked
-    // about y concluded no price was needed - but x is INTERIOR (x = 4), which requires its
-    // reduced cost to be EXACTLY zero regardless of y, and that pins the row's dual to a
-    // specific value y could never have asked for on its own.
-    //
-    // An interior column pins Y outright (its d must be exactly 0); at a bound it only
-    // constrains Y's SIGN. Interior beats at-a-bound as the thing that decides Y, because
-    // "exactly zero" leaves no freedom to also satisfy a sign constraint from Y = 0 the way an
-    // already-admissible at-bound column does.
-    if (record.kind == Record::Kind::kDoubletonEquation &&
-        !dual_finalized[static_cast<std::size_t>(record.partner_column)]) {
-      const auto pc = static_cast<std::size_t>(record.partner_column);
-      const double a = record.coefficient;
-      const double b = record.partner_coefficient;
+    // A free-column-singleton's column is UNBOUNDED on both sides by definition, so it is
+    // always interior at the optimum and its reduced cost must be EXACTLY zero - that alone
+    // pins the row's dual from stationarity. A doubleton's eliminated column carries its own
+    // real bounds, though, and can legitimately end up sitting AT one of them (the very first
+    // fuzzed instance to combine a doubleton with a resulting singleton row did exactly this),
+    // in which case zero is not what its reduced cost has to be - only SIGN-admissible, exactly
+    // the question kSingletonRow above already answers for its own column. So both kinds share
+    // that same logic here rather than assuming the zero case unconditionally: price the row
+    // only if the column's natural reduced cost (row's own dual still the placeholder 0, via
+    // row_is_folded) is not already admissible for whichever bound it is at - and because this
+    // row is always an EQUALITY, the price it would need has no sign restriction to fail: it is
+    // adopted outright once we have decided a price is needed at all.
+    for (std::size_t idx = result.records.size(); idx-- > 0;) {
+      const Record& record = result.records[idx];
+      if (record.kind != Record::Kind::kFreeColumnSingleton &&
+          record.kind != Record::Kind::kDoubletonEquation) {
+        continue;
+      }
+      if (std::fabs(record.coefficient) <= tol::kZeroDrop) continue;
+      // Restore this row's placeholder before pricing it again. reduced_cost_of() excludes a
+      // folded row only for the columns that received its cost fold, and the eliminated
+      // column is not one of them - so on a repeat pass its reduced cost would include the
+      // price this record itself set last time, and the row would be priced against its
+      // own price. Zeroing it first makes each pass recompute the row from the OTHER rows'
+      // current duals, which is the Gauss-Seidel step this loop is repeated for. On the
+      // first pass it is already zero and this changes nothing.
+      solution.row_dual[static_cast<std::size_t>(record.index)] = 0.0;
+      const auto c = static_cast<std::size_t>(record.column);
 
-      const auto status_of = [&](Index column) {
-        const auto u = static_cast<std::size_t>(column);
-        const double v = solution.col_value[u];
-        const double clo = original.col_lower[u];
-        const double chi = original.col_upper[u];
-        const bool at_lo = finite(clo) && std::fabs(v - clo) <= tol::kPrimalFeasibility;
-        const bool at_hi = finite(chi) && std::fabs(v - chi) <= tol::kPrimalFeasibility;
-        return std::pair<bool, bool>(at_lo, at_hi);
-      };
-      const auto [elim_at_lo, elim_at_hi] = status_of(record.column);
-      const auto [keep_at_lo, keep_at_hi] = status_of(record.partner_column);
-      const bool elim_interior = !elim_at_lo && !elim_at_hi;
-      const bool keep_interior = !keep_at_lo && !keep_at_hi;
+      // Doubleton, unless `keep` was already priced by something else entirely (a kSingletonRow
+      // from fill-in turning keep's OTHER row into one - see dual_finalized's declaration).
+      //
+      // THE IDENTITY THIS RELIES ON. reduced_cost_of(elim) and reduced_cost_of(keep) both fold
+      // in every OTHER live row each column touches - an untouched original row, or one fill-in
+      // gave it, effective_coefficient and extra_rows_for_column make no difference between the
+      // two. That is a pure change of variables (substituting elim = (rhs - b*keep)/a into
+      // every row it used to touch), so it does NOT introduce a second unknown: it can be shown
+      // algebraically that reduced_cost_of(keep), computed this way, is EXACTLY d_keep
+      // evaluated at Y = y_from_elim = reduced_cost_of(elim)/a - the same Y that would zero
+      // elim's own reduced cost, regardless of whether elim actually NEEDS to be zero there.
+      // That gives the general formula
+      //     d_elim(Y) = reduced_cost_of(elim) - a*Y
+      //     d_keep(Y) = reduced_cost_of(keep) - b*(Y - y_from_elim)
+      // valid whether or not keep has any other row at all (when it has none, reduced_cost_of
+      // (keep) is just adjusted_cost[keep] and y_from_elim collapses to the old eliminated_cost
+      // / a "baseline" - the same formula, just written generally).
+      //
+      // A version of this that anchored keep's formula on eliminated_cost/a UNCONDITIONALLY,
+      // and skipped touching keep's dual whenever it had another row on the theory that
+      // reduced_cost_of(keep) was already final, passed every hand-written test but failed a
+      // fuzzed instance where `elim` sat AT its own bound (not interior) while `keep` - reached
+      // only through fill-in - was genuinely interior: the row's price was decided from elim
+      // alone, correctly admissible for elim, while leaving keep's already-computed (but
+      // WRONGLY anchored) reduced cost nonzero. y_from_elim, not eliminated_cost/a, is the
+      // correct anchor whenever elim itself has other rows of its own - and using it costs
+      // nothing in the simpler case, since the two coincide there.
+      //
+      // UNLIKE A FREE-COLUMN-SINGLETON, THE ELIMINATED COLUMN IS NOT ASSUMED FREE: it keeps its
+      // own real bounds, so it - not just the partner - can independently force this row's
+      // dual. `min x + 2y s.t. x + y = 4, x,y >= 0` is the minimal case: y sits at its own
+      // bound with an admissible sign no matter what the row's dual is, so a check that only
+      // asked about y concluded no price was needed - but x is INTERIOR (x = 4), which requires
+      // its reduced cost to be EXACTLY zero regardless of y, and that pins the row's dual to a
+      // specific value y could never have asked for on its own.
+      //
+      // An interior column pins Y outright (its d must be exactly 0); at a bound it only
+      // constrains Y's SIGN. Interior beats at-a-bound as the thing that decides Y, because
+      // "exactly zero" leaves no freedom to also satisfy a sign constraint from Y = 0 the way
+      // an already-admissible at-bound column does.
+      if (record.kind == Record::Kind::kDoubletonEquation &&
+          !dual_finalized[static_cast<std::size_t>(record.partner_column)]) {
+        const auto pc = static_cast<std::size_t>(record.partner_column);
+        const double a = record.coefficient;
+        const double b = record.partner_coefficient;
 
-      const double rco_elim = reduced_cost_of(record.column);
-      const double rco_keep = reduced_cost_of(record.partner_column);
-      // Y that forces d_elim(Y) = 0, and Y that forces d_keep(Y) = 0 respectively. rco_keep
-      // is anchored at Y = y_from_elim (see the derivation above), not at eliminated_cost/a.
-      const double y_from_elim = rco_elim / a;
-      const double y_from_keep = y_from_elim + rco_keep / b;
+        const auto status_of = [&](Index column) {
+          const auto u = static_cast<std::size_t>(column);
+          const double v = solution.col_value[u];
+          const double clo = original.col_lower[u];
+          const double chi = original.col_upper[u];
+          const bool at_lo = finite(clo) && std::fabs(v - clo) <= tol::kPrimalFeasibility;
+          const bool at_hi = finite(chi) && std::fabs(v - chi) <= tol::kPrimalFeasibility;
+          return std::pair<bool, bool>(at_lo, at_hi);
+        };
+        const auto [elim_at_lo, elim_at_hi] = status_of(record.column);
+        const auto [keep_at_lo, keep_at_hi] = status_of(record.partner_column);
+        const bool elim_interior = !elim_at_lo && !elim_at_hi;
+        const bool keep_interior = !keep_at_lo && !keep_at_hi;
 
-      // Admissibility of a candidate Y for whichever column is only AT a bound (never
-      // called when that column is interior - interior always pins Y directly instead).
-      const auto admissible_at_bound = [&](double d, bool at_lo, bool at_hi) {
-        const double signed_d = sense * d;
-        if (at_lo && !at_hi) return signed_d >= -tol::kDualFeasibility;
-        if (at_hi && !at_lo) return signed_d <= tol::kDualFeasibility;
-        return true;  // fixed (both) or free (neither, but that is the interior case)
-      };
+        const double rco_elim = reduced_cost_of(record.column);
+        const double rco_keep = reduced_cost_of(record.partner_column);
+        // Y that forces d_elim(Y) = 0, and Y that forces d_keep(Y) = 0 respectively. rco_keep
+        // is anchored at Y = y_from_elim (see the derivation above), not at eliminated_cost/a.
+        const double y_from_elim = rco_elim / a;
+        const double y_from_keep = y_from_elim + rco_keep / b;
 
-      double y = 0.0;
-      if (elim_interior) {
-        // x_elim pins Y outright; keep's admissibility at this Y follows from strong
-        // duality at a genuinely optimal point; it is not an internal DOF this row still
-        // has - checking is nonetheless the truthful move.
-        y = y_from_elim;
-      } else if (keep_interior) {
-        y = y_from_keep;
-      } else if (admissible_at_bound(rco_elim, elim_at_lo, elim_at_hi) &&
-                 admissible_at_bound(rco_keep + b * y_from_elim, keep_at_lo, keep_at_hi)) {
-        // Neither column needs this row's help at all - genuinely redundant, like a
-        // kRedundantRow, and complementary slackness forbids inventing a price for it. Both
-        // sides are evaluated at the SAME candidate, Y = 0: d_elim(0) = rco_elim directly,
-        // and d_keep(0) = rco_keep - b*(0 - y_from_elim) = rco_keep + b*y_from_elim.
-        y = 0.0;
-      } else if (!admissible_at_bound(rco_elim, elim_at_lo, elim_at_hi)) {
-        y = y_from_elim;  // elim's natural sign was wrong; fix it exactly
-      } else {
-        y = y_from_keep;  // keep's natural sign was wrong instead
+        // Admissibility of a candidate Y for whichever column is only AT a bound (never
+        // called when that column is interior - interior always pins Y directly instead).
+        const auto admissible_at_bound = [&](double d, bool at_lo, bool at_hi) {
+          const double signed_d = sense * d;
+          if (at_lo && !at_hi) return signed_d >= -tol::kDualFeasibility;
+          if (at_hi && !at_lo) return signed_d <= tol::kDualFeasibility;
+          return true;  // fixed (both) or free (neither, but that is the interior case)
+        };
+
+        double y = 0.0;
+        if (elim_interior) {
+          // x_elim pins Y outright; keep's admissibility at this Y follows from strong
+          // duality at a genuinely optimal point; it is not an internal DOF this row still
+          // has - checking is nonetheless the truthful move.
+          y = y_from_elim;
+        } else if (keep_interior) {
+          y = y_from_keep;
+        } else {
+          // BOTH COLUMNS AT A BOUND: Y HAS TO SATISFY BOTH SIGN CONDITIONS AT ONCE (#157).
+          //
+          // The previous logic fixed one column's sign exactly and never re-checked the
+          // other. On Netlib recipe, row BN44..BE eliminates JN43MXBE against JN43TGBE with
+          // both ending at their lower bounds; the Y that zeroed one column's reduced cost
+          // pushed the other's to -4.000e-03, an improving direction the simplex was never
+          // shown. The point was optimal - HiGHS agrees to 1e-10 - and the reported duals
+          // were not, by exactly 4e-3 times the column's range of 20: a strong-duality gap of
+          // 8e-2 that only the verifier could see.
+          //
+          // Each at-bound column gives a HALF-LINE of admissible Y, because its reduced cost
+          // is affine in Y:  d_elim(Y) = rco_elim - a*Y  and  d_keep(Y) = rco_keep - b*(Y -
+          // y_from_elim). The intersection is an interval; any point in it is a valid price
+          // for this row. Zero is preferred when it lies inside - complementary slackness
+          // says an equality row that needs no price should carry none - and otherwise the
+          // nearest endpoint, which is the smallest price that makes both signs admissible.
+          // A fixed column (both bounds) constrains nothing. An empty interval means the
+          // point is not dual feasible for any Y - which cannot happen at a true optimum -
+          // and the old choice is kept so the answer is at least no worse than before.
+          double y_min = -kInfinity;
+          double y_max = kInfinity;
+          // Constrain Y by the requirement on sense * d(Y), where d(Y) = r - g * (Y - anchor).
+          const auto constrain = [&](double r, double g, double anchor, bool at_lo,
+                                     bool at_hi) {
+            if (at_lo == at_hi) return;   // fixed (both) or free (neither): no sign condition
+            const double k = -sense * g;  // coefficient of Y in sense * d(Y)
+            const double c0 = sense * (r + g * anchor);  // constant term
+            if (std::fabs(k) <= tol::kZeroDrop) return;
+            if (at_lo) {  // need k*Y + c0 >= 0, exactly: the tolerance is for judging, not for
+                          // choosing, and choosing at the tolerance edge parks the reduced cost
+                          // exactly where rounding tips it over
+              const double bound = -c0 / k;
+              if (k > 0.0)
+                y_min = std::max(y_min, bound);
+              else
+                y_max = std::min(y_max, bound);
+            } else {  // at_hi: need k*Y + c0 <= 0, exactly
+              const double bound = -c0 / k;
+              if (k > 0.0)
+                y_max = std::min(y_max, bound);
+              else
+                y_min = std::max(y_min, bound);
+            }
+          };
+          constrain(rco_elim, a, 0.0, elim_at_lo, elim_at_hi);
+          constrain(rco_keep, b, y_from_elim, keep_at_lo, keep_at_hi);
+          if (y_min <= y_max + tol::kDualFeasibility) {
+            y = std::min(std::max(0.0, y_min), y_max);
+          } else if (!admissible_at_bound(rco_elim, elim_at_lo, elim_at_hi)) {
+            y = y_from_elim;
+          } else {
+            y = y_from_keep;
+          }
+        }
+
+        solution.row_dual[static_cast<std::size_t>(record.index)] = y;
+        solution.row_status[static_cast<std::size_t>(record.index)] = BasisStatus::kBasic;
+        solution.col_dual[pc] = rco_keep - b * (y - y_from_elim);
+        solution.col_status[pc] = BasisStatus::kBasic;
+        dual_finalized[pc] = true;
+        solution.col_dual[c] = rco_elim - a * y;
+        dual_finalized[c] = true;
+        continue;
       }
 
-      solution.row_dual[static_cast<std::size_t>(record.index)] = y;
+      const double x = solution.col_value[c];
+      const double lo = original.col_lower[c];
+      const double hi = original.col_upper[c];
+      const bool at_lower = finite(lo) && std::fabs(x - lo) <= tol::kPrimalFeasibility;
+      const bool at_upper = finite(hi) && std::fabs(x - hi) <= tol::kPrimalFeasibility;
+
+      const double d = reduced_cost_of(record.column);
+      const double signed_d = sense * d;
+      const bool needs_price = (!at_lower && !at_upper) ||
+                               (at_lower && !at_upper && signed_d < -tol::kDualFeasibility) ||
+                               (at_upper && !at_lower && signed_d > tol::kDualFeasibility);
+      if (!needs_price) {
+        // Already admissible without this row's help - it really is redundant, exactly like a
+        // kRedundantRow, and complementary slackness forbids inventing a price for it anyway.
+        solution.row_dual[static_cast<std::size_t>(record.index)] = 0.0;
+        solution.row_status[static_cast<std::size_t>(record.index)] = BasisStatus::kBasic;
+        solution.col_dual[c] = d;
+        dual_finalized[c] = true;
+        continue;
+      }
+
+      solution.row_dual[static_cast<std::size_t>(record.index)] = d / record.coefficient;
       solution.row_status[static_cast<std::size_t>(record.index)] = BasisStatus::kBasic;
-      solution.col_dual[pc] = rco_keep - b * (y - y_from_elim);
-      solution.col_status[pc] = BasisStatus::kBasic;
-      dual_finalized[pc] = true;
-      solution.col_dual[c] = rco_elim - a * y;
+      solution.col_status[c] = BasisStatus::kBasic;
+      // The price was chosen precisely to cancel this column's reduced cost, so set it to
+      // exactly zero rather than leaving a rounded residue for the verifier to trip over.
+      solution.col_dual[c] = 0.0;
       dual_finalized[c] = true;
-      continue;
     }
 
-    const double x = solution.col_value[c];
-    const double lo = original.col_lower[c];
-    const double hi = original.col_upper[c];
-    const bool at_lower = finite(lo) && std::fabs(x - lo) <= tol::kPrimalFeasibility;
-    const bool at_upper = finite(hi) && std::fabs(x - hi) <= tol::kPrimalFeasibility;
+    // The kSingletonRow records deferred above, now that every folded row above has a REAL
+    // dual instead of the zero placeholder - process_singleton_row's reduced_cost_of call
+    // reads exactly the same solution.row_dual it always did, but the entries that matter for
+    // these deferred columns are no longer placeholders.
 
-    const double d = reduced_cost_of(record.column);
-    const double signed_d = sense * d;
-    const bool needs_price = (!at_lower && !at_upper) ||
-                             (at_lower && !at_upper && signed_d < -tol::kDualFeasibility) ||
-                             (at_upper && !at_lower && signed_d > tol::kDualFeasibility);
-    if (!needs_price) {
-      // Already admissible without this row's help - it really is redundant, exactly like a
-      // kRedundantRow, and complementary slackness forbids inventing a price for it anyway.
-      solution.row_dual[static_cast<std::size_t>(record.index)] = 0.0;
-      solution.row_status[static_cast<std::size_t>(record.index)] = BasisStatus::kBasic;
-      solution.col_dual[c] = d;
-      dual_finalized[c] = true;
-      continue;
+    for (const Record* rec : deferred_singleton_rows) {
+      process_singleton_row(*rec);
     }
 
-    solution.row_dual[static_cast<std::size_t>(record.index)] = d / record.coefficient;
-    solution.row_status[static_cast<std::size_t>(record.index)] = BasisStatus::kBasic;
-    solution.col_status[c] = BasisStatus::kBasic;
-    // The price was chosen precisely to cancel this column's reduced cost, so set it to
-    // exactly zero rather than leaving a rounded residue for the verifier to trip over.
-    solution.col_dual[c] = 0.0;
-    dual_finalized[c] = true;
+    double largest_change = 0.0;
+    for (std::size_t r = 0; r < solution.row_dual.size(); ++r) {
+      largest_change =
+          std::max(largest_change, std::fabs(solution.row_dual[r] - row_dual_before[r]));
+    }
+    if (largest_change == 0.0) break;
   }
 
-  // The kSingletonRow records deferred above, now that every folded row above has a REAL
-  // dual instead of the zero placeholder - process_singleton_row's reduced_cost_of call
-  // reads exactly the same solution.row_dual it always did, but the entries that matter for
-  // these deferred columns are no longer placeholders.
-  for (const Record* rec : deferred_singleton_rows) {
-    process_singleton_row(*rec);
-  }
-
-  // Reduced costs for the REMOVED columns only. The surviving columns keep what the engine
-  // reported, and that is deliberate.
+  // THE REDUCED COSTS ARE RECOMPUTED FROM THE FINAL ROW DUALS, ALL OF THEM (#157), AND
+  // BEFORE THE QUALITY IS MEASURED. An earlier version ran this after recompute_quality():
+  // the dispatcher's status guard then judged reduced costs this pass had already replaced,
+  // downgraded perold, greenbea and greenbeb to `feasible` for a dual violation of 0.71,
+  // and wrote a .sol file the independent verifier passed. The solver was refusing to
+  // certify an answer over numbers that no longer existed.
   //
-  // Recomputing them all looks tidier and is subtly worse. A removed row contributes nothing
-  // (its dual is zero), and a priced singleton row has exactly one entry, so it can only
-  // touch its own column - which means a survivor's reduced cost is already correct and
-  // recomputing merely re-derives it through different floating-point operations. On capri
-  // that turned an exact 0.0 on a FREE column into -1.1e-16, and the verifier's
-  // complementary-slackness product |d| * slack, with slack infinite on a free column,
-  // evaluated to inf. A correct answer, rejected, because we had rounded a zero.
-  for (const Record& record : result.records) {
-    if (record.kind != Record::Kind::kFixedColumn &&
-        record.kind != Record::Kind::kEmptyColumn) {
-      continue;
+  // This pass replaced one that recomputed the REMOVED columns only, on the grounds that
+  // a survivor's reduced cost was already right and recomputing it through different
+  // floating-point operations turned an exact 0.0 on a free column of capri into -1.1e-16,
+  // which the verifier's |d| * slack product, with slack infinite, evaluated to inf. That
+  // pass was too narrow - a survivor sharing a row postsolve priced has a reduced cost the
+  // engine never saw - and its instinct was right; see the selection below.
+  //
+  // Everything above sets col_dual as records are replayed, in reverse order, and several
+  // of those replays price a column with reduced_cost_of() at a moment when some row it
+  // touches still carries the placeholder dual of 0 - the free-column-singleton and
+  // doubleton rows are only priced in the passes that follow. A column whose record ran
+  // before those passes keeps a reduced cost computed against a row dual that later
+  // changed. On ganges the reported d disagrees with c - A^T y by 0.71; on perold by 0.71,
+  // greenbeb by 6.4. The point is right on every one - HiGHS agrees to 1e-10 - and the
+  // certificate handed out with it is not, which is the exact failure class postsolve is
+  // dangerous for.
+  //
+  // d = c - A^T y is not one property of the answer among several; it is the definition of
+  // d. So once every row dual is final, every column's reduced cost that presolve could
+  // have changed is set from it. A column the passes above priced correctly is unchanged
+  // by this; a column they priced against a stale row dual is corrected; and if a ROW dual
+  // is itself wrong, that now shows up as a sign violation on the columns it prices -
+  // which the status check and the verifier both test - instead of hiding behind a
+  // reduced cost that agreed with nothing.
+  //
+  // NOT EVERY COLUMN, THOUGH. A survivor that presolve never touched keeps the engine's
+  // reduced cost, and the reason is the one the removed-columns-only pass gave: the
+  // engine's 0.0 on a basic column is exact by construction, and recomputing it through
+  // terms of order 1e+07 replaces that fact with a rounding residue. grow22 on the CI gate:
+  // XI1408, basic and interior by 1.3e+05, recomputed to -4.6e-11, and the verifier's
+  // complementarity product |d| * slack read 6.1e-06 against an absolute 1e-06. A column
+  // is recomputed when presolve could have changed the quantity: it was removed; or it has
+  // an original entry in a folded row (its cost was adjusted and its coefficients filled
+  // in, so the engine priced a different column, and that holds even when the folded row's
+  // final price is zero, because the fold also moved the eliminated column's own reduced
+  // cost into the survivor); or it has an original entry in any removed row that ended with
+  // a nonzero price, which the engine never saw.
+  std::vector<bool> recompute(static_cast<std::size_t>(original.num_cols()), false);
+  for (std::size_t u = 0; u < recompute.size(); ++u) {
+    recompute[u] = column_removed_at[u] < result.records.size();
+  }
+  ensure_original_rows();
+  for (Index i = 0; i < original.num_rows(); ++i) {
+    const auto u = static_cast<std::size_t>(i);
+    const bool removed = row_removed_at[u] < result.records.size();
+    if (!removed) continue;
+    if (!row_is_folded[u] && solution.row_dual[u] == 0.0) continue;
+    const ColumnView row_view = original_rows.row(i);  // `rows` holds COLUMN indices here
+    for (Index k = 0; k < row_view.size; ++k) {
+      recompute[static_cast<std::size_t>(row_view.rows[k])] = true;
     }
-    const auto idx = static_cast<std::size_t>(record.index);
-    if (dual_finalized[idx]) continue;  // already correctly priced above; see the note there
-    solution.col_dual[idx] = reduced_cost_of(record.index);
+  }
+  for (Index j = 0; j < original.num_cols(); ++j) {
+    const auto u = static_cast<std::size_t>(j);
+    if (!recompute[u]) continue;
+    double d = original.col_cost[u];
+    const ColumnView view = original.matrix.column(j);
+    for (Index k = 0; k < view.size; ++k) {
+      d -= view.values[k] * solution.row_dual[static_cast<std::size_t>(view.rows[k])];
+    }
+    solution.col_dual[u] = d;
   }
 
   // Activities, the objective and every quality measure are recomputed against the ORIGINAL
@@ -1500,6 +1651,7 @@ Solution postsolve(const Result& result, const Model& original, const Solution& 
   // original problem's units.
   solution.dual_bound = reduced.dual_bound;
   solution.recompute_quality(original);
+
   return solution;
 }
 

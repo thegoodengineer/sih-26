@@ -187,6 +187,79 @@ def test_known_bad_solution_is_rejected() -> None:
           f"{report.failures} check(s) failed, as expected")
 
 
+def _one_row_lp(cost, lower, upper, row_lower, row_upper, entries) -> "vs.Model":
+    """A one-row LP with columns x0, x1, ... and row r0."""
+    model = vs.Model()
+    model.name = "ACCOUNTING"
+    model.col_names = [f"x{j}" for j in range(len(cost))]
+    model.col_index = {name: j for j, name in enumerate(model.col_names)}
+    model.col_cost = list(cost)
+    model.col_lower = list(lower)
+    model.col_upper = list(upper)
+    model.col_integer = [False] * len(cost)
+    model.row_names = ["r0"]
+    model.row_index = {"r0": 0}
+    model.row_lower = [row_lower]
+    model.row_upper = [row_upper]
+    model.entries = [[(0, a)] for a in entries]
+    return model
+
+
+def _certificate(model, x, d, y) -> "vs.Solution":
+    solution = vs.Solution()
+    activity = sum(entries[0][1] * v for entries, v in zip(model.entries, x))
+    solution.header = {"status": "optimal",
+                       "objective": repr(sum(c * v for c, v in zip(model.col_cost, x)))}
+    solution.col_value = dict(zip(model.col_names, x))
+    solution.col_dual = dict(zip(model.col_names, d))
+    solution.row_activity = {"r0": activity}
+    solution.row_dual = {"r0": y}
+    return solution
+
+
+def _strong_duality(report):
+    """The (ok, name, detail) record of the strong-duality check."""
+    return next(line for line in report.lines if line[1] == "strong duality")
+
+
+def test_strong_duality_still_rejects_a_reduced_cost_pricing_the_wrong_bound() -> None:
+    """Netlib recipe (#157) at unit scale. x0 + x1 = 0 with both columns in [0, 20] forces
+    both to their lower bounds, so the point is optimal for any costs; with costs (1, 2)
+    the row price must satisfy y <= 1. y = 1.004 gives d0 = -0.004: a column at its LOWER
+    bound with a reduced cost that prices the UPPER bound, 20 away. The sign check passes
+    (both bounds exist), complementarity passes (nearest slack 0), consistency passes (d
+    is exactly c - A^T y). Only strong duality sees the 0.08, and the accounting must not
+    explain it away: a multiplier above the tolerance explains its share of the gap only
+    up to the nearest slack, which is zero."""
+    model = _one_row_lp(cost=[1.0, 2.0], lower=[0.0, 0.0], upper=[20.0, 20.0],
+                        row_lower=0.0, row_upper=0.0, entries=[1.0, 1.0])
+    solution = _certificate(model, x=[0.0, 0.0], d=[1.0 - 1.004, 2.0 - 1.004], y=1.004)
+    report = vs.verify(model, solution, vs.DEFAULT_PRIMAL_TOL, vs.DEFAULT_DUAL_TOL,
+                       vs.DEFAULT_INTEGER_TOL, vs.DEFAULT_DUALITY_TOL)
+    ok, _, detail = _strong_duality(report)
+    check(report.failures == 1 and not ok,
+          "a wrong-bound reduced cost fails strong duality and nothing else", detail)
+
+
+def test_strong_duality_accepts_a_gap_made_of_accepted_per_item_violations() -> None:
+    """Netlib etamacro at unit scale. min x0 - 5e-8 x1 s.t. x0 + x1 >= 40, x0 in [0, 20],
+    x1 in [40, 100]. The certificate x = (0, 40), y = 0, d = c is exactly consistent, and
+    d1 = -5e-8 is half the dual tolerance: the sign check accepts it (both bounds exist)
+    and complementarity is 0 (x1 sits at a bound). The true optimum is x1 = 100, better by
+    3e-6 - which is what a reduced cost the dual tolerance calls zero, on a range of 60,
+    can hide. The old aggregate test rejected this at a relative gap of 2e-6 against 1e-9,
+    tighter than the per-item tolerance that had just accepted the cause. The gap is now
+    accounted for by that accepted item."""
+    model = _one_row_lp(cost=[1.0, -5e-8], lower=[0.0, 40.0], upper=[20.0, 100.0],
+                        row_lower=40.0, row_upper=vs.INF, entries=[1.0, 1.0])
+    solution = _certificate(model, x=[0.0, 40.0], d=[1.0, -5e-8], y=0.0)
+    report = vs.verify(model, solution, vs.DEFAULT_PRIMAL_TOL, vs.DEFAULT_DUAL_TOL,
+                       vs.DEFAULT_INTEGER_TOL, vs.DEFAULT_DUALITY_TOL)
+    check(report.failures == 0, "accepted per-item violations account for the gap",
+          "; ".join(f"{name}: {detail}" for ok, name, detail in report.lines if not ok)
+          or _strong_duality(report)[2])
+
+
 QPS_WITH_OFF_DIAGONAL = """NAME          QCONV
 ROWS
  N  COST
@@ -365,6 +438,8 @@ def main() -> int:
     test_sol_reader_recovers_quoted_names()
     print("test_known_bad_solution_is_rejected")
     test_known_bad_solution_is_rejected()
+    test_strong_duality_still_rejects_a_reduced_cost_pricing_the_wrong_bound()
+    test_strong_duality_accepts_a_gap_made_of_accepted_per_item_violations()
     print("test_qps_convention_is_read_as_qps_means_it")
     test_qps_convention_is_read_as_qps_means_it()
     print("test_qp_optimum_verifies_and_a_wrong_one_does_not")
