@@ -815,6 +815,7 @@ TEST(PrimalSimplex, AnInterruptedSolveClaimsNoBound) {
   Options options;
   options.set_bool("log_to_console", false);
   options.set_int("iteration_limit", 1);
+  options.set_string("algorithm", "simplex");
   const Solution solution = solve(model, options);
 
   ASSERT_EQ(solution.status, SolveStatus::kIterationLimit);
@@ -822,6 +823,17 @@ TEST(PrimalSimplex, AnInterruptedSolveClaimsNoBound) {
   EXPECT_TRUE(std::isinf(solution.dual_bound));
   EXPECT_GT(solution.dual_bound, 0.0);
   EXPECT_NE(solution.dual_bound, solution.objective);
+
+  // THE DUAL SIMPLEX IS THE EXCEPTION, and a principled one: its basis is dual feasible at
+  // every iteration, so the objective of the (primal infeasible) basic solution it stops
+  // at IS a bound on the optimum - what strong branching (#69) reads from a capped probe.
+  // The optimum here is 36 at (2, 6); a bound above it is a claim, a bound below it would
+  // be a wrong one.
+  options.set_string("algorithm", "dual-simplex");
+  const Solution interrupted_dual = solve(model, options);
+  ASSERT_EQ(interrupted_dual.status, SolveStatus::kIterationLimit) << interrupted_dual.message;
+  EXPECT_TRUE(std::isfinite(interrupted_dual.dual_bound));
+  EXPECT_GE(interrupted_dual.dual_bound, 36.0 - 1e-9);
 }
 
 // =========================================================================================
