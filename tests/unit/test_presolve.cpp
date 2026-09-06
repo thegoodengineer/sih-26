@@ -278,6 +278,57 @@ TEST(Presolve, FixedColumnSharingAFoldedDoubletonRowStillPricesCorrectly) {
   expect_agrees_with_unpresolved(model);
 }
 
+TEST(Presolve, SingletonRowChainEndingInADoubletonPricesEveryLink) {
+  // Netlib ganges at unit scale (#157). Two singleton rows fix x0 and x1; that turns the
+  // balance row x2 - x0 - x1 = 0 into a singleton row that fixes x2; and THAT turns
+  // x3 + x4 - x2 = 0 into a doubleton equation x3 + x4 = 320, which presolve folds. A
+  // fifth row keeps x4 and x5 in the reduced model so the engine has something to solve.
+  //
+  //   min x3 + 2*x4 - x5
+  //   s.t.  x0 = 160,  x1 = 160,  x2 - x0 - x1 = 0,  x3 + x4 - x2 = 0,  x4 + x5 <= 500
+  //         x0..x4 >= 0,  x5 in [0, 100]
+  //
+  // Optimum: x0 = x1 = 160, x2 = 320, x3 = 320, x4 = 0, x5 = 100, objective 220. Every
+  // row is an equality except the last, which is slack, so its price is 0 and the chain
+  // of equalities must carry the doubleton's price of 1 all the way back: x3 interior
+  // pins y3 = 1, x2 interior pins y2 = 1, x0 and x1 interior pin y0 = y1 = 1.
+  //
+  // Postsolve replays the records in reverse, and x2's singleton row is DEFERRED past the
+  // doubleton fold because x2 was already gone when the fold fired. x0's record is not
+  // deferred - neither of its rows is folded - so it was priced first, with x2's row still
+  // at the placeholder 0: reduced cost 0, no price needed. x2's row was then priced at 1,
+  // and x0, interior at 160, ended with a reduced cost of 1: complementarity 160, and the
+  // verifier rejected the certificate on twelve columns of this shape. The dual passes
+  // now run to a fixed point, so the deferred price reaches the records that read it.
+  const Model model =
+      make_lp({{1.0, 0.0, 0.0, 0.0, 0.0, 0.0},
+               {0.0, 1.0, 0.0, 0.0, 0.0, 0.0},
+               {-1.0, -1.0, 1.0, 0.0, 0.0, 0.0},
+               {0.0, 0.0, -1.0, 1.0, 1.0, 0.0},
+               {0.0, 0.0, 0.0, 0.0, 1.0, 1.0}},
+              {160.0, 160.0, 0.0, 0.0, -kInfinity}, {160.0, 160.0, 0.0, 0.0, 500.0},
+              {0.0, 0.0, 0.0, 1.0, 2.0, -1.0}, {0.0, 0.0, 0.0, 0.0, 0.0, 0.0},
+              {kInfinity, kInfinity, kInfinity, kInfinity, kInfinity, 100.0});
+  const Solution on = solve(model, with_presolve(true));
+  ASSERT_EQ(on.status, SolveStatus::kOptimal) << on.message;
+  EXPECT_NEAR(on.objective, 220.0, 1e-9);
+  EXPECT_NEAR(on.col_value[0], 160.0, 1e-9);
+  EXPECT_NEAR(on.col_value[2], 320.0, 1e-9);
+  EXPECT_NEAR(on.col_value[3], 320.0, 1e-9);
+  // The interior columns must have a reduced cost of exactly zero - not "admissible sign",
+  // zero - and the equality chain must carry the price.
+  for (std::size_t j = 0; j < 4; ++j) {
+    EXPECT_NEAR(on.col_dual[j], 0.0, 1e-9) << "column " << j;
+  }
+  for (std::size_t i = 0; i < 4; ++i) {
+    EXPECT_NEAR(on.row_dual[i], 1.0, 1e-9) << "row " << i;
+  }
+  EXPECT_NEAR(on.row_dual[4], 0.0, 1e-9) << "the slack row carries no price";
+  EXPECT_LE(on.complementarity_violation, 1e-9) << on.message;
+  EXPECT_LE(on.dual_infeasibility_scaled, tol::kDualFeasibility) << on.message;
+  expect_agrees_with_unpresolved(model);
+}
+
 TEST(Presolve, LeavesAModelWithNothingToRemoveAlone) {
   // Nothing here is empty, fixed, singleton or redundant, so presolve must be a no-op. A
   // reduction that fires when it should not is how a correct model becomes a wrong answer.
