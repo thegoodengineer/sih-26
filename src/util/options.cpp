@@ -87,6 +87,16 @@ const std::vector<OptionSpec>& Options::registry() {
                  0.0,
                  kNoLimit,
                  {}});
+    s.push_back({"refactor_work_ratio",
+                 OptionType::Double,
+                 128.0,
+                 "Simplex refactorizes once the eta-file nonzeros summed over iterations since "
+                 "the last refactorization exceed this multiple of the base factor size. "
+                 "Deterministic; calibrated from measurements on Netlib d2q06c and greenbea "
+                 "(#68). 0 refactorizes every iteration.",
+                 0.0,
+                 kNoLimit,
+                 {}});
     s.push_back({"iteration_limit",
                  OptionType::Int,
                  std::int64_t{-1},

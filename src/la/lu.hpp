@@ -134,6 +134,11 @@ class SparseLu {
     return static_cast<Index>(eta_start_.size()) - 1;
   }
 
+  /// Nonzeros in the eta file: the extra work every solve does on top of the base factors.
+  [[nodiscard]] Index eta_nonzeros() const noexcept {
+    return static_cast<Index>(eta_rows_.size());
+  }
+
   /// True when the accumulated updates have grown enough that refactorizing is cheaper, or
   /// enough that drift is a concern. Checked by the simplex once per iteration.
   [[nodiscard]] bool should_refactorize() const noexcept;

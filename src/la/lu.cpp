@@ -73,11 +73,12 @@ constexpr double kUpdatePivotThreshold = 1e-7;
 
 /// Refactorize once the eta file reaches this many updates, whatever its size. Bounds the
 /// worst-case drift by bounding how long any single factorization is trusted.
-constexpr Index kMaxEtaCount = 64;
-
-/// Refactorize when the eta file has grown to this multiple of the factors it sits on top
-/// of. Past that point the updates cost more per solve than a fresh factorization would.
-constexpr double kMaxEtaFillRatio = 2.0;
+///
+/// Measured (#68): 128 passes every correctness gate - 320 unit tests and the rational
+/// oracle at 0 mismatches - while a sweep to 512 made d2q06c fail outright, so the ceiling
+/// is real and this sits well inside it. The time-based break-even in the simplex normally
+/// fires first; this is the backstop for a model whose solves are so cheap that it does not.
+constexpr Index kMaxEtaCount = 128;
 
 }  // namespace
 
@@ -242,11 +243,11 @@ bool SparseLu::update(Index leaving_position, const double* alpha) {
 }
 
 bool SparseLu::should_refactorize() const noexcept {
-  const Index etas = eta_count();
-  if (etas >= kMaxEtaCount) return true;
-  const auto eta_nonzeros = static_cast<double>(eta_rows_.size());
-  const double base = std::max(1.0, static_cast<double>(base_nonzeros_));
-  return eta_nonzeros > kMaxEtaFillRatio * base;
+  // Only the drift bound remains here. The fill-ratio rule that used to sit beside it was
+  // replaced by the simplex's measured break-even (see primal_simplex.cpp): a fill ratio
+  // assumes a fixed relationship between eta size and eta cost that no single constant
+  // captured across instances.
+  return eta_count() >= kMaxEtaCount;
 }
 
 bool SparseLu::eliminate(Workspace& w, double pivot_tolerance, double threshold) {

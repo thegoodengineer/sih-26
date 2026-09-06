@@ -44,8 +44,10 @@
 #include "primal_simplex.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <iterator>
 #include <limits>
 #include <string>
@@ -60,6 +62,7 @@
 #include "../la/scaling.hpp"
 
 namespace sankhya {
+
 namespace {
 
 /// Consecutive zero-length steps tolerated before the solve is declared stalled. Twenty
@@ -199,6 +202,10 @@ class PrimalSimplex {
   /// Rebuild and refactorize the basis matrix from scratch. Returns false when singular.
   [[nodiscard]] bool refactorize();
 
+  /// Whether the direction the ratio test called unbounded is a genuine ray of the feasible
+  /// region: [A | -I] d must vanish. Returns the worst residual relative to its terms.
+  [[nodiscard]] double unbounded_ray_residual(Index entering, int direction) const;
+
   /// Replace the linearly dependent basis columns with logicals, making the basis
   /// nonsingular by construction. Returns false when the defect cannot be located.
   [[nodiscard]] bool repair_basis();
@@ -321,6 +328,15 @@ class PrimalSimplex {
   /// Number of basis columns swapped for logicals to escape a singular basis (#34).
   Count repaired_columns_ = 0;
   Count repairs_ = 0;
+
+  /// ADAPTIVE REFACTORIZATION (#68, redirected). Eta-file nonzeros summed over every
+  /// iteration since the last refactorization: a deterministic proxy for the extra solve
+  /// work the updates have cost. The simplex refactorizes when it exceeds
+  /// refactor_work_ratio_ times the size of the base factors - the break-even between "keep
+  /// updating" and "start fresh", in operation counts rather than seconds. See the trigger
+  /// for why it must not be seconds.
+  double eta_work_since_refactor_ = 0.0;
+  double refactor_work_ratio_ = 128.0;
 
   SparseLu lu_;
 
@@ -600,7 +616,38 @@ bool PrimalSimplex::repair_basis() {
   return true;
 }
 
+double PrimalSimplex::unbounded_ray_residual(Index entering, int direction) const {
+  // THE CERTIFICATE BEHIND AN UNBOUNDED CLAIM. The ratio test found no blocking variable,
+  // which means the direction d - entering variable moving by `direction`, every basic
+  // variable moving by -direction * alpha - can be followed forever. That is only true if d
+  // is a ray of the feasible region, i.e. [A | -I] d = 0. alpha was computed as B^-1 a_q and
+  // on an ill-conditioned basis it can be wrong in every entry at once; the ratio test has
+  // no way to know, but the residual of the ray does. It costs one pass over the basic
+  // columns, and it is the difference between "unbounded" and "I could not tell".
+  std::vector<double> residual(static_cast<std::size_t>(m_), 0.0);
+  double scale = 0.0;
+  const auto accumulate = [&](Index k, double step) {
+    if (step == 0.0) return;
+    for_each_entry(k, [&](Index row, double coefficient) {
+      const double term = coefficient * step;
+      residual[static_cast<std::size_t>(row)] += term;
+      scale = std::max(scale, std::fabs(term));
+    });
+  };
+  accumulate(entering, static_cast<double>(direction));
+  for (Index slot = 0; slot < m_; ++slot) {
+    accumulate(basis_[static_cast<std::size_t>(slot)],
+               -static_cast<double>(direction) * alpha_[static_cast<std::size_t>(slot)]);
+  }
+  double worst = 0.0;
+  for (const double r : residual) worst = std::max(worst, std::fabs(r));
+  return worst / std::max(1.0, scale);
+}
+
 bool PrimalSimplex::refactorize() {
+  // Reset at entry rather than at the successful return, so every exit path - the ladder,
+  // a repair, a failure - leaves the counter consistent with whatever factors are in use.
+  eta_work_since_refactor_ = 0.0;
   // Phase 2 materialised a dense m x m array here and threw it away again on every pivot:
   // O(m^2) of memory traffic and O(m^3) of arithmetic to factorize a matrix that is better
   // than 99% structural zeros at any realistic size. Nothing is materialised now. A
@@ -642,9 +689,16 @@ bool PrimalSimplex::refactorize() {
   static constexpr double kThresholdLadder[] = {tol::kMarkowitzThreshold, 0.1, 0.5, 1.0};
   for (std::size_t attempt = 0; attempt < std::size(kThresholdLadder); ++attempt) {
     if (lu_.factorize(basis_columns_, m_, tol::kPivotTolerance, kThresholdLadder[attempt])) {
-      // Latches: a model that produced one ill-conditioned basis will produce more, and
-      // assignment would clear this on the next basis that happened to factorize cleanly.
-      if (attempt > 0) basis_needed_stricter_threshold_ = true;
+      // PER FACTORIZATION, NOT A LATCH. This used to latch true for the rest of the solve,
+      // which disabled the basis update permanently and made every later iteration
+      // refactorize from scratch: measured on modszk1, 109,827 refactorizations in 80
+      // seconds, ~1,400 iterations per second against ~6,000 with the update allowed. The
+      // latch was containment for a degenerate pivot-path divergence on d6cube "until"
+      // anti-degeneracy machinery existed; perturbation (#136) and the Harris ratio test
+      // (#137) now do. What the flag still legitimately means is "THIS basis is poorly
+      // conditioned, do not update on top of it" - a property of the factorization in hand,
+      // so each one sets it for itself.
+      basis_needed_stricter_threshold_ = attempt > 0;
       if (attempt > 0 && !warned_about_threshold_) {
         warned_about_threshold_ = true;
         logger_.warning(
@@ -1322,6 +1376,7 @@ Solution PrimalSimplex::run() {
   Timer timer;
   primal_tolerance_ = options_.get_double("primal_feasibility_tolerance");
   dual_tolerance_ = options_.get_double("dual_feasibility_tolerance");
+  refactor_work_ratio_ = options_.get_double("refactor_work_ratio");
   if (!(primal_tolerance_ > 0.0)) primal_tolerance_ = tol::kPrimalFeasibility;
   if (!(dual_tolerance_ > 0.0)) dual_tolerance_ = tol::kDualFeasibility;
 
@@ -1523,13 +1578,59 @@ Solution PrimalSimplex::run() {
       }
     }
 
-    const RatioResult ratio = ratio_test(entering, direction, phase_one);
+    RatioResult ratio = ratio_test(entering, direction, phase_one);
+
+    // A CATASTROPHIC CLAIM IS CHECKED AGAINST FRESH FACTORS BEFORE IT IS MADE. "No blocking
+    // variable" is the ratio test saying the entering column can move forever: unbounded in
+    // phase 2, and in phase 1 an impossibility, since that objective is bounded below by
+    // zero. Both are statements about alpha = B^-1 a_q, and alpha computed through an eta
+    // file on a poorly conditioned basis can be wrong in exactly the way that produces them
+    // - every entry that should block reads as zero or the wrong sign. Measured on maros-r7:
+    // with an eta file in play the solver reported UNBOUNDED on a model whose optimum is
+    // published, where a fresh factorization at the same iteration does not. That is the
+    // worst answer this solver can give, and it costs one refactorization to make sure.
+    //
+    // So: if the claim was reached through updates, refactorize, recompute alpha from the
+    // fresh factors, and run the ratio test again. Only a claim that survives fresh factors
+    // is made. A claim that does not survive was the eta file talking, and the iteration
+    // simply continues with the corrected alpha.
+    if (ratio.unbounded && lu_.eta_count() > 0) {
+      if (!refactorize()) {
+        return finish(SolveStatus::kNumericalError,
+                      fmt::format("basis became singular at iteration {}", iterations),
+                      iterations, timer.elapsed_seconds());
+      }
+      ++refactorizations_;
+      ftran_entering_column(entering);
+      ratio = ratio_test(entering, direction, phase_one);
+      if (!ratio.unbounded) {
+        logger_.verbose(
+            "iteration {}: no blocking variable through the eta file, but one "
+            "exists under fresh factors; continuing",
+            iterations);
+      }
+    }
 
     if (ratio.unbounded) {
       if (phase_one) {
         return finish(SolveStatus::kNumericalError,
                       "phase 1 ratio test found no blocking variable, which cannot happen "
                       "for an objective bounded below by zero",
+                      iterations, timer.elapsed_seconds());
+      }
+      // Only a claim whose ray checks out is made. Measured on maros-r7, whose optimum is
+      // published: the ratio test found no blocking variable on fresh factors of a basis
+      // that had needed full partial pivoting, and the "ray" it proposed had a residual far
+      // above tolerance - alpha was wrong, not the model. Reporting UNBOUNDED there is the
+      // worst answer available; reporting a numerical failure is the true one.
+      const double ray_residual = unbounded_ray_residual(entering, direction);
+      if (ray_residual > primal_tolerance_) {
+        return finish(SolveStatus::kNumericalError,
+                      fmt::format("ratio test found no blocking variable at iteration {}, but "
+                                  "the proposed unbounded ray has residual {:.3e} relative to "
+                                  "its terms; alpha is not trustworthy on this basis and the "
+                                  "claim is withheld",
+                                  iterations, ray_residual),
                       iterations, timer.elapsed_seconds());
       }
       return finish(SolveStatus::kUnbounded, {}, iterations, timer.elapsed_seconds());
@@ -1641,7 +1742,37 @@ Solution PrimalSimplex::run() {
       const bool trust_update = !basis_needed_stricter_threshold_;
       const bool updated = trust_update && lu_.update(ratio.leaving_position, alpha_.data());
       if (trust_update && !updated) ++rejected_updates_;
-      if (!updated || lu_.should_refactorize()) {
+      // REFACTORIZE AT THE MEASURED BREAK-EVEN. The eta file makes every solve a little
+      // slower, and a fresh factorization removes that cost at a price of its own. The old
+      // rule refactorized once the eta file reached twice the size of the factors, which
+      // assumes the two costs are comparable per nonzero. They are not: measured on d2q06c,
+      // one refactorization costs ~44 ms and one iteration's solves ~0.2 ms, so that rule
+      // refactorized every 22 iterations and spent 68% of the run doing it. Raising the
+      // ratio to 8 made d2q06c 2.2x faster and greenbea 1.8x SLOWER - the break-even is a
+      // property of the instance, and no constant is right for both.
+      //
+      // So it is adaptive, in OPERATION COUNTS. Every iteration adds the eta file's current
+      // nonzero count to a running total - the extra work its solves did through the etas -
+      // and the simplex refactorizes when that total exceeds refactor_work_ratio_ times the
+      // size of the base factors, which is the work a refactorization is proportional to.
+      // The ratio was calibrated from wall-clock measurements, once, offline.
+      //
+      // NOT SECONDS, AND THIS IS NOT A DETAIL. The first version of this rule compared
+      // measured solve time against measured refactorization time. It was faster - and it
+      // made the solver NONDETERMINISTIC: refactorization points moved with the clock, alpha
+      // through etas differs from alpha through fresh factors in its last bits, and on a
+      // degenerate model those bits pick the ratio-test winner. perold took 8120 iterations
+      // in one run and 8948 in the next, on the same commit, and reported different duals.
+      // CLAUDE.md's evidence rules are worth nothing if a rerun can take a different path;
+      // the perturbation code turned down randomness for exactly this reason, and a timer is
+      // randomness with extra steps. Wall-clock may calibrate a constant. It may not decide.
+      //
+      // The hard cap on eta count stays, as the bound on accumulated drift.
+      eta_work_since_refactor_ += static_cast<double>(lu_.eta_nonzeros());
+      const bool past_break_even =
+          eta_work_since_refactor_ >
+          refactor_work_ratio_ * std::max(1.0, static_cast<double>(lu_.factor_nonzeros()));
+      if (!updated || past_break_even || lu_.should_refactorize()) {
         if (!refactorize()) {
           return finish(SolveStatus::kNumericalError,
                         fmt::format("basis became singular at iteration {}", iterations),
@@ -1770,7 +1901,25 @@ Solution solve_primal_simplex(const Model& model, const Options& options, Logger
   logger.debug("Scaling: entries {:.3e} to {:.3e} after {} Ruiz passes and one Pock-Chambolle",
                scaling.min_abs, scaling.max_abs, kRuizIterations);
 
-  PrimalSimplex simplex(scaled, options, logger);
+  // ONE BUDGET, SHARED. The scaled solve and the unscaled retry below are a portfolio: on
+  // most models scaling wins, on a few it stalls where the unscaled simplex does not, and
+  // the union of the two is what the pass rate is built on. A portfolio has to share the
+  // caller's time limit rather than spend it twice. The old code spent it twice - a
+  // time-limited scaled solve triggered a full unscaled retry, so a 120 s limit ran for 241 s
+  // on every timed-out instance - and degen3 "passed" only that way: 120 s wasted in a
+  // scaled stall of 265,000 iterations, then an unscaled solve that takes 6 seconds.
+  //
+  // So the scaled attempt gets half the limit and the retry gets whatever is left. Half is
+  // not tuned; it is the split that guarantees the retry a real share when the first attempt
+  // fails outright. What it costs is any model that scaling solves in more than half the
+  // budget - and on the full Netlib set at a 120 s limit, no passing instance needs more
+  // than 28 s scaled. A caller who knows better sets a larger limit or turns scaling off.
+  const double time_limit = options.get_double("time_limit");
+  const bool limited = time_limit < 1e300;  // the option's no-limit sentinel is DBL_MAX
+  Timer budget;
+  Options scaled_options = options;
+  if (limited) scaled_options.set_double("time_limit", 0.5 * time_limit);
+  PrimalSimplex simplex(scaled, scaled_options, logger);
   Solution solution = simplex.run();
 
   // UNSCALE, AND UNSCALE EVERYTHING. A diagonal change of variable that is undone for the
@@ -1813,14 +1962,30 @@ Solution solve_primal_simplex(const Model& model, const Options& options, Logger
   // keep that instead. The second solve costs nothing on the models where scaling already
   // worked, because it never runs.
   const double primal_tolerance = options.get_double("primal_feasibility_tolerance");
+  // The SCALED violation, to match the status decision in solve.cpp (#152). Judging this on
+  // the absolute figure meant a point the dispatcher would call feasible was retried
+  // anyway, and greenbea ran two full solves to report one answer.
   const bool usable =
       (solution.status == SolveStatus::kOptimal || solution.status == SolveStatus::kFeasible) &&
-      solution.primal_infeasibility <= primal_tolerance;
+      solution.primal_infeasibility_scaled <= primal_tolerance;
   if (usable) return solution;
+
+  // THE RETRY NEVER GETS A FRESH BUDGET. An iteration limit has no notion of "remaining",
+  // so a scaled solve that hit it is reported as it stands. A time limit does: the retry
+  // gets what the scaled attempt left, which is at least half by construction above, and
+  // if the limit was somehow exhausted anyway the scaled result is reported. Measured on
+  // fit2p before this: a 60 s limit produced a 120.76 s run.
+  if (solution.status == SolveStatus::kIterationLimit) return solution;
+  Options retry_options = options;
+  if (limited) {
+    const double remaining = time_limit - budget.elapsed_seconds();
+    if (remaining <= 0.0) return solution;
+    retry_options.set_double("time_limit", remaining);
+  }
 
   logger.info("Scaled solve returned {} (primal infeasibility {:.3e}); retrying unscaled",
               to_string(solution.status), solution.primal_infeasibility);
-  PrimalSimplex unscaled_simplex(model, options, logger);
+  PrimalSimplex unscaled_simplex(model, retry_options, logger);
   Solution unscaled = unscaled_simplex.run();
   const bool unscaled_usable =
       (unscaled.status == SolveStatus::kOptimal || unscaled.status == SolveStatus::kFeasible) &&
@@ -1828,6 +1993,28 @@ Solution solve_primal_simplex(const Model& model, const Options& options, Logger
   if (unscaled_usable) {
     logger.info("Unscaled solve succeeded where the scaled one did not");
     return unscaled;
+  }
+
+  // AN UNBOUNDED CLAIM IS REPORTED ONLY WHEN BOTH ATTEMPTS MAKE IT. The two solves are a
+  // portfolio precisely because scaling changes the numerics; a claim that one of them makes
+  // and the other does not is a claim about the numerics, not about the model. Measured on
+  // maros-r7, whose optimum is published: the scaled attempt found a ray that passed its own
+  // certificate and said UNBOUNDED, the unscaled attempt said numerical error, and the
+  // tie-break below - which prefers the attempt closer to feasibility - handed the user the
+  // wrong one, because an unbounded claim has no infeasibility to speak of. Disagreement is
+  // reported as what it is: the attempt that did not claim, with the other's claim on record.
+  const bool scaled_claims = solution.status == SolveStatus::kUnbounded;
+  const bool unscaled_claims = unscaled.status == SolveStatus::kUnbounded;
+  if (scaled_claims != unscaled_claims) {
+    Solution kept = scaled_claims ? unscaled : solution;
+    const char* claimant = scaled_claims ? "scaled" : "unscaled";
+    const std::string note = fmt::format(
+        "the {} attempt claimed unbounded but the other attempt did not; the claim is "
+        "withheld and the non-claiming result is reported",
+        claimant);
+    kept.message = kept.message.empty() ? note : kept.message + "; " + note;
+    logger.warning("{}", note);
+    return kept;
   }
 
   // Neither worked. Report the one that came closer to feasibility, so the message the user
