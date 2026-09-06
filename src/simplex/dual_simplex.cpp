@@ -464,16 +464,27 @@ std::optional<Solution> Simplex::dual_loop(Timer& timer, Count* iterations_io) {
       if (any_artificial_bound()) {
         return hand_over("no dual ratio-test candidate while artificial bounds are in play");
       }
-      return finish(
-          SolveStatus::kInfeasible,
-          fmt::format("dual simplex: basic variable {} is outside its bounds by "
-                      "{:.3e} and no nonbasic column can move it (the dual is "
-                      "unbounded), at iteration {}",
-                      leaving,
-                      to_upper ? x_basic_[static_cast<std::size_t>(leaving_slot)] - upper_[l]
-                               : lower_[l] - x_basic_[static_cast<std::size_t>(leaving_slot)],
-                      iterations),
-          iterations, timer.elapsed_seconds());
+      // THE SAME CAUTION THE PRIMAL APPLIES TO ITS PHASE-1 STALL. "No candidate" is a Farkas
+      // certificate in exact arithmetic; in floating point it ignores every column whose
+      // pivot-row entry is below kPivotTolerance, and on a violation within a few orders of
+      // the feasibility tolerance one of those could still close it. A marginal violation
+      // is therefore handed to the primal loop, whose phase 1 decides between a numerical
+      // stall and a proof on its own terms; only a violation far above tolerance is claimed
+      // here, and the message says so.
+      const double violation =
+          to_upper ? x_basic_[static_cast<std::size_t>(leaving_slot)] - upper_[l]
+                   : lower_[l] - x_basic_[static_cast<std::size_t>(leaving_slot)];
+      if (violation <= kInfeasibilityProofFactor * primal_tolerance_) {
+        return hand_over(fmt::format(
+            "no dual ratio-test candidate on a marginal violation of {:.3e}", violation));
+      }
+      return finish(SolveStatus::kInfeasible,
+                    fmt::format("dual simplex: basic variable {} is outside its bounds by "
+                                "{:.3e}, far above the {:.1e} feasibility tolerance, and no "
+                                "nonbasic column can move it (the dual is unbounded), at "
+                                "iteration {}",
+                                leaving, violation, primal_tolerance_, iterations),
+                    iterations, timer.elapsed_seconds());
     }
 
     for (const Index k : ratio.flips) {

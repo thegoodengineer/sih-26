@@ -298,7 +298,7 @@ TEST(Solve, DispatchesAnLpToTheSimplex) {
   options.set_bool("log_to_console", false);
   const Solution solution = solve(model, options);
   EXPECT_EQ(solution.status, SolveStatus::kOptimal) << solution.message;
-  EXPECT_EQ(solution.algorithm, "simplex-primal");
+  EXPECT_EQ(solution.algorithm.rfind("simplex-", 0), 0u) << solution.algorithm;
   EXPECT_TRUE(solution.has_primal_values());
   EXPECT_LE(solution.primal_infeasibility, tol::kPrimalFeasibility);
 }

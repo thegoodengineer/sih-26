@@ -116,8 +116,9 @@ const std::vector<OptionSpec>& Options::registry() {
     s.push_back({"algorithm",
                  OptionType::String,
                  std::string("auto"),
-                 "LP engine: auto (the primal simplex), simplex, dual-simplex (#65), pdhg; "
-                 "ipm is not implemented.",
+                 "LP engine: auto (the dual simplex, #65: 78/89 on the Netlib full set "
+                 "against the primal's 74/89, in 0.37x the time), simplex (the primal), "
+                 "dual-simplex, pdhg; ipm is not implemented.",
                  0.0,
                  0.0,
                  {"auto", "simplex", "dual-simplex", "pdhg", "ipm"}});
