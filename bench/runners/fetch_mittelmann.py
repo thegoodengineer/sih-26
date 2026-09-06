@@ -29,6 +29,8 @@ import argparse
 import bz2
 import hashlib
 import json
+import shutil
+import subprocess
 import sys
 import time
 import urllib.error
@@ -97,6 +99,14 @@ def download(url: str, target: Path, attempts: int = 4) -> None:
             partial.replace(target)
             return
         except (urllib.error.URLError, OSError) as error:
+            # A machine whose certificate store cannot verify plato.asu.edu (a proxy that
+            # re-signs TLS, seen on one development box) gets one more route: curl, which
+            # carries its own bundle. Same URL, same file; the sha256 is recorded either way.
+            if "CERTIFICATE_VERIFY_FAILED" in str(error) and shutil.which("curl"):
+                done = subprocess.run(["curl", "-fsSL", "--retry", "3", "-o", str(partial), url])
+                if done.returncode == 0 and partial.exists():
+                    partial.replace(target)
+                    return
             if attempt == attempts:
                 raise
             wait = 2 ** (attempt - 1)
