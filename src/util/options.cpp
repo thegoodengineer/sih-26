@@ -118,7 +118,9 @@ const std::vector<OptionSpec>& Options::registry() {
                  std::string("auto"),
                  "LP engine: auto (the dual simplex, #65: 78/89 on the Netlib full set "
                  "against the primal's 74/89, in 0.37x the time), simplex (the primal), "
-                 "dual-simplex, pdhg; ipm is not implemented.",
+                 "dual-simplex, pdhg, or ipm (#56: Mehrotra predictor-corrector on the "
+                 "normal equations with a sparse LDL^T; produces no basis and does not "
+                 "certify infeasibility or unboundedness).",
                  0.0,
                  0.0,
                  {"auto", "simplex", "dual-simplex", "pdhg", "ipm"}});
@@ -207,11 +209,14 @@ const std::vector<OptionSpec>& Options::registry() {
     s.push_back({"threads",
                  OptionType::Int,
                  std::int64_t{1},
-                 "Worker threads; 0 means one per hardware core.",
+                 "Worker threads for the column loops of simplex pricing, the dual's pivot "
+                 "row and the sparse transpose product (#57); 0 means one per hardware "
+                 "core. Every parallel loop is a gather with no cross-thread reduction, so "
+                 "the answer is identical at any thread count. Ignored, with a note in the "
+                 "log, in a build without OpenMP.",
                  0.0,
                  1024.0,
-                 {},
-                 "Phase 7"});
+                 {}});
     s.push_back({"deterministic",
                  OptionType::Bool,
                  true,
