@@ -279,13 +279,24 @@ def write_mps(instance: Instance, path: Path) -> None:
 # =========================================================================================
 
 def git_commit() -> str:
+    """Short commit hash, with "-dirty" appended when tracked files other than the tier
+    manifests are modified. The manifests (data/netlib/reference.json and
+    data/mittelmann/reference.json) are rewritten by the fetch scripts as part of the
+    runner's own workflow and say nothing about what was measured; untracked files are
+    ignored for the same reason (fetched instances are untracked by design)."""
     try:
         result = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=REPO_ROOT,
-                                capture_output=True, text=True, check=True)
-        return result.stdout.strip()
-    except (OSError, subprocess.CalledProcessError):
+                                capture_output=True, text=True, check=False)
+        commit = result.stdout.strip() or "unknown"
+        status = subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=no", "--",
+             ".", ":!data/netlib/reference.json", ":!data/mittelmann/reference.json"],
+            cwd=REPO_ROOT, capture_output=True, text=True, check=False)
+        if status.stdout.strip():
+            commit += "-dirty"
+        return commit
+    except OSError:
         return "unknown"
-
 
 def default_binary() -> Path:
     for candidate in ("build/sankhya.exe", "build/sankhya", "build-main/sankhya.exe",
