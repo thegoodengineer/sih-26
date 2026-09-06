@@ -129,12 +129,17 @@ void reconcile_status_with_measurement(Solution* solution, const Options& option
 
   // Primal feasible but dual infeasible: the point is usable, the optimality claim is not
   // supported. kFeasible says exactly that and already exists for the purpose.
+  // The SCALED violation decides, the absolute one is still printed - the same split as
+  // the primal check above and for the same reason (#152). On grow7 the absolute dual
+  // infeasibility can be 6.1 against prices of order 1e+07; judged absolutely that is a
+  // failed optimality claim, judged against its own terms it is 6e-07 and the claim stands.
   if (check_dual && solution->status == SolveStatus::kOptimal &&
-      solution->dual_infeasibility > dual_tolerance) {
+      solution->dual_infeasibility_scaled > dual_tolerance) {
     const std::string detail = fmt::format(
-        "engine reported optimal but the reduced costs violate dual feasibility by {:.3e}, "
-        "above the {:.1e} tolerance; reporting a feasible point rather than a proof",
-        solution->dual_infeasibility, dual_tolerance);
+        "engine reported optimal but the reduced costs violate dual feasibility by {:.3e} "
+        "({:.3e} relative to the terms they are computed from), above the {:.1e} tolerance; "
+        "reporting a feasible point rather than a proof",
+        solution->dual_infeasibility, solution->dual_infeasibility_scaled, dual_tolerance);
     solution->status = SolveStatus::kFeasible;
     solution->message = solution->message.empty() ? detail : solution->message + "; " + detail;
     logger.warning("{}", detail);
