@@ -512,11 +512,19 @@ class Report:
         return "\n".join(out)
 
 
-def bound_contribution(multiplier: float, lower: float, upper: float, tol: float) -> float:
-    """The Lagrangian term a bound contributes to the dual objective, in minimize space."""
-    if multiplier > tol:
+def bound_contribution(multiplier: float, lower: float, upper: float) -> float:
+    """The Lagrangian term a bound contributes to the dual objective, in minimize space.
+
+    A positive multiplier prices the lower bound and a negative one the upper. A bound that
+    does not exist contributes nothing: the multiplier is then a sign violation, judged in
+    its own check, and its whole product with the primal value lands in the duality gap,
+    where it is accounted for. An earlier version zeroed every multiplier below the dual
+    tolerance, which put |multiplier| * bound into the gap for each column sitting exactly
+    at a bound with a rounding-sized reduced cost - a gap manufactured by the test.
+    """
+    if multiplier > 0.0 and math.isfinite(lower):
         return multiplier * lower
-    if multiplier < -tol:
+    if multiplier < 0.0 and math.isfinite(upper):
         return multiplier * upper
     return 0.0
 
@@ -816,10 +824,50 @@ def verify(model: Model, solution: Solution, primal_tol: float, dual_tol: float,
     dual_objective_min_space = 0.0
     for i in range(model.num_rows):
         dual_objective_min_space += bound_contribution(
-            y[i], model.row_lower[i], model.row_upper[i], dual_tol)
+            y[i], model.row_lower[i], model.row_upper[i])
     for j in range(model.num_cols):
         dual_objective_min_space += bound_contribution(
-            d[j], model.col_lower[j], model.col_upper[j], dual_tol)
+            d[j], model.col_lower[j], model.col_upper[j])
+
+    # THE GAP IS AN IDENTITY, NOT A MEASUREMENT OF ITS OWN. With d = c - A^T y and the
+    # activities recomputed from x, primal - dual is exactly the sum over every column and
+    # row of  multiplier * (value - the bound the multiplier's sign prices), plus the
+    # consistency and activity residuals judged above. So every item's share of the gap is
+    # known, and the question this check can honestly ask is whether the gap is accounted
+    # for by shares the per-item checks already accepted:
+    #
+    #   - a multiplier within the dual tolerance at its own scale (the scale the sign check
+    #     used) explains its whole share: it is indistinguishable from zero, and zero would
+    #     contribute nothing;
+    #   - a larger multiplier explains its share only up to |multiplier| * nearest slack,
+    #     which is what the complementarity check judged. A reduced cost of -4e-3 on a
+    #     column at its LOWER bound prices the UPPER bound 20 away (Netlib recipe, #157):
+    #     nearest slack 0, nothing explained, and the check fails on it exactly as before.
+    #
+    # Netlib etamacro is why the accounting exists: ten per-item checks pass, and the gap
+    # of 1.26e-6 on an objective of 755 (1.67e-9 relative) is one accepted sign violation
+    # of 3.2e-8 on KAPSTK65 times that column's value of 40. An aggregate threshold of
+    # 1e-9 relative was tighter than a single per-item allowance granted above it.
+    accounted = 0.0
+
+    def share(multiplier: float, value: float, lower: float, upper: float,
+              multiplier_scale: float) -> float:
+        if multiplier == 0.0:
+            return 0.0
+        priced = lower if multiplier > 0.0 else upper
+        term = abs(multiplier) * (abs(value - priced) if math.isfinite(priced) else abs(value))
+        if abs(multiplier) <= dual_tol * multiplier_scale:
+            return term
+        nearest = min(abs(value - lower) if math.isfinite(lower) else INF,
+                      abs(value - upper) if math.isfinite(upper) else INF)
+        return min(term, abs(multiplier) * nearest) if math.isfinite(nearest) else 0.0
+
+    for j in range(model.num_cols):
+        scale_j = max(1.0, abs(cost[j]),
+                      max((abs(value * y[i]) for i, value in model.entries[j]), default=0.0))
+        accounted += share(d[j], x[j], model.col_lower[j], model.col_upper[j], scale_j)
+    for i in range(model.num_rows):
+        accounted += share(y[i], activity[i], model.row_lower[i], model.row_upper[i], dual_norm)
     # For a QP the bound contributions sum, at a KKT point, to (c + Qx)'x = c'x + x'Qx, which
     # overshoots the primal objective c'x + 0.5 x'Qx by exactly 0.5 x'Qx. Subtracting it is
     # the Dorn dual of a convex QP, and it makes the gap below a real optimality test rather
@@ -829,9 +877,10 @@ def verify(model: Model, solution: Solution, primal_tol: float, dual_tol: float,
 
     gap = abs(objective - dual_objective)
     scale = max(1.0, abs(objective))
-    report.check(gap <= duality_tol * scale, "strong duality",
+    report.check(gap <= duality_tol * scale + accounted, "strong duality",
                  f"primal {objective:.12e}  dual {dual_objective:.12e}  "
-                 f"gap {gap:.3e} (relative {gap / scale:.3e})")
+                 f"gap {gap:.3e} (relative {gap / scale:.3e}), "
+                 f"{accounted:.3e} of it from per-item violations accepted above")
     return report
 
 
