@@ -91,6 +91,16 @@ class InteriorPoint {
   Solution finish(SolveStatus status, const std::string& message, Count iterations,
                   double seconds);
 
+  /// c_j - a_j^T y for a fixed structural column, whose multipliers do not exist.
+  [[nodiscard]] double fixed_reduced_cost(Index j) const {
+    const ColumnView column = model_.matrix.column(j);
+    double dot = 0.0;
+    for (Index p = 0; p < column.size; ++p) {
+      dot += column.values[p] * y_[static_cast<std::size_t>(column.rows[p])];
+    }
+    return cost_[static_cast<std::size_t>(j)] - dot;
+  }
+
   /// Abar v for v over all n + m variables: A v_x - v_s.
   void constraint_times(const std::vector<double>& v, std::vector<double>* out) const;
   /// Abar^T w, over all n + m variables.
@@ -108,6 +118,8 @@ class InteriorPoint {
   std::vector<double> upper_;
   std::vector<bool> has_lower_;
   std::vector<bool> has_upper_;
+  /// l == u: a constant, not a variable. No slack, no multiplier, no dual condition, Theta 0.
+  std::vector<bool> fixed_;
   Index bound_count_ = 0;
 
   // Iterates.
@@ -170,6 +182,7 @@ void InteriorPoint::build() {
   upper_.resize(static_cast<std::size_t>(total_));
   has_lower_.assign(static_cast<std::size_t>(total_), false);
   has_upper_.assign(static_cast<std::size_t>(total_), false);
+  fixed_.assign(static_cast<std::size_t>(total_), false);
   for (Index j = 0; j < n_; ++j) {
     const auto u = static_cast<std::size_t>(j);
     cost_[u] = sense * model_.col_cost[u];
@@ -184,6 +197,14 @@ void InteriorPoint::build() {
   bound_count_ = 0;
   for (Index k = 0; k < total_; ++k) {
     const auto u = static_cast<std::size_t>(k);
+    // A FIXED VARIABLE IS A CONSTANT. Every equality row's logical is one, and the
+    // bounded form would give it two slacks that both have to vanish: no interior, Theta
+    // driven to zero, complementarity unreachable. It is pinned, carries no bound pair,
+    // and drops out of the normal equations; its value still enters Abar x.
+    if (lower_[u] == upper_[u] && is_finite_bound(lower_[u])) {
+      fixed_[u] = true;
+      continue;
+    }
     has_lower_[u] = is_finite_bound(lower_[u]);
     has_upper_[u] = is_finite_bound(upper_[u]);
     bound_count_ += (has_lower_[u] ? 1 : 0) + (has_upper_[u] ? 1 : 0);
@@ -199,6 +220,10 @@ void InteriorPoint::build() {
   zu_.assign(static_cast<std::size_t>(total_), 0.0);
   for (Index k = 0; k < total_; ++k) {
     const auto u = static_cast<std::size_t>(k);
+    if (fixed_[u]) {
+      x_[u] = lower_[u];
+      continue;
+    }
     if (has_lower_[u] && has_upper_[u]) {
       x_[u] = 0.5 * (lower_[u] + upper_[u]);
     } else if (has_lower_[u]) {
@@ -208,13 +233,37 @@ void InteriorPoint::build() {
     } else {
       x_[u] = 0.0;
     }
+  }
+  // THE LOGICALS START CONSISTENT WITH THE STRUCTURALS: s = A x exactly, so the constraint
+  // residual r_b is zero at the first iterate and the bound residuals r_l, r_u carry the
+  // whole infeasibility. Starting every logical at "bound + 1" instead left r_b of the
+  // size of A x, and the affine direction's attempt to close it in one step sent mu from
+  // 1 to 1e+9 on israel and stocfor1 before the method could recover - or not.
+  if (m_ > 0) {
+    std::vector<double> activity(static_cast<std::size_t>(m_), 0.0);
+    model_.matrix.multiply_add(x_.data(), activity.data());
+    for (Index i = 0; i < m_; ++i) {
+      const auto u = static_cast<std::size_t>(n_ + i);
+      if (!fixed_[u]) x_[u] = activity[static_cast<std::size_t>(i)];
+    }
+  }
+  // THE DUALS START CONSISTENT WITH THE COSTS, for the same reason: with y = 0 the dual
+  // residual is c - z_l + z_u, and z_l = max(c, 1), z_u = max(-c, 1) makes it vanish
+  // wherever |c| >= 1 and small elsewhere. Starting every multiplier at 1 instead left a
+  // dual residual the size of the scaled cost vector, and the first dual step took z to
+  // that size at once: on stocfor1 (scaled) mu went 1 -> 3e6 in four iterations and the
+  // run never recovered. The primal slacks are floored at 1 so the first iterate is
+  // comfortably interior; r_l and r_u absorb whatever that costs in consistency.
+  for (Index k = 0; k < total_; ++k) {
+    const auto u = static_cast<std::size_t>(k);
+    if (fixed_[u]) continue;
     if (has_lower_[u]) {
       sl_[u] = std::max(x_[u] - lower_[u], 1.0);
-      zl_[u] = 1.0;
+      zl_[u] = std::max(cost_[u], 1.0);
     }
     if (has_upper_[u]) {
       su_[u] = std::max(upper_[u] - x_[u], 1.0);
-      zu_[u] = 1.0;
+      zu_[u] = std::max(-cost_[u], 1.0);
     }
   }
   y_.assign(static_cast<std::size_t>(m_), 0.0);
@@ -271,7 +320,7 @@ void InteriorPoint::residuals() {
   dual_infeasibility_ = 0.0;
   for (Index k = 0; k < total_; ++k) {
     const auto u = static_cast<std::size_t>(k);
-    r_c_[u] = cost_[u] - r_c_[u] - zl_[u] + zu_[u];
+    r_c_[u] = fixed_[u] ? 0.0 : cost_[u] - r_c_[u] - zl_[u] + zu_[u];
     objective_ += cost_[u] * x_[u];
     c_norm = std::max(c_norm, std::fabs(cost_[u]));
     x_norm = std::max(x_norm, std::fabs(x_[u]));
@@ -308,7 +357,7 @@ bool InteriorPoint::factorize() {
     double inverse = kPrimalRegularization;
     if (has_lower_[u]) inverse += zl_[u] / sl_[u];
     if (has_upper_[u]) inverse += zu_[u] / su_[u];
-    theta_[u] = 1.0 / inverse;
+    theta_[u] = fixed_[u] ? 0.0 : 1.0 / inverse;
     if (k < n_) {
       theta_x[u] = theta_[u];
     } else {
@@ -430,8 +479,9 @@ Solution InteriorPoint::finish(SolveStatus status, const std::string& message, C
   for (Index j = 0; j < n_; ++j) {
     const auto u = static_cast<std::size_t>(j);
     solution.col_value[u] = x_[u];
-    // The reduced cost is what the dual constraint says it is at convergence: z_l - z_u.
-    solution.col_dual[u] = sense * (zl_[u] - zu_[u]);
+    // The reduced cost is what the dual constraint says it is at convergence: z_l - z_u;
+    // for a fixed column, c - a^T y, which no sign condition constrains.
+    solution.col_dual[u] = sense * (fixed_[u] ? fixed_reduced_cost(j) : zl_[u] - zu_[u]);
   }
   for (Index i = 0; i < m_; ++i) {
     solution.row_dual[static_cast<std::size_t>(i)] = sense * y_[static_cast<std::size_t>(i)];
