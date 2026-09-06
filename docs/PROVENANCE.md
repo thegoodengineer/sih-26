@@ -80,12 +80,15 @@ mathematics, not transcribed from anyone's implementation.
 | Branch and bound | Land & Doig, *An automatic method of solving discrete programming problems*, Econometrica 28(3), 1960; Wolsey, *Integer Programming*, ch. 7 | `src/mip/branch_and_bound.cpp` |
 | Node propagation from row activities | Savelsbergh, *Preprocessing and probing for MIP*, ORSA J. Computing 6(4), 1994 | `src/mip/branch_and_bound.cpp` |
 | Search shape: propagation at nodes, incumbent as cutoff | Achterberg, *Constraint Integer Programming* (thesis, 2007), ch. 5–6 | `src/mip/branch_and_bound.cpp` |
+| Reliability branching: pseudocosts, strong branching on unreliable candidates with capped warm-started dual probes, product score (#69; `--option mip_branching=most-fractional` keeps the old rule) | Achterberg, Koch & Martin, *Branching rules revisited*, Operations Research Letters 33 (2005), 42–54 | `src/mip/branch_and_bound.cpp` |
+| Cost perturbation on a dual-degenerate stall, nonbasic costs only so dual feasibility is preserved by construction | Maros, *Computational Techniques of the Simplex Method*, ch. 9 (the bound-shifting scheme, applied to the dual's costs); Koberstein (2005), above, sec. 6.2 | `src/simplex/dual_simplex.cpp` |
+| Robustness suite: the classic cycling examples, adversarial families judged by the exact oracle, and the conditioning / near-parallel / cost-ratio / redundancy / degeneracy sweeps with an optimum known by construction (#71) | Beale, *Cycling in the dual simplex algorithm*, Naval Research Logistics Quarterly 2 (1955); Kuhn's example as given in Chvátal, *Linear Programming* (1983), ch. 3; the KKT construction is the oracle fuzz's (above) | `tests/robustness/test_robustness.cpp`, `bench/runners/robustness.py` |
 | MIQP: branch and bound over convex QP node relaxations | Gupta & Ravindran, *Branch and bound experiments in convex nonlinear integer programming*, Management Science 31(12), 1985 | `src/mip/branch_and_bound.cpp` |
 | Exact rational branch and bound (test oracle) | as above, in exact arithmetic | `tests/oracles/rational_simplex.cpp` |
 | Shifted geometric mean benchmark reporting | Mittelmann, plato.asu.edu benchmark methodology | `bench/runners/make_benchmarks_doc.py` |
 | LP duality checks (feasibility, complementary slackness, strong duality) | Chvátal, *Linear Programming*, ch. 5 | `tools/verify_solution.py` |
 
-Phases 6 onwards add: dual revised simplex (Maros; Huangfu & Hall), Forrest–Tomlin update
+Phases 6 onwards add: Forrest–Tomlin update
 (Forrest & Tomlin 1972), restarted PDHG (Applegate et al.; Lu & Yang, arXiv:2311.12180;
 arXiv:2507.14051), Mehrotra predictor–corrector (Nocedal & Wright; Gondzio), Gomory MIR and
 cover cuts (Marchand & Wolsey; Wolsey), and branch-and-cut search (Achterberg). Devex pricing

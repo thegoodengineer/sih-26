@@ -234,6 +234,11 @@ jobs:
           print(f"both re-scalings agree on {a!r}")
           PYEOF
 
+          echo '--- the robustness sweep, reduced (#71) ---'
+          # One instance per point, shorter sweeps. The CSV goes outside bench/results/ so
+          # a reduced run can never be mistaken for the evidence docs/BENCHMARKS.md reports.
+          python3 bench/runners/robustness.py --quick --binary ./build/sankhya               --out "$RUNNER_TEMP/robustness-quick.csv"
+
           echo '--- the demo itself must run start to finish ---'
           # --quick skips the HiGHS comparison, which needs highspy.
           bash demo/run_sih_demo.sh --quick > /dev/null

@@ -498,6 +498,72 @@ def milp_section(path: Path | None) -> str:
     return chr(10).join(out)
 
 
+def robustness_section(path: Path | None) -> str:
+    """Where each numerical hazard breaks the solver (#71), from bench/runners/robustness.py.
+
+    Every instance in the sweep has an optimum known by construction, so a pass means the
+    status was optimal, the objective matched to 1e-6 relative AND the independent verifier
+    accepted the certificate. The table names, per family, the last parameter that passed
+    on every instance and the first that failed on any, with the failing check. Families
+    that never fail are said to pass the whole sweep, with its extent; that is a statement
+    about the sweep, not a claim that nothing beyond it can fail.
+    """
+    if path is None:
+        return ("_No `robustness-*.csv` in `bench/results/`. Run "
+                "`python bench/runners/robustness.py`._\n")
+    rows = read_csv(path)
+    families: dict[str, dict] = {}
+    for row in rows:
+        family = row["family"]
+        entry = families.setdefault(family, {"parameter": row["parameter"], "points": {}})
+        k = int(float(row["value"]))
+        try:
+            relative_error = float(row["relative_error"])
+        except ValueError:
+            relative_error = float("inf")
+        passed = (row["status"] == "optimal" and relative_error <= 1e-6
+                  and str(row.get("verified", "")).strip() == "1")
+        point = entry["points"].setdefault(k, {"passed": True, "reason": ""})
+        if not passed and point["passed"]:
+            point["passed"] = False
+            point["reason"] = (f"{row['status']}, relative error {relative_error:.1e}, "
+                               f"verified {row.get('verified', '') or 'no'}"
+                               + (f": {row['message'][:110]}" if row.get("message") else ""))
+    out = [f"Measured on commit `{rows[0]['git_commit']}` ({rows[0]['machine']}), "
+           f"{len(rows)} solves, {len(families)} families. Source: `{path.name}`.", "",
+           "| family | parameter | last k that passed on every instance | first k that failed | what failed |",
+           "|---|---|---|---|---|"]
+    for family, entry in families.items():
+        ks = sorted(entry["points"])
+        last_pass, first_fail, reason = None, None, ""
+        for k in ks:
+            if entry["points"][k]["passed"]:
+                if first_fail is None:
+                    last_pass = k
+            elif first_fail is None:
+                first_fail, reason = k, entry["points"][k]["reason"]
+        if first_fail is None:
+            verdict = f"passes the whole sweep (k up to {ks[-1]})"
+            out.append(f"| `{family}` | {entry['parameter']} | {ks[-1]} | {verdict} | - |")
+        else:
+            out.append(f"| `{family}` | {entry['parameter']} | "
+                       f"{last_pass if last_pass is not None else 'none'} | {first_fail} | "
+                       f"{reason.replace('|', '/')} |")
+    out += ["",
+            "Reading the table: the `conditioning` cliff is `kZeroDrop` (`tolerances.hpp`), "
+            "the threshold below which a coefficient is treated as zero everywhere in the "
+            "solver. At an entry spread of 1e12 the smallest coefficients fall under 1e-11, "
+            "the model that gets solved is not the model that was written, and presolve then "
+            "reports - correctly, about the truncated model - that a row cannot reach its "
+            "bound. A model whose answer depends on a coefficient below 1e-11 is outside this "
+            "solver's range; lowering the threshold would move the cliff, not remove it. The "
+            "other limits are limits of the CERTIFICATE, not the answer: where the objective is "
+            "right to 1e-15 and the verifier still rejects, the reduced costs or multipliers "
+            "carry more rounding than its tolerances allow, which is worth knowing exactly "
+            "because those tolerances are what a downstream consumer of the duals gets.", ""]
+    return chr(10).join(out)
+
+
 def main() -> int:
     # Both tiers, separately. Reporting only one was the whole of issue #53: the small set
     # is 8/8, which reads as a solved problem, and the medium tier is the number that says
@@ -510,6 +576,7 @@ def main() -> int:
     compare_small_csv = newest("compare-highs-small-*.csv")
     compare_medium_csv = newest("compare-highs-medium-*.csv")
     compare_csv = compare_medium_csv or compare_small_csv or newest("compare-highs-*.csv")
+    robustness_csv = newest("robustness-*.csv")
 
     # Legacy untagged CSVs predate the tier tag; fall back so an old results directory still
     # generates something rather than failing.
@@ -603,7 +670,22 @@ mature solver.
 {comparison_section(compare_csv)}
 ---
 
-## 5. What these numbers do not say
+## 5. Robustness — where the solver stops working
+
+PS26119 asks for "a clear demonstration of numerical robustness ... involving degeneracy,
+weak LP relaxations or ill-conditioned constraint matrices". `data/casestudies/` demonstrates
+each hazard on one chosen instance; this section is the sweep that finds the case we do not
+handle. Every instance is built from a chosen primal-dual pair, so its optimum is known
+before it is solved (the construction is `tests/oracles/lp_generator.hpp`'s, in
+`bench/runners/robustness.py`), and each family pushes one hazard until the answer, or the
+certificate, moves. The reduced version runs in CI (`tests/robustness/`), together with the
+adversarial families judged by the exact rational oracle and the classic cycling examples
+of Beale and Kuhn.
+
+{robustness_section(robustness_csv)}
+---
+
+## 6. What these numbers do not say
 
 - **Nothing here supports a claim about large models.** The medium tier is capped at
   instances Netlib publishes with a few hundred rows. PS26119 asks about "thousands to
