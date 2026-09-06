@@ -174,16 +174,24 @@ Solution solve(const Model& model, const Options& options) {
   if (problem_class == ProblemClass::kLp) {
     const std::string requested = options.get_string("algorithm");
 
-    // "auto" means the simplex. PDHG is a first-order method: it converges to a tolerance
-    // rather than to a vertex, produces no basis, and on the small instances we benchmark
-    // today the simplex is both faster and exact. It is selected explicitly, and it becomes
-    // the automatic choice only once there is evidence for a crossover point to switch on.
+    // "auto" means the DUAL simplex (#65), measured rather than assumed: on the Netlib full
+    // set at 120 s it passes 78/89 against the primal's 74/89, solves d6cube, modszk1 and
+    // fit2p where the primal hits the limit, leaves no verifier rejection, and takes 0.37x
+    // the primal's time on the 83 instances both solve (bench/results/netlib-full-dual-
+    // a947a1e.csv against netlib-full-default-a947a1e.csv). The primal stays selectable as
+    // "simplex". PDHG is a first-order method: it converges to a tolerance rather than to a
+    // vertex, produces no basis, and on the small instances we benchmark today the simplex
+    // is both faster and exact. It is selected explicitly, and it becomes the automatic
+    // choice only once there is evidence for a crossover point to switch on.
     const bool want_pdhg = requested == "pdhg";
-    if (requested != "auto" && requested != "simplex" && !want_pdhg) {
+    const bool want_dual = requested == "dual-simplex" || requested == "auto";
+    if (requested != "auto" && requested != "simplex" && !want_pdhg && !want_dual) {
       solution.status = SolveStatus::kNotSolved;
       solution.algorithm = "none";
       solution.message = fmt::format(
-          "algorithm '{}' is not implemented yet; simplex and pdhg are available", requested);
+          "algorithm '{}' is not implemented yet; simplex, dual-simplex and pdhg are "
+          "available",
+          requested);
       logger.warning("{}", solution.message);
       solution.solve_seconds = timer.elapsed_seconds();
       return solution;
@@ -213,13 +221,15 @@ Solution solve(const Model& model, const Options& options) {
                     solution.solve_seconds);
         return solution;
       }
-      Solution inner = want_pdhg ? pdhg::solve_pdhg(reduced.model, options, logger)
-                                 : solve_primal_simplex(reduced.model, options, logger);
+      Solution inner = want_pdhg   ? pdhg::solve_pdhg(reduced.model, options, logger)
+                       : want_dual ? solve_dual_simplex(reduced.model, options, logger)
+                                   : solve_primal_simplex(reduced.model, options, logger);
       solution = presolve::postsolve(reduced, model, inner);
       solution.solve_seconds = timer.elapsed_seconds();
     } else {
-      solution = want_pdhg ? pdhg::solve_pdhg(model, options, logger)
-                           : solve_primal_simplex(model, options, logger);
+      solution = want_pdhg   ? pdhg::solve_pdhg(model, options, logger)
+                 : want_dual ? solve_dual_simplex(model, options, logger)
+                             : solve_primal_simplex(model, options, logger);
     }
     reconcile_status_with_measurement(&solution, options, logger, /*check_dual=*/true);
     logger.info("Result: {}  objective {:.10g}  {} iterations  {:.3f}s",

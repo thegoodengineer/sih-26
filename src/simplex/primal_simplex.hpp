@@ -2,6 +2,8 @@
 // SANKHYA - bounded-variable revised primal simplex.
 #pragma once
 
+#include <vector>
+
 #include "sankhya/logging.hpp"
 #include "sankhya/model.hpp"
 #include "sankhya/options.hpp"
@@ -47,5 +49,35 @@ struct NodeScaling {
 /// `scaling=false` wants anyway.
 [[nodiscard]] Solution solve_primal_simplex(const Model& model, const Options& options,
                                             Logger& logger, const NodeScaling& cache);
+
+/// A basis to start from, as the statuses a previous Solution reported.
+///
+/// Statuses, not values: they are what survives a change of bounds, a change of costs, and
+/// the scaling a solve applies internally, which values do not. Branch and bound hands each
+/// child the parent's optimal basis; one bound moved, so that basis is still dual feasible
+/// and the dual simplex reaches the child's optimum in a few pivots instead of re-solving
+/// from the slack basis (#65). A start that does not describe a basis - the wrong number of
+/// basic variables, a singular set - is not an error: the solve falls back to the slack
+/// basis and says so in the log.
+struct WarmStart {
+  std::vector<BasisStatus> col_status;
+  std::vector<BasisStatus> row_status;
+
+  [[nodiscard]] bool empty() const { return col_status.empty() && row_status.empty(); }
+};
+
+/// Solve a continuous LP with the bounded dual simplex (#65). Same contract as
+/// solve_primal_simplex: integrality is ignored, scaling and the unscaled retry apply.
+///
+/// With a warm start that is dual feasible this is the node solver: a few pivots per node.
+/// Without one, nonbasic columns whose reduced cost has the wrong sign and no bound to flip
+/// to are given a temporary artificial bound (Koberstein 2005, sec. 4.5); if any such bound
+/// is still active at the dual's optimum the true bounds are restored and the PRIMAL loop
+/// finishes from that basis, so the answer is always about the caller's model.
+[[nodiscard]] Solution solve_dual_simplex(const Model& model, const Options& options,
+                                          Logger& logger, const WarmStart* warm = nullptr);
+[[nodiscard]] Solution solve_dual_simplex(const Model& model, const Options& options,
+                                          Logger& logger, const NodeScaling& cache,
+                                          const WarmStart* warm = nullptr);
 
 }  // namespace sankhya

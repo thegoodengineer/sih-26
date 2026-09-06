@@ -202,7 +202,9 @@ TEST(ConvexQp, AnLpIsNotDivertedToTheQpEngine) {
   options.set_bool("log_to_console", false);
   const Solution s = solve(model, options);
   ASSERT_EQ(s.status, SolveStatus::kOptimal) << s.message;
-  EXPECT_EQ(s.algorithm, "simplex-primal");
+  // Either simplex engine: the dual is the automatic choice since #65, the primal stays
+  // selectable, and both are exact and produce a basis.
+  EXPECT_EQ(s.algorithm.rfind("simplex-", 0), 0u) << s.algorithm;
 }
 
 }  // namespace

@@ -59,6 +59,11 @@ struct TreeNode {
   bool has_change = false;
   double bound = 0.0;  ///< the LP bound inherited from the parent, in minimise space
   Index depth = 0;
+  /// The parent's optimal basis, as statuses (#65). One bound differs between parent and
+  /// child, so this basis is dual feasible at the child and the dual simplex reaches the
+  /// child's optimum in a few pivots. Moved out when the node is processed, so an open
+  /// node costs n + m bytes and a closed one nothing.
+  WarmStart warm;
 };
 
 /// Convergence tolerance for a QP node relaxation in an MIQP search.
@@ -91,6 +96,8 @@ class BranchAndBound {
     node_limit_ =
         node_option < 0 ? std::numeric_limits<Count>::max() : static_cast<Count>(node_option);
     sense_ = model.sense_multiplier();
+
+    node_engine_dual_ = options.get_string("mip_node_engine") != "primal";
 
     // Node LPs are solved silently; the node table is the log the user wants, not several
     // hundred simplex iteration tables.
@@ -177,7 +184,48 @@ class BranchAndBound {
   /// col_value only, which they already did.
   [[nodiscard]] Solution solve_node() {
     if (quadratic_) return qp::solve_convex_qp(working_, node_options_, logger_);
-    return solve_primal_simplex(working_, node_options_, logger_, scaling_);
+    // WARM-STARTED DUAL SIMPLEX BELOW THE ROOT (#65). The basis in current_warm_ was
+    // optimal for a problem that differs from this one by a bound or two, so it is dual
+    // feasible here, which is exactly the state the dual simplex starts from. Measured
+    // before this: every node was a cold primal solve from the slack basis.
+    //
+    // The primal stays as the fallback, cold, for a node the dual could not finish: a
+    // numerical answer at a node cannot be fathomed honestly, and the search below stops
+    // on it, so it is worth one more solve to avoid.
+    if (node_engine_dual_ && !current_warm_.empty()) {
+      Solution warm =
+          solve_dual_simplex(working_, node_options_, logger_, scaling_, &current_warm_);
+      if (warm.status == SolveStatus::kOptimal || warm.status == SolveStatus::kInfeasible ||
+          warm.status == SolveStatus::kUnbounded) {
+        ++warm_node_solves_;
+        warm_node_iterations_ += warm.iterations;
+        return warm;
+      }
+      logger_.verbose(
+          "node LP: the warm-started dual simplex returned {}; re-solving cold "
+          "with the primal simplex",
+          to_string(warm.status));
+      ++cold_fallbacks_;
+    }
+    Solution cold = solve_primal_simplex(working_, node_options_, logger_, scaling_);
+    ++cold_node_solves_;
+    cold_node_iterations_ += cold.iterations;
+    return cold;
+  }
+
+  /// The basis a solved relaxation reports, or an empty start when it reports none.
+  [[nodiscard]] static WarmStart basis_of(const Solution& relaxation) {
+    WarmStart warm;
+    if (relaxation.status != SolveStatus::kOptimal) return warm;
+    for (const BasisStatus status : relaxation.col_status) {
+      if (status == BasisStatus::kUnknown) return warm;
+    }
+    for (const BasisStatus status : relaxation.row_status) {
+      if (status == BasisStatus::kUnknown) return warm;
+    }
+    warm.col_status = relaxation.col_status;
+    warm.row_status = relaxation.row_status;
+    return warm;
   }
 
   [[nodiscard]] bool can_prune(double bound) const {
@@ -249,6 +297,16 @@ class BranchAndBound {
   bool quadratic_ = false;  ///< the node relaxation is a QP, not an LP
 
   NodeScaling scaling_;
+
+  /// mip_node_engine: warm-started dual (default) or cold primal for every node.
+  bool node_engine_dual_ = true;
+  /// The basis to start the NEXT node LP from; empty means the slack basis (the root).
+  WarmStart current_warm_;
+  Count warm_node_solves_ = 0;
+  Count cold_node_solves_ = 0;
+  Count cold_fallbacks_ = 0;
+  Count warm_node_iterations_ = 0;
+  Count cold_node_iterations_ = 0;
 
   std::vector<TreeNode> nodes_;
   std::vector<Index> open_;
@@ -534,6 +592,8 @@ void BranchAndBound::dive_from_root(const std::vector<double>& start_x) {
     ++lp_resolves;
     if (probe.status != SolveStatus::kOptimal) return;  // dive dead-ends: infeasible or worse
     x = probe.col_value;
+    // The next probe fixes one more column of THIS point, so this basis is its warm start.
+    current_warm_ = basis_of(probe);
   }
   // Budget exhausted without reaching an integral point. Not a failure to report: every
   // bound fixed above lives on the same saved_ stack propagate() uses, so the caller's
@@ -645,6 +705,9 @@ Solution BranchAndBound::run() {
 
     enter(node_index);
     ++nodes_explored_;
+    // Moved, not copied: this node will not be solved twice, and the open list must not
+    // hold a basis per closed node.
+    current_warm_ = std::move(nodes_[static_cast<std::size_t>(node_index)].warm);
 
     if (!propagate()) {
       leave();
@@ -696,6 +759,11 @@ Solution BranchAndBound::run() {
       continue;
     }
 
+    // The children start from THIS relaxation's basis, captured before the dive can
+    // replace current_warm_ with the bases of its own probes.
+    const WarmStart children_warm = basis_of(relaxation);
+    current_warm_ = children_warm;
+
     // Diving (#25): root only. node_index == 0 identifies the root directly - it is the
     // one node present in open_ before anything else can be pushed there, so the first
     // pass through this loop body is always processing it. Every bound the dive fixes
@@ -717,6 +785,7 @@ Solution BranchAndBound::run() {
     down.change = DomainChange{branch_column, true, floor_value};
     down.bound = node_bound;
     down.depth = node.depth + 1;
+    down.warm = children_warm;
 
     TreeNode up;
     up.parent = node_index;
@@ -724,6 +793,7 @@ Solution BranchAndBound::run() {
     up.change = DomainChange{branch_column, false, floor_value + 1.0};
     up.bound = node_bound;
     up.depth = node.depth + 1;
+    up.warm = children_warm;
 
     nodes_.push_back(down);
     const auto down_index = static_cast<Index>(nodes_.size() - 1);
@@ -811,6 +881,15 @@ Solution BranchAndBound::run() {
                to_string(solution.status), solution.objective, solution.dual_bound,
                solution.nodes, solution.solve_seconds);
   logger_.info("Nodes pruned {}, tree {} node(s) at exit", nodes_pruned_, open_.size());
+  if (!quadratic_) {
+    // How the node LPs were solved (#65). The ratio of warm to cold is the whole point of
+    // the dual node engine, and the iterations per solve are the evidence it pays.
+    logger_.info(
+        "Node LPs: {} warm-started dual ({} iterations), {} cold primal ({} iterations), {} "
+        "cold fallback(s) after a dual failure",
+        warm_node_solves_, warm_node_iterations_, cold_node_solves_, cold_node_iterations_,
+        cold_fallbacks_);
+  }
   if (!solution.message.empty()) logger_.info("{}", solution.message);
   return solution;
 }
