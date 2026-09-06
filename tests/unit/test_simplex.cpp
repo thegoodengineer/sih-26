@@ -806,6 +806,42 @@ TEST(PrimalSimplex, OptimalSolveReportsAZeroGap) {
   EXPECT_DOUBLE_EQ(solution.relative_gap, 0.0);
 }
 
+TEST(DualSimplex, ADualDegenerateModelSolvesWithoutHandingOver) {
+  // Every column has the same cost and every row the same shape, so at any dual feasible
+  // basis dozens of reduced costs are exactly zero and the dual ratio test ties on all of
+  // them: the dual-degenerate stall that handed dfl001 to the primal after 1000 zero-length
+  // dual steps. Cost perturbation breaks the ties; the answer must still be the exact one,
+  // which the primal (bound perturbation, its own remedy) establishes independently.
+  //   min sum x_j  s.t.  sum_j x_j >= 10 for each of 40 rows over shifted windows,
+  //   x in [0, 3]; 60 columns.
+  const Index n = 60;
+  const Index m = 40;
+  std::vector<std::vector<double>> rows(static_cast<std::size_t>(m),
+                                        std::vector<double>(static_cast<std::size_t>(n), 0.0));
+  for (Index i = 0; i < m; ++i) {
+    for (Index k = 0; k < 20; ++k) {
+      rows[static_cast<std::size_t>(i)][static_cast<std::size_t>((i + k) % n)] = 1.0;
+    }
+  }
+  const Model model =
+      make_model(ObjSense::kMinimize, std::vector<double>(60, 1.0),
+                 std::vector<double>(60, 0.0), std::vector<double>(60, 3.0), rows,
+                 std::vector<double>(40, 10.0), std::vector<double>(40, kInf));
+  Options options;
+  options.set_bool("log_to_console", false);
+  options.set_bool("presolve", false);
+  options.set_string("algorithm", "dual-simplex");
+  const Solution dual = solve(model, options);
+  options.set_string("algorithm", "simplex");
+  const Solution primal = solve(model, options);
+  ASSERT_EQ(dual.status, SolveStatus::kOptimal) << dual.message;
+  ASSERT_EQ(primal.status, SolveStatus::kOptimal) << primal.message;
+  EXPECT_NEAR(dual.objective, primal.objective,
+              1e-9 * std::max(1.0, std::fabs(primal.objective)));
+  EXPECT_LE(dual.primal_infeasibility, tol::kPrimalFeasibility);
+  EXPECT_LE(dual.dual_infeasibility_scaled, tol::kDualFeasibility) << dual.message;
+}
+
 TEST(PrimalSimplex, AnInterruptedSolveClaimsNoBound) {
   // Stopping on a limit yields an incumbent, not a proof. Reporting the incumbent as a dual
   // bound would let a Phase 5 branch-and-bound prune against a bound nothing established.

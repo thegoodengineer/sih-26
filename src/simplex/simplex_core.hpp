@@ -172,6 +172,12 @@ class Simplex {
   /// loop when the dual cannot finish honestly (artificial bounds active, or a stall).
   Solution run_dual(const WarmStart* warm = nullptr);
 
+  /// Shift every nonbasic cost in the direction that keeps its reduced cost dual feasible,
+  /// so the dual ratio test stops tying. Recomputes the reduced costs.
+  void perturb_costs();
+  /// Put the exact costs back and recompute the reduced costs. Safe to call when inactive.
+  void remove_cost_perturbation();
+
  private:
   /// Options, the working problem, the starting basis and its first factorization. Returns
   /// a finished Solution when nothing can start (a singular slack basis), else nothing.
@@ -333,6 +339,12 @@ class Simplex {
   /// things from the same choice. Perturbation sidesteps the conflict.
   bool perturbed_ = false;
   Count perturbations_ = 0;
+
+  /// Cost perturbation in the dual loop (see kDualCostPerturbation in dual_simplex.cpp).
+  /// unperturbed_cost_ holds the exact minimisation-sense costs while it is active.
+  bool cost_perturbed_ = false;
+  std::vector<double> unperturbed_cost_;
+  Count cost_perturbations_ = 0;
 
   /// Number of basis columns swapped for logicals to escape a singular basis (#34).
   Count repaired_columns_ = 0;
