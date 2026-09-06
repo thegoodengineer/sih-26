@@ -28,8 +28,8 @@ Eight instances, committed to the repository so a fresh clone can reproduce this
 network. **This is the set `demo/run_demo.sh` lets a judge pick from, and it is the easy end
 of Netlib.** Its pass rate is not the headline; section 1c is.
 
-Source CSV: `bench/results/netlib-small-1ec2195.csv`  
-Commit `1ec2195` · machine `Windows-AMD64` · generated 2026-08-31T02:58:03+00:00
+Source CSV: `bench/results/netlib-small-adcee1b.csv`  
+Commit `adcee1b` · machine `Windows-AMD64` · generated 2026-09-06T17:37:58+00:00
 
 **9 of 9 instances in this working set** matched their published optimum to a relative 1e-6 **and** passed independent verification by `tools/verify_solution.py`.
 
@@ -39,99 +39,97 @@ Every instance in this set passed.
 
 | instance | rows | cols | status | our objective | published optimum | rel. error | iters | time (s) | verified |
 |---|---:|---:|---|---:|---:|---:|---:|---:|:--:|
-| `adlittle` | 56 | 97 | optimal | 2.2549496316e+05 | 2.2549496316e+05 | 1.1e-11 | 158 | 0.018 | yes |
-| `afiro` | 27 | 32 | optimal | -4.6475314286e+02 | -4.6475314286e+02 | 6.1e-12 | 16 | 0.016 | yes |
-| `blend` | 74 | 83 | optimal | -3.0812149846e+01 | -3.0812149846e+01 | 5.6e-12 | 337 | 0.020 | yes |
-| `israel` | 174 | 142 | optimal | -8.9664482186e+05 | -8.9664482186e+05 | 3.4e-12 | 251 | 0.028 | yes |
-| `sc105` | 105 | 103 | optimal | -5.2202061212e+01 | -5.2202061212e+01 | 5.6e-12 | 107 | 0.017 | yes |
-| `sc50a` | 50 | 48 | optimal | -6.4575077059e+01 | -6.4575077059e+01 | 6.7e-12 | 46 | 0.018 | yes |
-| `sc50b` | 50 | 48 | optimal | -7.0000000000e+01 | -7.0000000000e+01 | 4.1e-16 | 50 | 0.017 | yes |
-| `share2b` | 96 | 79 | optimal | -4.1573224074e+02 | -4.1573224074e+02 | 3.4e-12 | 114 | 0.017 | yes |
-| `stocfor1` | 117 | 111 | optimal | -4.1131976219e+04 | -4.1131976219e+04 | 1.1e-11 | 68 | 0.019 | yes |
+| `adlittle` | 56 | 97 | optimal | 2.2549496316e+05 | 2.2549496316e+05 | 1.1e-11 | 73 | 0.031 | yes |
+| `afiro` | 27 | 32 | optimal | -4.6475314286e+02 | -4.6475314286e+02 | 6.1e-12 | 13 | 0.023 | yes |
+| `blend` | 74 | 83 | optimal | -3.0812149846e+01 | -3.0812149846e+01 | 5.6e-12 | 97 | 0.029 | yes |
+| `israel` | 174 | 142 | optimal | -8.9664482186e+05 | -8.9664482186e+05 | 3.4e-12 | 176 | 0.045 | yes |
+| `sc105` | 105 | 103 | optimal | -5.2202061212e+01 | -5.2202061212e+01 | 5.6e-12 | 88 | 0.027 | yes |
+| `sc50a` | 50 | 48 | optimal | -6.4575077059e+01 | -6.4575077059e+01 | 6.7e-12 | 42 | 0.023 | yes |
+| `sc50b` | 50 | 48 | optimal | -7.0000000000e+01 | -7.0000000000e+01 | 2.0e-16 | 42 | 0.023 | yes |
+| `share2b` | 96 | 79 | optimal | -4.1573224074e+02 | -4.1573224074e+02 | 3.4e-12 | 133 | 0.030 | yes |
+| `stocfor1` | 117 | 111 | optimal | -4.1131976219e+04 | -4.1131976219e+04 | 1.1e-11 | 101 | 0.025 | yes |
 
 **Summary**
 
-- shifted geometric mean solve time (shift 1s): **0.019s**
-- slowest solved instance: 0.028s
+- shifted geometric mean solve time (shift 1s): **0.028s**
+- slowest solved instance: 0.045s
 - worst relative error against a published optimum: **1.06e-11**
 - no failures on this set
 
 ### 1b. The medium tier — instances up to 500 rows
 
-Source CSV: `bench/results/netlib-medium-dba3a65-default.csv`  
-Commit `dba3a65` · machine `Windows-AMD64` · generated 2026-09-05T18:07:15+00:00
+Source CSV: `bench/results/netlib-medium-adcee1b.csv`  
+Commit `adcee1b` · machine `Windows-AMD64` · generated 2026-09-06T17:34:47+00:00
 
-**46 of 50 instances in this working set** matched their published optimum to a relative 1e-6 **and** passed independent verification by `tools/verify_solution.py`.
+**48 of 50 instances in this working set** matched their published optimum to a relative 1e-6 **and** passed independent verification by `tools/verify_solution.py`.
 
 Coverage: this run used **50 of the 89 instances** Netlib publishes an optimal value for (set `medium`, selected by `fetch_data.py --set medium`). Phase 6's "full Netlib >= 95%" exit criterion is measured against the full set, not against this one.
 
-**4 failed**, grouped by the reason the solver itself gave. They are named here because a pass rate without its failures is a claim, not evidence:
+**2 failed**, grouped by the reason the solver itself gave. They are named here because a pass rate without its failures is a claim, not evidence:
 
 | why it failed | count | instances |
 |---|---:|---|
 | disagrees with the published optimum (#75) | 2 | e226, scrs8 |
-| hit the time limit | 1 | d6cube |
-| verifier rejected the point (#75) | 1 | etamacro |
 
 | instance | rows | cols | status | our objective | published optimum | rel. error | iters | time (s) | verified |
 |---|---:|---:|---|---:|---:|---:|---:|---:|:--:|
-| `adlittle` | 56 | 97 | optimal | 2.2549496316e+05 | 2.2549496316e+05 | 1.1e-11 | 159 | 0.023 | yes |
-| `afiro` | 27 | 32 | optimal | -4.6475314286e+02 | -4.6475314286e+02 | 6.1e-12 | 14 | 0.028 | yes |
-| `agg` | 488 | 163 | optimal | -3.5991767287e+07 | -3.5991767287e+07 | 1.2e-11 | 141 | 0.046 | yes |
-| `bandm` | 305 | 472 | optimal | -1.5862801845e+02 | -1.5862801845e+02 | 7.6e-13 | 476 | 0.040 | yes |
-| `beaconfd` | 173 | 262 | optimal | 3.3592485807e+04 | 3.3592485807e+04 | 6.0e-12 | 93 | 0.038 | yes |
-| `blend` | 74 | 83 | optimal | -3.0812149846e+01 | -3.0812149846e+01 | 5.6e-12 | 298 | 0.044 | yes |
-| `boeing1` | 351 | 384 | optimal | -3.3521356751e+02 | -3.3521356751e+02 | 8.6e-12 | 823 | 0.087 | yes |
-| `boeing2` | 166 | 143 | optimal | -3.1501872802e+02 | -3.1501872802e+02 | 1.5e-11 | 208 | 0.030 | yes |
-| `bore3d` | 233 | 315 | optimal | 1.3730803942e+03 | 1.3730803942e+03 | 6.2e-12 | 149 | 0.028 | yes |
-| `brandy` | 220 | 249 | optimal | 1.5185098965e+03 | 1.5185098965e+03 | 7.8e-12 | 314 | 0.038 | yes |
-| `capri` | 271 | 353 | optimal | 2.6900129138e+03 | 2.6900129138e+03 | 1.2e-11 | 370 | 0.034 | yes |
-| `d6cube` | 415 | 6184 | time_limit | 3.1607333333e+02 | 3.1549166667e+02 | 1.8e-03 | 169544 | 120.095 | - |
-| `degen2` | 444 | 534 | optimal | -1.4351780000e+03 | -1.4351780000e+03 | 0.0e+00 | 1485 | 60.114 | yes |
-| `e226` | 223 | 282 | optimal | -1.1638929066e+01 | -1.8751929066e+01 | 3.8e-01 | 588 | 0.044 | yes |
-| `etamacro` | 400 | 688 | optimal | -7.5571523316e+02 | -7.5571521774e+02 | 2.0e-08 | 672 | 0.055 | **NO** |
-| `finnis` | 497 | 614 | optimal | 1.7279106560e+05 | 1.7279096547e+05 | 5.8e-07 | 589 | 0.052 | yes |
-| `fit1d` | 24 | 1026 | optimal | -9.1463780924e+03 | -9.1463780924e+03 | 2.3e-12 | 1622 | 0.092 | yes |
-| `fit2d` | 25 | 10500 | optimal | -6.8464293294e+04 | -6.8464293294e+04 | 2.4e-12 | 30210 | 10.102 | yes |
-| `forplan` | 161 | 421 | optimal | -6.6421896127e+02 | -6.6421873953e+02 | 3.3e-07 | 1179 | 0.067 | yes |
-| `grow15` | 300 | 645 | optimal | -1.0687094129e+08 | -1.0687094129e+08 | 3.3e-11 | 396 | 0.044 | yes |
-| `grow22` | 440 | 946 | optimal | -1.6083433648e+08 | -1.6083433648e+08 | 1.6e-11 | 588 | 0.074 | yes |
-| `grow7` | 140 | 301 | optimal | -4.7787811815e+07 | -4.7787811815e+07 | 6.0e-12 | 180 | 0.032 | yes |
-| `israel` | 174 | 142 | optimal | -8.9664482186e+05 | -8.9664482186e+05 | 3.4e-12 | 251 | 0.033 | yes |
-| `kb2` | 43 | 41 | optimal | -1.7499001299e+03 | -1.7499001299e+03 | 3.5e-12 | 70 | 0.038 | yes |
-| `lotfi` | 153 | 308 | optimal | -2.5264706062e+01 | -2.5264706062e+01 | 4.7e-12 | 255 | 0.034 | yes |
-| `pilot4` | 410 | 1000 | optimal | -2.5811392589e+03 | -2.5811392641e+03 | 2.0e-09 | 1875 | 0.167 | yes |
-| `recipe` | 91 | 180 | optimal | -2.6661600000e+02 | -2.6661600000e+02 | 1.1e-15 | 45 | 0.024 | yes |
-| `sc105` | 105 | 103 | optimal | -5.2202061212e+01 | -5.2202061212e+01 | 5.6e-12 | 106 | 0.026 | yes |
-| `sc205` | 205 | 203 | optimal | -5.2202061212e+01 | -5.2202061212e+01 | 5.6e-12 | 251 | 0.028 | yes |
-| `sc50a` | 50 | 48 | optimal | -6.4575077059e+01 | -6.4575077059e+01 | 6.7e-12 | 44 | 0.034 | yes |
-| `sc50b` | 50 | 48 | optimal | -7.0000000000e+01 | -7.0000000000e+01 | 0.0e+00 | 47 | 0.025 | yes |
-| `scagr25` | 471 | 500 | optimal | -1.4753433061e+07 | -1.4753433061e+07 | 1.6e-11 | 540 | 0.056 | yes |
-| `scagr7` | 129 | 140 | optimal | -2.3313898243e+06 | -2.3313892548e+06 | 2.4e-07 | 142 | 0.020 | yes |
-| `scfxm1` | 330 | 457 | optimal | 1.8416759028e+04 | 1.8416759028e+04 | 1.9e-11 | 467 | 0.039 | yes |
-| `scorpion` | 388 | 358 | optimal | 1.8781248227e+03 | 1.8781248227e+03 | 2.0e-11 | 301 | 0.031 | yes |
-| `scrs8` | 490 | 1169 | optimal | 9.0429695380e+02 | 9.0429998619e+02 | 3.4e-06 | 678 | 0.062 | yes |
-| `scsd1` | 77 | 760 | optimal | 8.6666666743e+00 | 8.6666666743e+00 | 3.8e-12 | 396 | 0.035 | yes |
-| `scsd6` | 147 | 1350 | optimal | 5.0500000078e+01 | 5.0500000078e+01 | 5.2e-12 | 393 | 0.042 | yes |
-| `scsd8` | 397 | 2750 | optimal | 9.0499999993e+02 | 9.0499999993e+02 | 5.0e-12 | 928 | 0.113 | yes |
-| `sctap1` | 300 | 480 | optimal | 1.4122500000e+03 | 1.4122500000e+03 | 0.0e+00 | 305 | 0.050 | yes |
-| `share1b` | 117 | 225 | optimal | -7.6589318579e+04 | -7.6589318579e+04 | 2.4e-12 | 232 | 0.029 | yes |
-| `share2b` | 96 | 79 | optimal | -4.1573224074e+02 | -4.1573224074e+02 | 3.4e-12 | 114 | 0.035 | yes |
-| `ship04l` | 402 | 2118 | optimal | 1.7933245380e+06 | 1.7933245380e+06 | 1.7e-11 | 555 | 0.064 | yes |
-| `ship04s` | 402 | 1458 | optimal | 1.7987147004e+06 | 1.7987147004e+06 | 2.5e-11 | 397 | 0.036 | yes |
-| `stair` | 356 | 467 | optimal | -2.5126695119e+02 | -2.5126695119e+02 | 1.2e-11 | 884 | 0.097 | yes |
-| `standata` | 359 | 1075 | optimal | 1.2576995000e+03 | 1.2576995000e+03 | 0.0e+00 | 47 | 0.038 | yes |
-| `standmps` | 467 | 1075 | optimal | 1.4060175000e+03 | 1.4060175000e+03 | 0.0e+00 | 187 | 0.058 | yes |
-| `stocfor1` | 117 | 111 | optimal | -4.1131976219e+04 | -4.1131976219e+04 | 1.1e-11 | 64 | 0.035 | yes |
-| `tuff` | 333 | 587 | optimal | 2.9214776509e-01 | 2.9214776509e-01 | 3.6e-12 | 991 | 0.078 | yes |
-| `wood1p` | 244 | 2594 | optimal | 1.4429024116e+00 | 1.4429024116e+00 | 1.8e-11 | 849 | 0.213 | yes |
+| `adlittle` | 56 | 97 | optimal | 2.2549496316e+05 | 2.2549496316e+05 | 1.1e-11 | 73 | 0.043 | yes |
+| `afiro` | 27 | 32 | optimal | -4.6475314286e+02 | -4.6475314286e+02 | 6.1e-12 | 13 | 0.024 | yes |
+| `agg` | 488 | 163 | optimal | -3.5991767287e+07 | -3.5991767287e+07 | 1.2e-11 | 147 | 0.038 | yes |
+| `bandm` | 305 | 472 | optimal | -1.5862801845e+02 | -1.5862801845e+02 | 7.6e-13 | 452 | 0.046 | yes |
+| `beaconfd` | 173 | 262 | optimal | 3.3592485807e+04 | 3.3592485807e+04 | 6.0e-12 | 115 | 0.031 | yes |
+| `blend` | 74 | 83 | optimal | -3.0812149846e+01 | -3.0812149846e+01 | 5.6e-12 | 97 | 0.039 | yes |
+| `boeing1` | 351 | 384 | optimal | -3.3521356751e+02 | -3.3521356751e+02 | 8.6e-12 | 357 | 0.053 | yes |
+| `boeing2` | 166 | 143 | optimal | -3.1501872802e+02 | -3.1501872802e+02 | 1.5e-11 | 133 | 0.033 | yes |
+| `bore3d` | 233 | 315 | optimal | 1.3730803942e+03 | 1.3730803942e+03 | 6.2e-12 | 161 | 0.037 | yes |
+| `brandy` | 220 | 249 | optimal | 1.5185098965e+03 | 1.5185098965e+03 | 7.8e-12 | 282 | 0.053 | yes |
+| `capri` | 271 | 353 | optimal | 2.6900129138e+03 | 2.6900129138e+03 | 1.2e-11 | 236 | 0.044 | yes |
+| `d6cube` | 415 | 6184 | optimal | 3.1549166667e+02 | 3.1549166667e+02 | 1.1e-11 | 1013 | 0.703 | yes |
+| `degen2` | 444 | 534 | optimal | -1.4351780000e+03 | -1.4351780000e+03 | 0.0e+00 | 639 | 0.089 | yes |
+| `e226` | 223 | 282 | optimal | -1.1638929066e+01 | -1.8751929066e+01 | 3.8e-01 | 507 | 0.058 | yes |
+| `etamacro` | 400 | 688 | optimal | -7.5571523312e+02 | -7.5571521774e+02 | 2.0e-08 | 705 | 0.065 | yes |
+| `finnis` | 497 | 614 | optimal | 1.7279106560e+05 | 1.7279096547e+05 | 5.8e-07 | 403 | 0.078 | yes |
+| `fit1d` | 24 | 1026 | optimal | -9.1463780924e+03 | -9.1463780924e+03 | 2.3e-12 | 56 | 0.080 | yes |
+| `fit2d` | 25 | 10500 | optimal | -6.8464293294e+04 | -6.8464293294e+04 | 2.5e-12 | 224 | 0.445 | yes |
+| `forplan` | 161 | 421 | optimal | -6.6421896127e+02 | -6.6421873953e+02 | 3.3e-07 | 309 | 0.054 | yes |
+| `grow15` | 300 | 645 | optimal | -1.0687094129e+08 | -1.0687094129e+08 | 3.3e-11 | 3630 | 0.401 | yes |
+| `grow22` | 440 | 946 | optimal | -1.6083433648e+08 | -1.6083433648e+08 | 1.6e-11 | 3853 | 0.908 | yes |
+| `grow7` | 140 | 301 | optimal | -4.7787811815e+07 | -4.7787811815e+07 | 6.0e-12 | 1932 | 0.177 | yes |
+| `israel` | 174 | 142 | optimal | -8.9664482186e+05 | -8.9664482186e+05 | 3.4e-12 | 176 | 0.056 | yes |
+| `kb2` | 43 | 41 | optimal | -1.7499001299e+03 | -1.7499001299e+03 | 3.5e-12 | 51 | 0.033 | yes |
+| `lotfi` | 153 | 308 | optimal | -2.5264706062e+01 | -2.5264706062e+01 | 4.7e-12 | 243 | 0.048 | yes |
+| `pilot4` | 410 | 1000 | optimal | -2.5811392589e+03 | -2.5811392641e+03 | 2.0e-09 | 1060 | 0.183 | yes |
+| `recipe` | 91 | 180 | optimal | -2.6661600000e+02 | -2.6661600000e+02 | 1.1e-15 | 41 | 0.043 | yes |
+| `sc105` | 105 | 103 | optimal | -5.2202061212e+01 | -5.2202061212e+01 | 5.6e-12 | 88 | 0.030 | yes |
+| `sc205` | 205 | 203 | optimal | -5.2202061212e+01 | -5.2202061212e+01 | 5.6e-12 | 209 | 0.035 | yes |
+| `sc50a` | 50 | 48 | optimal | -6.4575077059e+01 | -6.4575077059e+01 | 6.7e-12 | 42 | 0.035 | yes |
+| `sc50b` | 50 | 48 | optimal | -7.0000000000e+01 | -7.0000000000e+01 | 2.0e-16 | 42 | 0.031 | yes |
+| `scagr25` | 471 | 500 | optimal | -1.4753433061e+07 | -1.4753433061e+07 | 1.6e-11 | 465 | 0.053 | yes |
+| `scagr7` | 129 | 140 | optimal | -2.3313898243e+06 | -2.3313892548e+06 | 2.4e-07 | 111 | 0.034 | yes |
+| `scfxm1` | 330 | 457 | optimal | 1.8416759028e+04 | 1.8416759028e+04 | 1.9e-11 | 460 | 0.048 | yes |
+| `scorpion` | 388 | 358 | optimal | 1.8781248227e+03 | 1.8781248227e+03 | 2.0e-11 | 242 | 0.038 | yes |
+| `scrs8` | 490 | 1169 | optimal | 9.0429695380e+02 | 9.0429998619e+02 | 3.4e-06 | 610 | 0.088 | yes |
+| `scsd1` | 77 | 760 | optimal | 8.6666666743e+00 | 8.6666666743e+00 | 3.8e-12 | 155 | 0.042 | yes |
+| `scsd6` | 147 | 1350 | optimal | 5.0500000077e+01 | 5.0500000078e+01 | 1.7e-11 | 367 | 0.072 | yes |
+| `scsd8` | 397 | 2750 | optimal | 9.0499999993e+02 | 9.0499999993e+02 | 5.0e-12 | 1785 | 0.308 | yes |
+| `sctap1` | 300 | 480 | optimal | 1.4122500000e+03 | 1.4122500000e+03 | 0.0e+00 | 269 | 0.046 | yes |
+| `share1b` | 117 | 225 | optimal | -7.6589318579e+04 | -7.6589318579e+04 | 2.4e-12 | 136 | 0.031 | yes |
+| `share2b` | 96 | 79 | optimal | -4.1573224074e+02 | -4.1573224074e+02 | 3.4e-12 | 133 | 0.039 | yes |
+| `ship04l` | 402 | 2118 | optimal | 1.7933245380e+06 | 1.7933245380e+06 | 1.7e-11 | 449 | 0.091 | yes |
+| `ship04s` | 402 | 1458 | optimal | 1.7987147004e+06 | 1.7987147004e+06 | 2.5e-11 | 300 | 0.062 | yes |
+| `stair` | 356 | 467 | optimal | -2.5126695119e+02 | -2.5126695119e+02 | 1.2e-11 | 448 | 0.086 | yes |
+| `standata` | 359 | 1075 | optimal | 1.2576995000e+03 | 1.2576995000e+03 | 1.8e-16 | 58 | 0.039 | yes |
+| `standmps` | 467 | 1075 | optimal | 1.4060175000e+03 | 1.4060175000e+03 | 1.6e-16 | 200 | 0.043 | yes |
+| `stocfor1` | 117 | 111 | optimal | -4.1131976219e+04 | -4.1131976219e+04 | 1.1e-11 | 101 | 0.034 | yes |
+| `tuff` | 333 | 587 | optimal | 2.9214776509e-01 | 2.9214776509e-01 | 3.6e-12 | 239 | 0.047 | yes |
+| `wood1p` | 244 | 2594 | optimal | 1.4429024116e+00 | 1.4429024116e+00 | 1.8e-11 | 406 | 0.441 | yes |
 
 **Summary**
 
-- shifted geometric mean solve time (shift 1s): **0.209s**
-- slowest solved instance: 60.114s
+- shifted geometric mean solve time (shift 1s): **0.103s**
+- slowest solved instance: 0.908s
 - worst relative error against a published optimum: **5.79e-07**
-- **failed: `d6cube`, `e226`, `etamacro`, `scrs8`** — kept in the table on purpose
+- **failed: `e226`, `scrs8`** — kept in the table on purpose
 
 ### 1c. The full set — the honest headline
 
@@ -139,120 +137,148 @@ Every instance in Netlib's summary table. Both tiers above are defined by a row 
 makes them the easier half of the library by construction; this is the number Phase 6's
 ">= 95% of Netlib" exit criterion is measured against, and the one the README quotes.
 
-Source CSV: `bench/results/netlib-full-d9a09c7.csv`  
-Commit `d9a09c7` · machine `Windows-AMD64` · generated 2026-09-06T07:29:34+00:00
+Source CSV: `bench/results/netlib-full-adcee1b.csv`  
+Commit `adcee1b` · machine `Windows-AMD64` · generated 2026-09-06T16:11:15+00:00
 
-**78 of 89 instances in this working set** matched their published optimum to a relative 1e-6 **and** passed independent verification by `tools/verify_solution.py`.
+**77 of 89 instances in this working set** matched their published optimum to a relative 1e-6 **and** passed independent verification by `tools/verify_solution.py`.
 
 Coverage: this run used **89 of the 89 instances** Netlib publishes an optimal value for (set `full`, selected by `fetch_data.py --set full`). Phase 6's "full Netlib >= 95%" exit criterion is measured against this set.
 
-**11 failed**, grouped by the reason the solver itself gave. They are named here because a pass rate without its failures is a claim, not evidence:
+**12 failed**, grouped by the reason the solver itself gave. They are named here because a pass rate without its failures is a claim, not evidence:
 
 | why it failed | count | instances |
 |---|---:|---|
-| disagrees with the published optimum (#75) | 8 | 80bau3b, e226, ganges, greenbea, greenbeb, nesm, pilot, scrs8 |
-| duals miss feasibility (#52) | 1 | pilot87 |
-| hit the time limit | 1 | dfl001 |
+| disagrees with the published optimum (#75) | 7 | 80bau3b, e226, ganges, greenbea, greenbeb, nesm, scrs8 |
+| hit the time limit | 3 | dfl001, fit2p, pilot87 |
+| duals miss feasibility (#52) | 1 | pilot |
 | numerical_error | 1 | maros-r7 |
 
 | instance | rows | cols | status | our objective | published optimum | rel. error | iters | time (s) | verified |
 |---|---:|---:|---|---:|---:|---:|---:|---:|:--:|
-| `25fv47` | 821 | 1571 | optimal | 5.5018458883e+03 | 5.5018458883e+03 | 2.3e-12 | 6694 | 1.677 | yes |
-| `80bau3b` | 2262 | 9799 | optimal | 9.8722419241e+05 | 9.8723216072e+05 | 8.1e-06 | 4018 | 2.758 | yes |
-| `adlittle` | 56 | 97 | optimal | 2.2549496316e+05 | 2.2549496316e+05 | 1.1e-11 | 70 | 0.044 | yes |
-| `afiro` | 27 | 32 | optimal | -4.6475314286e+02 | -4.6475314286e+02 | 6.1e-12 | 13 | 0.027 | yes |
-| `agg` | 488 | 163 | optimal | -3.5991767287e+07 | -3.5991767287e+07 | 1.2e-11 | 147 | 0.041 | yes |
-| `agg2` | 516 | 302 | optimal | -2.0239252356e+07 | -2.0239252356e+07 | 1.1e-12 | 161 | 0.046 | yes |
-| `agg3` | 516 | 302 | optimal | 1.0312115935e+07 | 1.0312115935e+07 | 8.7e-12 | 166 | 0.050 | yes |
-| `bandm` | 305 | 472 | optimal | -1.5862801845e+02 | -1.5862801845e+02 | 7.6e-13 | 451 | 0.049 | yes |
-| `beaconfd` | 173 | 262 | optimal | 3.3592485807e+04 | 3.3592485807e+04 | 6.0e-12 | 115 | 0.025 | yes |
-| `blend` | 74 | 83 | optimal | -3.0812149846e+01 | -3.0812149846e+01 | 5.6e-12 | 96 | 0.028 | yes |
-| `bnl1` | 643 | 1175 | optimal | 1.9776295615e+03 | 1.9776292856e+03 | 1.4e-07 | 2285 | 0.255 | yes |
-| `bnl2` | 2324 | 3489 | optimal | 1.8112365404e+03 | 1.8112365404e+03 | 2.3e-11 | 2204 | 0.551 | yes |
-| `boeing1` | 351 | 384 | optimal | -3.3521356751e+02 | -3.3521356751e+02 | 8.6e-12 | 357 | 0.054 | yes |
-| `boeing2` | 166 | 143 | optimal | -3.1501872802e+02 | -3.1501872802e+02 | 1.5e-11 | 129 | 0.033 | yes |
-| `bore3d` | 233 | 315 | optimal | 1.3730803942e+03 | 1.3730803942e+03 | 6.2e-12 | 161 | 0.029 | yes |
-| `brandy` | 220 | 249 | optimal | 1.5185098965e+03 | 1.5185098965e+03 | 7.8e-12 | 282 | 0.033 | yes |
-| `capri` | 271 | 353 | optimal | 2.6900129138e+03 | 2.6900129138e+03 | 1.2e-11 | 236 | 0.038 | yes |
-| `cycle` | 1903 | 2857 | optimal | -5.2263930249e+00 | -5.2263930249e+00 | 1.1e-12 | 307 | 0.128 | yes |
-| `czprob` | 929 | 3523 | optimal | 2.1851966989e+06 | 2.1851966989e+06 | 2.0e-11 | 996 | 0.401 | yes |
-| `d2q06c` | 2171 | 5167 | optimal | 1.2278421081e+05 | 1.2278423615e+05 | 2.1e-07 | 23360 | 23.454 | yes |
-| `d6cube` | 415 | 6184 | optimal | 3.1549166667e+02 | 3.1549166667e+02 | 1.1e-11 | 993 | 0.386 | yes |
-| `degen2` | 444 | 534 | optimal | -1.4351780000e+03 | -1.4351780000e+03 | 1.6e-16 | 659 | 0.057 | yes |
-| `degen3` | 1503 | 1818 | optimal | -9.8729400000e+02 | -9.8729400000e+02 | 1.2e-16 | 3136 | 0.823 | yes |
-| `dfl001` | 6071 | 12230 | time_limit | 1.1209096040e+07 | 1.1266400000e+07 | 5.1e-03 | 24942 | 120.106 | - |
-| `e226` | 223 | 282 | optimal | -1.1638929066e+01 | -1.8751929066e+01 | 3.8e-01 | 428 | 0.035 | yes |
-| `etamacro` | 400 | 688 | optimal | -7.5571523337e+02 | -7.5571521774e+02 | 2.1e-08 | 769 | 0.041 | yes |
-| `fffff800` | 524 | 854 | optimal | 5.5567956482e+05 | 5.5567961165e+05 | 8.4e-08 | 625 | 0.054 | yes |
-| `finnis` | 497 | 614 | optimal | 1.7279106560e+05 | 1.7279096547e+05 | 5.8e-07 | 405 | 0.030 | yes |
-| `fit1d` | 24 | 1026 | optimal | -9.1463780924e+03 | -9.1463780924e+03 | 2.3e-12 | 56 | 0.032 | yes |
-| `fit1p` | 627 | 1677 | optimal | 9.1463780924e+03 | 9.1463780924e+03 | 2.3e-12 | 1196 | 0.316 | yes |
-| `fit2d` | 25 | 10500 | optimal | -6.8464293294e+04 | -6.8464293294e+04 | 2.4e-12 | 213 | 0.295 | yes |
-| `fit2p` | 3000 | 13525 | optimal | 6.8464293294e+04 | 6.8464293232e+04 | 9.0e-10 | 5326 | 103.051 | yes |
-| `forplan` | 161 | 421 | optimal | -6.6421896127e+02 | -6.6421873953e+02 | 3.3e-07 | 323 | 0.032 | yes |
-| `ganges` | 1309 | 1681 | optimal | -1.0958573613e+05 | -1.0958636356e+05 | 5.7e-06 | 1113 | 0.097 | yes |
-| `gfrd-pnc` | 616 | 1092 | optimal | 6.9022359995e+06 | 6.9022359995e+06 | 7.1e-12 | 448 | 0.033 | yes |
-| `greenbea` | 2392 | 5405 | optimal | -7.2555248130e+07 | -7.2462405908e+07 | 1.3e-03 | 11710 | 6.490 | yes |
-| `greenbeb` | 2392 | 5405 | optimal | -4.3022602612e+06 | -4.3021476065e+06 | 2.6e-05 | 10632 | 3.895 | yes |
-| `grow15` | 300 | 645 | optimal | -1.0687094129e+08 | -1.0687094129e+08 | 3.3e-11 | 3383 | 0.258 | yes |
-| `grow22` | 440 | 946 | optimal | -1.6083433648e+08 | -1.6083433648e+08 | 1.6e-11 | 6054 | 0.613 | yes |
-| `grow7` | 140 | 301 | optimal | -4.7787811815e+07 | -4.7787811815e+07 | 6.1e-12 | 2054 | 0.098 | yes |
-| `israel` | 174 | 142 | optimal | -8.9664482186e+05 | -8.9664482186e+05 | 3.4e-12 | 206 | 0.027 | yes |
-| `kb2` | 43 | 41 | optimal | -1.7499001299e+03 | -1.7499001299e+03 | 3.5e-12 | 51 | 0.021 | yes |
-| `lotfi` | 153 | 308 | optimal | -2.5264706062e+01 | -2.5264706062e+01 | 4.7e-12 | 272 | 0.021 | yes |
-| `maros` | 846 | 1443 | optimal | -5.8063743701e+04 | -5.8063743701e+04 | 2.2e-12 | 1802 | 0.227 | yes |
-| `maros-r7` | 3136 | 9408 | numerical_error | 0.0000000000e+00 | 1.4971851665e+06 | 1.0e+00 | 1490 | 2.041 | - |
-| `modszk1` | 687 | 1620 | optimal | 3.2061972906e+02 | 3.2061972906e+02 | 1.3e-11 | 663 | 0.055 | yes |
-| `nesm` | 662 | 2923 | optimal | 1.4076036488e+07 | 1.4076073035e+07 | 2.6e-06 | 2382 | 0.236 | yes |
-| `perold` | 625 | 1376 | optimal | -9.3807552841e+03 | -9.3807580773e+03 | 3.0e-07 | 5346 | 0.632 | yes |
-| `pilot` | 1441 | 3652 | optimal | -5.5748972942e+02 | -5.5740430007e+02 | 1.5e-04 | 27851 | 40.715 | yes |
-| `pilot4` | 410 | 1000 | optimal | -2.5811392589e+03 | -2.5811392641e+03 | 2.0e-09 | 3744 | 0.446 | yes |
-| `pilot87` | 2030 | 4883 | feasible | 3.0171063454e+02 | 3.0171072827e+02 | 3.1e-07 | 30389 | 52.836 | yes |
-| `pilotnov` | 975 | 2172 | optimal | -4.4972761882e+03 | -4.4972761882e+03 | 4.2e-12 | 4724 | 1.533 | yes |
-| `recipe` | 91 | 180 | optimal | -2.6661600000e+02 | -2.6661600000e+02 | 1.1e-15 | 41 | 0.017 | yes |
-| `sc105` | 105 | 103 | optimal | -5.2202061212e+01 | -5.2202061212e+01 | 5.6e-12 | 88 | 0.018 | yes |
-| `sc205` | 205 | 203 | optimal | -5.2202061212e+01 | -5.2202061212e+01 | 5.6e-12 | 206 | 0.018 | yes |
-| `sc50a` | 50 | 48 | optimal | -6.4575077059e+01 | -6.4575077059e+01 | 6.7e-12 | 42 | 0.015 | yes |
-| `sc50b` | 50 | 48 | optimal | -7.0000000000e+01 | -7.0000000000e+01 | 0.0e+00 | 42 | 0.017 | yes |
-| `scagr25` | 471 | 500 | optimal | -1.4753433061e+07 | -1.4753433061e+07 | 1.6e-11 | 465 | 0.027 | yes |
-| `scagr7` | 129 | 140 | optimal | -2.3313898243e+06 | -2.3313892548e+06 | 2.4e-07 | 111 | 0.020 | yes |
-| `scfxm1` | 330 | 457 | optimal | 1.8416759028e+04 | 1.8416759028e+04 | 1.9e-11 | 445 | 0.031 | yes |
-| `scfxm2` | 660 | 914 | optimal | 3.6660261565e+04 | 3.6660261565e+04 | 3.3e-14 | 1028 | 0.073 | yes |
-| `scfxm3` | 990 | 1371 | optimal | 5.4901254550e+04 | 5.4901254550e+04 | 4.5e-12 | 1481 | 0.131 | yes |
-| `scorpion` | 388 | 358 | optimal | 1.8781248227e+03 | 1.8781248227e+03 | 2.0e-11 | 241 | 0.024 | yes |
-| `scrs8` | 490 | 1169 | optimal | 9.0429695380e+02 | 9.0429998619e+02 | 3.4e-06 | 602 | 0.045 | yes |
-| `scsd1` | 77 | 760 | optimal | 8.6666666743e+00 | 8.6666666743e+00 | 3.8e-12 | 148 | 0.021 | yes |
-| `scsd6` | 147 | 1350 | optimal | 5.0500000077e+01 | 5.0500000078e+01 | 1.7e-11 | 358 | 0.040 | yes |
-| `scsd8` | 397 | 2750 | optimal | 9.0499999993e+02 | 9.0499999993e+02 | 5.0e-12 | 1991 | 0.206 | yes |
-| `sctap1` | 300 | 480 | optimal | 1.4122500000e+03 | 1.4122500000e+03 | 0.0e+00 | 265 | 0.024 | yes |
-| `sctap2` | 1090 | 1880 | optimal | 1.7248071429e+03 | 1.7248071429e+03 | 2.5e-11 | 736 | 0.064 | yes |
-| `sctap3` | 1480 | 2480 | optimal | 1.4240000000e+03 | 1.4240000000e+03 | 0.0e+00 | 1099 | 0.104 | yes |
-| `seba` | 515 | 1028 | optimal | 1.5711600000e+04 | 1.5711600000e+04 | 1.2e-16 | 439 | 0.036 | yes |
-| `share1b` | 117 | 225 | optimal | -7.6589318579e+04 | -7.6589318579e+04 | 2.4e-12 | 136 | 0.021 | yes |
-| `share2b` | 96 | 79 | optimal | -4.1573224074e+02 | -4.1573224074e+02 | 3.4e-12 | 130 | 0.017 | yes |
-| `shell` | 536 | 1775 | optimal | 1.2088253460e+09 | 1.2088253460e+09 | 0.0e+00 | 459 | 0.040 | yes |
-| `ship04l` | 402 | 2118 | optimal | 1.7933245380e+06 | 1.7933245380e+06 | 1.7e-11 | 449 | 0.040 | yes |
-| `ship04s` | 402 | 1458 | optimal | 1.7987147004e+06 | 1.7987147004e+06 | 2.5e-11 | 300 | 0.032 | yes |
-| `ship08l` | 778 | 4283 | optimal | 1.9090552114e+06 | 1.9090552114e+06 | 5.7e-12 | 743 | 0.086 | yes |
-| `ship08s` | 778 | 2387 | optimal | 1.9200982105e+06 | 1.9200982105e+06 | 1.8e-11 | 429 | 0.042 | yes |
-| `ship12l` | 1151 | 5427 | optimal | 1.4701879193e+06 | 1.4701879193e+06 | 2.0e-11 | 1065 | 0.126 | yes |
-| `ship12s` | 1151 | 2763 | optimal | 1.4892361344e+06 | 1.4892361344e+06 | 4.1e-12 | 584 | 0.053 | yes |
-| `sierra` | 1227 | 2036 | optimal | 1.5394362184e+07 | 1.5394362184e+07 | 2.4e-11 | 555 | 0.062 | yes |
-| `stair` | 356 | 467 | optimal | -2.5126695119e+02 | -2.5126695119e+02 | 1.2e-11 | 431 | 0.044 | yes |
-| `standata` | 359 | 1075 | optimal | 1.2576995000e+03 | 1.2576995000e+03 | 0.0e+00 | 58 | 0.022 | yes |
-| `standmps` | 467 | 1075 | optimal | 1.4060175000e+03 | 1.4060175000e+03 | 0.0e+00 | 200 | 0.025 | yes |
-| `stocfor1` | 117 | 111 | optimal | -4.1131976219e+04 | -4.1131976219e+04 | 1.1e-11 | 101 | 0.021 | yes |
-| `stocfor2` | 2157 | 2031 | optimal | -3.9024408538e+04 | -3.9024408538e+04 | 3.0e-12 | 1815 | 0.259 | yes |
-| `tuff` | 333 | 587 | optimal | 2.9214776509e-01 | 2.9214776509e-01 | 3.6e-12 | 242 | 0.032 | yes |
-| `wood1p` | 244 | 2594 | optimal | 1.4429024116e+00 | 1.4429024116e+00 | 1.9e-11 | 407 | 0.180 | yes |
-| `woodw` | 1098 | 8405 | optimal | 1.3044763331e+00 | 1.3044763331e+00 | 1.2e-11 | 2895 | 0.868 | yes |
+| `25fv47` | 821 | 1571 | optimal | 5.5018458883e+03 | 5.5018458883e+03 | 2.4e-12 | 4462 | 3.846 | yes |
+| `80bau3b` | 2262 | 9799 | optimal | 9.8722419241e+05 | 9.8723216072e+05 | 8.1e-06 | 4031 | 2.043 | yes |
+| `adlittle` | 56 | 97 | optimal | 2.2549496316e+05 | 2.2549496316e+05 | 1.1e-11 | 73 | 0.027 | yes |
+| `afiro` | 27 | 32 | optimal | -4.6475314286e+02 | -4.6475314286e+02 | 6.1e-12 | 13 | 0.021 | yes |
+| `agg` | 488 | 163 | optimal | -3.5991767287e+07 | -3.5991767287e+07 | 1.2e-11 | 147 | 0.036 | yes |
+| `agg2` | 516 | 302 | optimal | -2.0239252356e+07 | -2.0239252356e+07 | 1.1e-12 | 161 | 0.042 | yes |
+| `agg3` | 516 | 302 | optimal | 1.0312115935e+07 | 1.0312115935e+07 | 8.7e-12 | 166 | 0.057 | yes |
+| `bandm` | 305 | 472 | optimal | -1.5862801845e+02 | -1.5862801845e+02 | 7.6e-13 | 452 | 0.056 | yes |
+| `beaconfd` | 173 | 262 | optimal | 3.3592485807e+04 | 3.3592485807e+04 | 6.0e-12 | 115 | 0.037 | yes |
+| `blend` | 74 | 83 | optimal | -3.0812149846e+01 | -3.0812149846e+01 | 5.6e-12 | 97 | 0.033 | yes |
+| `bnl1` | 643 | 1175 | optimal | 1.9776295615e+03 | 1.9776292856e+03 | 1.4e-07 | 1620 | 0.184 | yes |
+| `bnl2` | 2324 | 3489 | optimal | 1.8112365404e+03 | 1.8112365404e+03 | 2.3e-11 | 2291 | 0.620 | yes |
+| `boeing1` | 351 | 384 | optimal | -3.3521356751e+02 | -3.3521356751e+02 | 8.6e-12 | 357 | 0.055 | yes |
+| `boeing2` | 166 | 143 | optimal | -3.1501872802e+02 | -3.1501872802e+02 | 1.5e-11 | 133 | 0.028 | yes |
+| `bore3d` | 233 | 315 | optimal | 1.3730803942e+03 | 1.3730803942e+03 | 6.2e-12 | 161 | 0.044 | yes |
+| `brandy` | 220 | 249 | optimal | 1.5185098965e+03 | 1.5185098965e+03 | 7.8e-12 | 282 | 0.040 | yes |
+| `capri` | 271 | 353 | optimal | 2.6900129138e+03 | 2.6900129138e+03 | 1.2e-11 | 236 | 0.048 | yes |
+| `cycle` | 1903 | 2857 | optimal | -5.2263930249e+00 | -5.2263930249e+00 | 1.1e-12 | 310 | 0.130 | yes |
+| `czprob` | 929 | 3523 | optimal | 2.1851966989e+06 | 2.1851966989e+06 | 2.0e-11 | 996 | 0.186 | yes |
+| `d2q06c` | 2171 | 5167 | optimal | 1.2278421081e+05 | 1.2278423615e+05 | 2.1e-07 | 31857 | 43.132 | yes |
+| `d6cube` | 415 | 6184 | optimal | 3.1549166667e+02 | 3.1549166667e+02 | 1.1e-11 | 1013 | 0.579 | yes |
+| `degen2` | 444 | 534 | optimal | -1.4351780000e+03 | -1.4351780000e+03 | 0.0e+00 | 639 | 0.092 | yes |
+| `degen3` | 1503 | 1818 | optimal | -9.8729400000e+02 | -9.8729400000e+02 | 2.3e-16 | 3276 | 1.210 | yes |
+| `dfl001` | 6071 | 12230 | time_limit | 1.0017719765e+07 | 1.1266400000e+07 | 1.1e-01 | 14655 | 120.296 | - |
+| `e226` | 223 | 282 | optimal | -1.1638929066e+01 | -1.8751929066e+01 | 3.8e-01 | 507 | 0.125 | yes |
+| `etamacro` | 400 | 688 | optimal | -7.5571523312e+02 | -7.5571521774e+02 | 2.0e-08 | 705 | 0.178 | yes |
+| `fffff800` | 524 | 854 | optimal | 5.5567956482e+05 | 5.5567961165e+05 | 8.4e-08 | 718 | 0.149 | yes |
+| `finnis` | 497 | 614 | optimal | 1.7279106560e+05 | 1.7279096547e+05 | 5.8e-07 | 403 | 0.078 | yes |
+| `fit1d` | 24 | 1026 | optimal | -9.1463780924e+03 | -9.1463780924e+03 | 2.3e-12 | 56 | 0.057 | yes |
+| `fit1p` | 627 | 1677 | optimal | 9.1463780924e+03 | 9.1463780924e+03 | 2.3e-12 | 1196 | 1.073 | yes |
+| `fit2d` | 25 | 10500 | optimal | -6.8464293294e+04 | -6.8464293294e+04 | 2.5e-12 | 224 | 1.371 | yes |
+| `fit2p` | 3000 | 13525 | time_limit | 5.9373227008e+04 | 6.8464293232e+04 | 1.3e-01 | 5522 | 121.074 | - |
+| `forplan` | 161 | 421 | optimal | -6.6421896127e+02 | -6.6421873953e+02 | 3.3e-07 | 309 | 0.050 | yes |
+| `ganges` | 1309 | 1681 | optimal | -1.0958573613e+05 | -1.0958636356e+05 | 5.7e-06 | 1083 | 0.141 | yes |
+| `gfrd-pnc` | 616 | 1092 | optimal | 6.9022359995e+06 | 6.9022359995e+06 | 7.1e-12 | 448 | 0.051 | yes |
+| `greenbea` | 2392 | 5405 | optimal | -7.2555248130e+07 | -7.2462405908e+07 | 1.3e-03 | 15843 | 14.056 | yes |
+| `greenbeb` | 2392 | 5405 | optimal | -4.3022602612e+06 | -4.3021476065e+06 | 2.6e-05 | 9314 | 6.328 | yes |
+| `grow15` | 300 | 645 | optimal | -1.0687094129e+08 | -1.0687094129e+08 | 3.3e-11 | 3630 | 0.449 | yes |
+| `grow22` | 440 | 946 | optimal | -1.6083433648e+08 | -1.6083433648e+08 | 1.6e-11 | 3853 | 0.525 | yes |
+| `grow7` | 140 | 301 | optimal | -4.7787811815e+07 | -4.7787811815e+07 | 6.0e-12 | 1932 | 0.138 | yes |
+| `israel` | 174 | 142 | optimal | -8.9664482186e+05 | -8.9664482186e+05 | 3.4e-12 | 176 | 0.037 | yes |
+| `kb2` | 43 | 41 | optimal | -1.7499001299e+03 | -1.7499001299e+03 | 3.5e-12 | 51 | 0.025 | yes |
+| `lotfi` | 153 | 308 | optimal | -2.5264706062e+01 | -2.5264706062e+01 | 4.7e-12 | 243 | 0.033 | yes |
+| `maros` | 846 | 1443 | optimal | -5.8063743701e+04 | -5.8063743701e+04 | 2.2e-12 | 2007 | 0.393 | yes |
+| `maros-r7` | 3136 | 9408 | numerical_error | 0.0000000000e+00 | 1.4971851665e+06 | 1.0e+00 | 655 | 9.652 | - |
+| `modszk1` | 687 | 1620 | optimal | 3.2061972906e+02 | 3.2061972906e+02 | 1.3e-11 | 658 | 0.062 | yes |
+| `nesm` | 662 | 2923 | optimal | 1.4076036488e+07 | 1.4076073035e+07 | 2.6e-06 | 2457 | 0.498 | yes |
+| `perold` | 625 | 1376 | optimal | -9.3807552782e+03 | -9.3807580773e+03 | 3.0e-07 | 4953 | 0.813 | yes |
+| `pilot` | 1441 | 3652 | feasible | -5.5748956079e+02 | -5.5740430007e+02 | 1.5e-04 | 16753 | 22.510 | yes |
+| `pilot4` | 410 | 1000 | optimal | -2.5811392589e+03 | -2.5811392641e+03 | 2.0e-09 | 1060 | 0.345 | yes |
+| `pilot87` | 2030 | 4883 | time_limit | 3.0503277136e+02 | 3.0171072827e+02 | 1.1e-02 | 19894 | 71.803 | - |
+| `pilotnov` | 975 | 2172 | optimal | -4.4972761882e+03 | -4.4972761882e+03 | 4.2e-12 | 3965 | 1.131 | yes |
+| `recipe` | 91 | 180 | optimal | -2.6661600000e+02 | -2.6661600000e+02 | 1.1e-15 | 41 | 0.023 | yes |
+| `sc105` | 105 | 103 | optimal | -5.2202061212e+01 | -5.2202061212e+01 | 5.6e-12 | 88 | 0.034 | yes |
+| `sc205` | 205 | 203 | optimal | -5.2202061212e+01 | -5.2202061212e+01 | 5.6e-12 | 209 | 0.038 | yes |
+| `sc50a` | 50 | 48 | optimal | -6.4575077059e+01 | -6.4575077059e+01 | 6.7e-12 | 42 | 0.026 | yes |
+| `sc50b` | 50 | 48 | optimal | -7.0000000000e+01 | -7.0000000000e+01 | 2.0e-16 | 42 | 0.033 | yes |
+| `scagr25` | 471 | 500 | optimal | -1.4753433061e+07 | -1.4753433061e+07 | 1.6e-11 | 465 | 0.097 | yes |
+| `scagr7` | 129 | 140 | optimal | -2.3313898243e+06 | -2.3313892548e+06 | 2.4e-07 | 111 | 0.032 | yes |
+| `scfxm1` | 330 | 457 | optimal | 1.8416759028e+04 | 1.8416759028e+04 | 1.9e-11 | 460 | 0.061 | yes |
+| `scfxm2` | 660 | 914 | optimal | 3.6660261565e+04 | 3.6660261565e+04 | 3.3e-14 | 945 | 0.121 | yes |
+| `scfxm3` | 990 | 1371 | optimal | 5.4901254550e+04 | 5.4901254550e+04 | 4.5e-12 | 1577 | 0.256 | yes |
+| `scorpion` | 388 | 358 | optimal | 1.8781248227e+03 | 1.8781248227e+03 | 2.0e-11 | 242 | 0.041 | yes |
+| `scrs8` | 490 | 1169 | optimal | 9.0429695380e+02 | 9.0429998619e+02 | 3.4e-06 | 610 | 0.090 | yes |
+| `scsd1` | 77 | 760 | optimal | 8.6666666743e+00 | 8.6666666743e+00 | 3.8e-12 | 155 | 0.038 | yes |
+| `scsd6` | 147 | 1350 | optimal | 5.0500000077e+01 | 5.0500000078e+01 | 1.7e-11 | 367 | 0.070 | yes |
+| `scsd8` | 397 | 2750 | optimal | 9.0499999993e+02 | 9.0499999993e+02 | 5.0e-12 | 1785 | 0.323 | yes |
+| `sctap1` | 300 | 480 | optimal | 1.4122500000e+03 | 1.4122500000e+03 | 0.0e+00 | 269 | 0.040 | yes |
+| `sctap2` | 1090 | 1880 | optimal | 1.7248071429e+03 | 1.7248071429e+03 | 2.5e-11 | 738 | 0.113 | yes |
+| `sctap3` | 1480 | 2480 | optimal | 1.4240000000e+03 | 1.4240000000e+03 | 0.0e+00 | 1076 | 0.160 | yes |
+| `seba` | 515 | 1028 | optimal | 1.5711600000e+04 | 1.5711600000e+04 | 1.2e-16 | 439 | 0.375 | yes |
+| `share1b` | 117 | 225 | optimal | -7.6589318579e+04 | -7.6589318579e+04 | 2.4e-12 | 136 | 0.049 | yes |
+| `share2b` | 96 | 79 | optimal | -4.1573224074e+02 | -4.1573224074e+02 | 3.4e-12 | 133 | 0.087 | yes |
+| `shell` | 536 | 1775 | optimal | 1.2088253460e+09 | 1.2088253460e+09 | 0.0e+00 | 457 | 0.296 | yes |
+| `ship04l` | 402 | 2118 | optimal | 1.7933245380e+06 | 1.7933245380e+06 | 1.7e-11 | 449 | 0.079 | yes |
+| `ship04s` | 402 | 1458 | optimal | 1.7987147004e+06 | 1.7987147004e+06 | 2.5e-11 | 300 | 0.043 | yes |
+| `ship08l` | 778 | 4283 | optimal | 1.9090552114e+06 | 1.9090552114e+06 | 5.7e-12 | 743 | 0.171 | yes |
+| `ship08s` | 778 | 2387 | optimal | 1.9200982105e+06 | 1.9200982105e+06 | 1.8e-11 | 428 | 0.078 | yes |
+| `ship12l` | 1151 | 5427 | optimal | 1.4701879193e+06 | 1.4701879193e+06 | 2.0e-11 | 1065 | 0.323 | yes |
+| `ship12s` | 1151 | 2763 | optimal | 1.4892361344e+06 | 1.4892361344e+06 | 4.1e-12 | 584 | 0.091 | yes |
+| `sierra` | 1227 | 2036 | optimal | 1.5394362184e+07 | 1.5394362184e+07 | 2.4e-11 | 552 | 0.112 | yes |
+| `stair` | 356 | 467 | optimal | -2.5126695119e+02 | -2.5126695119e+02 | 1.2e-11 | 448 | 0.075 | yes |
+| `standata` | 359 | 1075 | optimal | 1.2576995000e+03 | 1.2576995000e+03 | 1.8e-16 | 58 | 0.033 | yes |
+| `standmps` | 467 | 1075 | optimal | 1.4060175000e+03 | 1.4060175000e+03 | 1.6e-16 | 200 | 0.034 | yes |
+| `stocfor1` | 117 | 111 | optimal | -4.1131976219e+04 | -4.1131976219e+04 | 1.1e-11 | 101 | 0.028 | yes |
+| `stocfor2` | 2157 | 2031 | optimal | -3.9024408538e+04 | -3.9024408538e+04 | 3.0e-12 | 1839 | 0.434 | yes |
+| `tuff` | 333 | 587 | optimal | 2.9214776509e-01 | 2.9214776509e-01 | 3.6e-12 | 239 | 0.049 | yes |
+| `wood1p` | 244 | 2594 | optimal | 1.4429024116e+00 | 1.4429024116e+00 | 1.8e-11 | 406 | 0.265 | yes |
+| `woodw` | 1098 | 8405 | optimal | 1.3044763331e+00 | 1.3044763331e+00 | 1.2e-11 | 2955 | 1.334 | yes |
 
 **Summary**
 
-- shifted geometric mean solve time (shift 1s): **0.253s**
-- slowest solved instance: 103.051s
+- shifted geometric mean solve time (shift 1s): **0.262s**
+- slowest solved instance: 43.132s
 - worst relative error against a published optimum: **5.79e-07**
-- **failed: `80bau3b`, `dfl001`, `e226`, `ganges`, `greenbea`, `greenbeb`, `maros-r7`, `nesm`, `pilot`, `pilot87`, `scrs8`** — kept in the table on purpose
+- **failed: `80bau3b`, `dfl001`, `e226`, `fit2p`, `ganges`, `greenbea`, `greenbeb`, `maros-r7`, `nesm`, `pilot`, `pilot87`, `scrs8`** — kept in the table on purpose
+
+### 1d. Beyond Netlib — Mittelmann's LP set
+
+Netlib's largest instance has about 6,000 rows. PS26119 asks about "thousands to millions
+of variables", and the only honest way to say where this solver stands on that is to run
+instances of that size and name what happens. These are the eight smallest archives in
+Mittelmann's LP test set (`bench/runners/fetch_mittelmann.py`, provenance in
+`data/mittelmann/reference.json`).
+
+Source CSV: `bench/results/mittelmann-ca64dd5.csv`  
+Commit `ca64dd5` · machine `Windows-AMD64` · time limit 300 s per instance, both solvers
+
+**0 of 8** instances reached `optimal` inside the limit; **0 of 8** also passed the independent verifier and agree with HiGHS. HiGHS, run as a separate process under the same limit, finished **4 of 8**.
+
+These are the smallest archives in Mittelmann's LP directory and they are still one to two orders of magnitude beyond Netlib's largest instance. No published optimum exists for them, so there is no pass-against-a-number column: the outcome is the status, the verifier's verdict where a solution was written, and HiGHS's objective where HiGHS finished. `our objective` on a `time_limit` row is the last iterate's value, not a bound, and is printed only so that a later run can be compared with it.
+
+| instance | rows | cols | nonzeros | status | our objective | HiGHS objective | rel. diff | iters | solver time (s) | verified |
+|---|---:|---:|---:|---|---:|---:|---:|---:|---:|:--:|
+| `Linf_520c` | 93326 | 69004 | 566193 | time_limit | 0.011540388 | Time limit reached | - | 1688 | 304.8 | - |
+| `bdry2` | 376500 | 250998 | 1500003 | time_limit | -0.0043 | Time limit reached | - | 1 | 389.2 | - |
+| `brazil3` | 14646 | 23968 | 133184 | time_limit | 0 | 2 | - | 28833 | 300.1 | - |
+| `chromaticindex1024-7` | 67583 | 73728 | 270324 | time_limit | 3 | 3 | - | 4368 | 300.8 | - |
+| `irish-electricity` | 104259 | 61728 | 523257 | time_limit | 0 | 2546254.563 | - | 5365 | 300.2 | - |
+| `qap15` | 6330 | 22275 | 94950 | time_limit | 1177.867221 | Time limit reached | - | 13088 | 304.5 | - |
+| `rmine15` | 358395 | 42438 | 879732 | time_limit | -8443.961371 | Time limit reached | - | 28 | 309.1 | - |
+| `supportcase10` | 165684 | 14770 | 555082 | time_limit | 0 | 3.383923666 | - | 1010 | 316.5 | - |
+
+**Not solved inside the limit**, named rather than dropped: `Linf_520c`, `bdry2`, `brazil3`, `chromaticindex1024-7`, `irish-electricity`, `qap15`, `rmine15`, `supportcase10`.
 
 ---
 
@@ -261,10 +287,10 @@ Coverage: this run used **89 of the 89 instances** Netlib publishes an optimal v
 The LP tiers above say nothing about the branch and bound. This is the MILP evidence, and it
 is a harder library: MIPLIB instances are chosen to be difficult for mature solvers.
 
-Source CSV: `bench/results/miplib-410789c.csv`  
-Commit `410789c` · machine `Windows-AMD64`
+Source CSV: `bench/results/miplib-adcee1b.csv`  
+Commit `adcee1b` · machine `Windows-AMD64`
 
-**11 of 30** instances reached the published optimum. **6 of 30** also PROVED it - closed the bound rather than stopping at a gap target or a limit.
+**13 of 30** instances reached the published optimum. **6 of 30** also PROVED it - closed the bound rather than stopping at a gap target or a limit.
 
 Those are different claims and are kept apart deliberately. Branch and bound here has no cutting planes - a rounding heuristic and a root dive, but nothing that tightens the relaxation - so it finds good incumbents far more often than it finishes the proof. Collapsing the two columns would hide exactly the thing #23 is meant to improve.
 
@@ -274,38 +300,38 @@ Instances are the smallest MIPLIB 2017 instances tagged easy that carry a **prov
 
 | instance | rows | cols | int | status | our objective | published | rel. gap | nodes | time (s) | matched | proved | verified |
 |---|---:|---:|---:|---|---:|---:|---:|---:|---:|:--:|:--:|:--:|
-| `b-ball` | 30 | 100 | 88 | feasible | -1.5 | -1.5 | 2.12e-01 | 38096 | 60.1 | yes | **NO** | yes |
-| `ej` | 1 | 3 | 3 | feasible | 51015 | 25508 | 1.00e+00 | 70341 | 60.1 | **NO** | **NO** | yes |
-| `enlight8` | 64 | 128 | 128 | node_limit | inf | 27 | - | 35778 | 60.1 | **NO** | **NO** | **NO** |
-| `enlight_hard` | 100 | 200 | 200 | node_limit | inf | 37 | - | 25638 | 60.1 | **NO** | **NO** | **NO** |
-| `f2gap40400` | 40 | 400 | 400 | optimal | 20772 | 20772 | 0.00e+00 | 509 | 2.6 | yes | yes | yes |
-| `flugpl` | 18 | 18 | 11 | feasible | 1201500 | 1201500 | 8.74e-05 | 1323 | 0.1 | yes | **NO** | yes |
-| `gen-ip016` | 24 | 28 | 28 | feasible | -9430.730724 | -9476.155197 | 7.48e-03 | 63830 | 60.0 | **NO** | **NO** | yes |
-| `gen-ip054` | 27 | 30 | 30 | feasible | 6872.821391 | 6840.965642 | 1.33e-02 | 71695 | 60.0 | **NO** | **NO** | yes |
-| `gr4x6` | 34 | 48 | 24 | optimal | 202.35 | 202.35 | 0.00e+00 | 142 | 0.1 | yes | yes | yes |
-| `gt2` | 29 | 188 | 188 | feasible | 32523 | 21166 | 5.71e-01 | 119004 | 60.0 | **NO** | **NO** | yes |
-| `k16x240b` | 256 | 480 | 240 | feasible | 12512 | 11393 | 4.75e-01 | 29929 | 60.0 | **NO** | **NO** | yes |
-| `markshare1` | 6 | 62 | 50 | feasible | 28 | 1 | 1.00e+00 | 142973 | 60.0 | **NO** | **NO** | yes |
-| `markshare_4_0` | 4 | 34 | 30 | feasible | 5 | 1 | 1.00e+00 | 203867 | 60.0 | **NO** | **NO** | yes |
-| `markshare_5_0` | 5 | 45 | 40 | feasible | 15 | 1 | 1.00e+00 | 162195 | 60.0 | **NO** | **NO** | yes |
-| `neos-1425699` | 89 | 105 | 85 | optimal | 3179698977 | 3179698977 | 0.00e+00 | 3 | 0.0 | yes | yes | yes |
-| `neos-3072252-nete` | 432 | 576 | 144 | feasible | 13790610 | 11807698 | 2.29e-01 | 4559 | 60.0 | **NO** | **NO** | yes |
-| `neos-3611689-kaihu` | 323 | 421 | 88 | feasible | 122 | 119 | 1.39e-01 | 6151 | 60.0 | **NO** | **NO** | yes |
-| `neos-5140963-mincio` | 184 | 196 | 183 | feasible | 14817 | 14393 | 2.50e-01 | 33842 | 60.0 | **NO** | **NO** | yes |
-| `neos-5192052-neckar` | 57 | 180 | 24 | optimal | -11670000 | -11670000 | 0.00e+00 | 9 | 0.0 | yes | yes | yes |
-| `neos5` | 63 | 63 | 53 | feasible | 16 | 15 | 1.33e-01 | 38929 | 555.4 | **NO** | **NO** | yes |
-| `noswot` | 182 | 128 | 100 | feasible | -39 | -41.00000885 | 1.03e-01 | 86192 | 60.4 | **NO** | **NO** | yes |
-| `opt1217` | 64 | 769 | 768 | feasible | -16 | -16 | 2.51e-01 | 27644 | 60.0 | yes | **NO** | yes |
-| `p0201` | 133 | 201 | 201 | feasible | 7615 | 7615 | 5.47e-05 | 1922 | 5.7 | yes | **NO** | yes |
-| `pk1` | 45 | 86 | 55 | feasible | 19 | 11 | 8.27e-01 | 69012 | 60.0 | **NO** | **NO** | yes |
-| `ran12x21` | 285 | 504 | 252 | feasible | 3795 | 3664 | 1.23e-01 | 6587 | 60.0 | **NO** | **NO** | yes |
-| `ran13x13` | 195 | 338 | 169 | feasible | 3385 | 3252 | 1.33e-01 | 12145 | 60.0 | **NO** | **NO** | yes |
-| `rlp1` | 68 | 461 | 450 | feasible | 15 | 15 | 1.17e-01 | 17256 | 60.0 | yes | **NO** | yes |
-| `supportcase14` | 234 | 304 | 304 | optimal | 288 | 288 | 0.00e+00 | 131 | 0.7 | yes | yes | yes |
-| `supportcase16` | 130 | 319 | 319 | optimal | 288 | 288 | 0.00e+00 | 258 | 0.6 | yes | yes | yes |
-| `timtab1` | 171 | 397 | 171 | node_limit | inf | 764772 | - | 10330 | 60.0 | **NO** | **NO** | **NO** |
+| `b-ball` | 30 | 100 | 88 | feasible | -1.5 | -1.5 | 2.12e-01 | 88124 | 60.1 | yes | **NO** | yes |
+| `ej` | 1 | 3 | 3 | feasible | 51015 | 25508 | 1.00e+00 | 63941 | 60.0 | **NO** | **NO** | yes |
+| `enlight8` | 64 | 128 | 128 | node_limit | inf | 27 | - | 111422 | 60.1 | **NO** | **NO** | **NO** |
+| `enlight_hard` | 100 | 200 | 200 | node_limit | inf | 37 | - | 86092 | 60.0 | **NO** | **NO** | **NO** |
+| `f2gap40400` | 40 | 400 | 400 | feasible | 20772 | 20772 | 5.23e-05 | 543 | 4.0 | yes | **NO** | yes |
+| `flugpl` | 18 | 18 | 11 | feasible | 1201500 | 1201500 | 1.87e-05 | 545 | 0.1 | yes | **NO** | yes |
+| `gen-ip016` | 24 | 28 | 28 | feasible | -9431.212409 | -9476.155197 | 7.38e-03 | 80329 | 60.0 | **NO** | **NO** | yes |
+| `gen-ip054` | 27 | 30 | 30 | feasible | 6859.867147 | 6840.965642 | 1.08e-02 | 81980 | 60.0 | **NO** | **NO** | yes |
+| `gr4x6` | 34 | 48 | 24 | optimal | 202.35 | 202.35 | 0.00e+00 | 71 | 0.1 | yes | yes | yes |
+| `gt2` | 29 | 188 | 188 | optimal | 21166 | 21166 | 0.00e+00 | 478 | 0.5 | yes | yes | yes |
+| `k16x240b` | 256 | 480 | 240 | feasible | 12066 | 11393 | 4.30e-01 | 64922 | 60.1 | **NO** | **NO** | yes |
+| `markshare1` | 6 | 62 | 50 | feasible | 40 | 1 | 1.00e+00 | 95138 | 60.0 | **NO** | **NO** | yes |
+| `markshare_4_0` | 4 | 34 | 30 | feasible | 4 | 1 | 1.00e+00 | 107802 | 60.1 | **NO** | **NO** | yes |
+| `markshare_5_0` | 5 | 45 | 40 | feasible | 42 | 1 | 1.00e+00 | 71102 | 60.1 | **NO** | **NO** | yes |
+| `neos-1425699` | 89 | 105 | 85 | optimal | 3179698977 | 3179698977 | 0.00e+00 | 3 | 0.1 | yes | yes | yes |
+| `neos-3072252-nete` | 432 | 576 | 144 | feasible | 11928124 | 11807698 | 1.10e-01 | 13575 | 60.0 | **NO** | **NO** | yes |
+| `neos-3611689-kaihu` | 323 | 421 | 88 | feasible | 120 | 119 | 5.93e-02 | 36018 | 60.1 | **NO** | **NO** | yes |
+| `neos-5140963-mincio` | 184 | 196 | 183 | feasible | 15178 | 14393 | 2.53e-01 | 26451 | 60.3 | **NO** | **NO** | yes |
+| `neos-5192052-neckar` | 57 | 180 | 24 | optimal | -11670000 | -11670000 | 0.00e+00 | 9 | 1.5 | yes | yes | yes |
+| `neos5` | 63 | 63 | 53 | feasible | 15.5 | 15 | 1.13e-01 | 8926 | 60.3 | **NO** | **NO** | yes |
+| `noswot` | 182 | 128 | 100 | feasible | -41 | -41.00000885 | 4.88e-02 | 48827 | 60.1 | yes | **NO** | yes |
+| `opt1217` | 64 | 769 | 768 | feasible | -16 | -16 | 2.51e-01 | 26786 | 60.1 | yes | **NO** | yes |
+| `p0201` | 133 | 201 | 201 | feasible | 7615 | 7615 | 1.19e-16 | 860 | 7.7 | yes | **NO** | yes |
+| `pk1` | 45 | 86 | 55 | feasible | 18 | 11 | 8.16e-01 | 38089 | 60.1 | **NO** | **NO** | yes |
+| `ran12x21` | 285 | 504 | 252 | feasible | 3794 | 3664 | 9.48e-02 | 26170 | 60.1 | **NO** | **NO** | yes |
+| `ran13x13` | 195 | 338 | 169 | feasible | 3319 | 3252 | 8.09e-02 | 43557 | 60.1 | **NO** | **NO** | yes |
+| `rlp1` | 68 | 461 | 450 | feasible | 15 | 15 | 1.15e-01 | 32709 | 60.1 | yes | **NO** | yes |
+| `supportcase14` | 234 | 304 | 304 | optimal | 288 | 288 | 0.00e+00 | 89 | 1.5 | yes | yes | yes |
+| `supportcase16` | 130 | 319 | 319 | optimal | 288 | 288 | 0.00e+00 | 70 | 1.2 | yes | yes | yes |
+| `timtab1` | 171 | 397 | 171 | feasible | 1176264 | 764772 | 7.31e-01 | 48189 | 60.1 | **NO** | **NO** | yes |
 
-**Not proved optimal**, named rather than dropped: `b-ball`, `ej`, `enlight8`, `enlight_hard`, `flugpl`, `gen-ip016`, `gen-ip054`, `gt2`, `k16x240b`, `markshare1`, `markshare_4_0`, `markshare_5_0`, `neos-3072252-nete`, `neos-3611689-kaihu`, `neos-5140963-mincio`, `neos5`, `noswot`, `opt1217`, `p0201`, `pk1`, `ran12x21`, `ran13x13`, `rlp1`, `timtab1`.
+**Not proved optimal**, named rather than dropped: `b-ball`, `ej`, `enlight8`, `enlight_hard`, `f2gap40400`, `flugpl`, `gen-ip016`, `gen-ip054`, `k16x240b`, `markshare1`, `markshare_4_0`, `markshare_5_0`, `neos-3072252-nete`, `neos-3611689-kaihu`, `neos-5140963-mincio`, `neos5`, `noswot`, `opt1217`, `p0201`, `pk1`, `ran12x21`, `ran13x13`, `rlp1`, `timtab1`.
 
 ---
 
@@ -338,75 +364,75 @@ demo set. Comparing only where we pass would be the easy version of this table a
 nothing: the instances we fail are exactly the ones a reader should want to see against a
 mature solver.
 
-Source CSV: `bench/results/compare-highs-medium-a90db47.csv`  
-Commit `a90db47` · machine `Windows-AMD64`
+Source CSV: `bench/results/compare-highs-medium-adcee1b.csv`  
+Commit `adcee1b` · machine `Windows-AMD64`
 
-**45 of 50** instances where the two solvers agree on the objective.
+**50 of 50** instances where the two solvers agree on the objective.
 
 Times are **solver-internal on both sides** - HiGHS's own `getRunTime()` against our `effort.solve_seconds` - so process start-up is excluded for both. At this instance size start-up would otherwise dominate and the comparison would measure the wrong thing entirely.
 
 | instance | SANKHYA obj | HiGHS obj | agree | SANKHYA (s) | HiGHS (s) | ratio |
 |---|---:|---:|:--:|---:|---:|---:|
-| `adlittle` | 2.25494963e+05 | 2.25494963e+05 | yes | 0.004 | 0.013 | 0.30x |
-| `afiro` | -4.64753143e+02 | -4.64753143e+02 | yes | 0.001 | 0.003 | 0.29x |
-| `agg` | -3.59917673e+07 | -3.59917673e+07 | yes | 0.034 | 0.014 | 2.53x |
-| `bandm` | -1.58628018e+02 | -1.58628018e+02 | yes | 0.049 | 0.018 | 2.74x |
-| `beaconfd` | 3.35924858e+04 | 3.35924858e+04 | yes | 0.005 | 0.006 | 0.75x |
-| `blend` | -3.08121498e+01 | -3.08121498e+01 | yes | 0.009 | 0.005 | 2.06x |
-| `boeing1` | -3.35213568e+02 | -3.35213568e+02 | yes | 0.029 | 0.028 | 1.02x |
-| `boeing2` | -3.15018728e+02 | -3.15018728e+02 | yes | 0.005 | 0.007 | 0.74x |
-| `bore3d` | 1.37308039e+03 | 1.37308039e+03 | yes | 0.008 | 0.005 | 1.44x |
-| `brandy` | 1.51850990e+03 | 1.51850990e+03 | yes | 0.015 | 0.013 | 1.17x |
-| `capri` | 2.69001291e+03 | 2.69001291e+03 | yes | 0.020 | 0.008 | 2.64x |
-| `d6cube` | 1.00000000e+00 | 3.15491667e+02 | **NO** | 1.831 | 0.463 | 3.95x |
-| `degen2` | -1.43517800e+03 | -1.43517800e+03 | yes | 0.640 | 0.053 | 12.16x |
-| `e226` | -1.16389291e+01 | -1.16389291e+01 | yes | 0.028 | 0.029 | 0.99x |
-| `etamacro` | -7.55715233e+02 | -7.55715233e+02 | yes | 0.037 | 0.039 | 0.96x |
-| `finnis` | 1.72791066e+05 | 1.72791066e+05 | yes | 0.039 | 0.021 | 1.86x |
-| `fit1d` | -9.14637809e+03 | -9.14637809e+03 | yes | 0.079 | 0.044 | 1.82x |
-| `fit2d` | -6.84642933e+04 | -6.84642933e+04 | yes | 27.962 | 0.715 | 39.09x |
-| `forplan` | -6.64218961e+02 | -6.64218961e+02 | yes | 0.174 | 0.052 | 3.31x |
-| `grow15` | 0.00000000e+00 | -1.06870941e+08 | **NO** | 0.221 | 0.176 | 1.25x |
-| `grow22` | -1.60834336e+08 | -1.60834336e+08 | yes | 0.396 | 0.395 | 1.00x |
-| `grow7` | -4.77878118e+07 | -4.77878118e+07 | yes | 0.034 | 0.046 | 0.74x |
-| `israel` | -8.96644822e+05 | -8.96644822e+05 | yes | 0.045 | 0.016 | 2.86x |
-| `kb2` | -1.74990013e+03 | -1.74990013e+03 | yes | 0.003 | 0.003 | 0.87x |
-| `lotfi` | -2.52647061e+01 | -2.52647061e+01 | yes | 0.018 | 0.012 | 1.51x |
-| `pilot4` | 0.00000000e+00 | -2.58113926e+03 | **NO** | 0.271 | 0.154 | 1.76x |
-| `recipe` | -2.66616000e+02 | -2.66616000e+02 | yes | 0.003 | 0.006 | 0.46x |
-| `sc105` | -5.22020612e+01 | -5.22020612e+01 | yes | 0.011 | 0.006 | 1.77x |
-| `sc205` | -5.22020612e+01 | -5.22020612e+01 | yes | 0.027 | 0.009 | 2.98x |
-| `sc50a` | -6.45750771e+01 | -6.45750771e+01 | yes | 0.002 | 0.003 | 0.82x |
-| `sc50b` | -7.00000000e+01 | -7.00000000e+01 | yes | 0.003 | 0.004 | 0.70x |
-| `scagr25` | -1.47534331e+07 | -1.47534331e+07 | yes | 0.136 | 0.028 | 4.86x |
-| `scagr7` | -2.33138982e+06 | -2.33138982e+06 | yes | 0.005 | 0.015 | 0.35x |
-| `scfxm1` | 1.84167590e+04 | 1.84167590e+04 | yes | 0.065 | 0.034 | 1.87x |
-| `scorpion` | 1.87812482e+03 | 1.87812482e+03 | yes | 0.015 | 0.013 | 1.20x |
-| `scrs8` | 9.04296954e+02 | 9.04296954e+02 | yes | 0.071 | 0.043 | 1.65x |
-| `scsd1` | 8.66666667e+00 | 8.66666667e+00 | yes | 0.026 | 0.012 | 2.15x |
-| `scsd6` | 5.05000001e+01 | 5.05000001e+01 | yes | 0.074 | 0.030 | 2.45x |
-| `scsd8` | 9.05000000e+02 | 9.05000000e+02 | yes | 0.137 | 0.172 | 0.80x |
-| `sctap1` | 1.41225000e+03 | 1.41225000e+03 | yes | 0.025 | 0.024 | 1.02x |
-| `share1b` | -7.65893186e+04 | -7.65893186e+04 | yes | 0.005 | 0.014 | 0.33x |
-| `share2b` | -4.15732241e+02 | -4.15732241e+02 | yes | 0.005 | 0.009 | 0.49x |
-| `ship04l` | 1.79332454e+06 | 1.79332454e+06 | yes | 0.062 | 0.034 | 1.81x |
-| `ship04s` | 1.79871470e+06 | 1.79871470e+06 | yes | 0.035 | 0.026 | 1.35x |
-| `stair` | -2.51266951e+02 | -2.51266951e+02 | yes | 1.623 | 0.059 | 27.42x |
-| `standata` | 1.25769950e+03 | 1.25769950e+03 | yes | 0.011 | 0.022 | 0.50x |
-| `standmps` | 1.40601750e+03 | 1.40601750e+03 | yes | 0.018 | 0.024 | 0.78x |
-| `stocfor1` | -4.11319762e+04 | -4.11319762e+04 | yes | 0.005 | 0.007 | 0.68x |
-| `tuff` | 0.00000000e+00 | 2.92147765e-01 | **NO** | 0.192 | 0.035 | 5.45x |
-| `wood1p` | 0.00000000e+00 | 1.44290241e+00 | **NO** | 0.795 | 0.276 | 2.88x |
+| `adlittle` | 2.25494963e+05 | 2.25494963e+05 | yes | 0.003 | 0.002 | 2.14x |
+| `afiro` | -4.64753143e+02 | -4.64753143e+02 | yes | 0.001 | 0.001 | 1.01x |
+| `agg` | -3.59917673e+07 | -3.59917673e+07 | yes | 0.014 | 0.005 | 3.03x |
+| `bandm` | -1.58628018e+02 | -1.58628018e+02 | yes | 0.038 | 0.040 | 0.96x |
+| `beaconfd` | 3.35924858e+04 | 3.35924858e+04 | yes | 0.011 | 0.010 | 1.05x |
+| `blend` | -3.08121498e+01 | -3.08121498e+01 | yes | 0.004 | 0.006 | 0.64x |
+| `boeing1` | -3.35213568e+02 | -3.35213568e+02 | yes | 0.030 | 0.043 | 0.71x |
+| `boeing2` | -3.15018728e+02 | -3.15018728e+02 | yes | 0.006 | 0.010 | 0.57x |
+| `bore3d` | 1.37308039e+03 | 1.37308039e+03 | yes | 0.009 | 0.009 | 1.10x |
+| `brandy` | 1.51850990e+03 | 1.51850990e+03 | yes | 0.018 | 0.020 | 0.91x |
+| `capri` | 2.69001291e+03 | 2.69001291e+03 | yes | 0.015 | 0.014 | 1.07x |
+| `d6cube` | 3.15491667e+02 | 3.15491667e+02 | yes | 0.647 | 0.483 | 1.34x |
+| `degen2` | -1.43517800e+03 | -1.43517800e+03 | yes | 0.057 | 0.052 | 1.09x |
+| `e226` | -1.16389291e+01 | -1.16389291e+01 | yes | 0.042 | 0.030 | 1.42x |
+| `etamacro` | -7.55715233e+02 | -7.55715233e+02 | yes | 0.049 | 0.041 | 1.19x |
+| `finnis` | 1.72791066e+05 | 1.72791066e+05 | yes | 0.033 | 0.020 | 1.63x |
+| `fit1d` | -9.14637809e+03 | -9.14637809e+03 | yes | 0.014 | 0.043 | 0.32x |
+| `fit2d` | -6.84642933e+04 | -6.84642933e+04 | yes | 0.317 | 0.606 | 0.52x |
+| `forplan` | -6.64218961e+02 | -6.64218961e+02 | yes | 0.019 | 0.026 | 0.71x |
+| `grow15` | -1.06870941e+08 | -1.06870941e+08 | yes | 0.415 | 0.165 | 2.52x |
+| `grow22` | -1.60834336e+08 | -1.60834336e+08 | yes | 0.578 | 0.325 | 1.78x |
+| `grow7` | -4.77878118e+07 | -4.77878118e+07 | yes | 0.155 | 0.044 | 3.55x |
+| `israel` | -8.96644822e+05 | -8.96644822e+05 | yes | 0.009 | 0.013 | 0.71x |
+| `kb2` | -1.74990013e+03 | -1.74990013e+03 | yes | 0.002 | 0.003 | 0.86x |
+| `lotfi` | -2.52647061e+01 | -2.52647061e+01 | yes | 0.014 | 0.010 | 1.49x |
+| `pilot4` | -2.58113926e+03 | -2.58113926e+03 | yes | 0.157 | 0.110 | 1.42x |
+| `recipe` | -2.66616000e+02 | -2.66616000e+02 | yes | 0.003 | 0.005 | 0.59x |
+| `sc105` | -5.22020612e+01 | -5.22020612e+01 | yes | 0.004 | 0.005 | 0.89x |
+| `sc205` | -5.22020612e+01 | -5.22020612e+01 | yes | 0.012 | 0.008 | 1.57x |
+| `sc50a` | -6.45750771e+01 | -6.45750771e+01 | yes | 0.002 | 0.002 | 0.98x |
+| `sc50b` | -7.00000000e+01 | -7.00000000e+01 | yes | 0.002 | 0.003 | 0.58x |
+| `scagr25` | -1.47534331e+07 | -1.47534331e+07 | yes | 0.027 | 0.030 | 0.91x |
+| `scagr7` | -2.33138982e+06 | -2.33138982e+06 | yes | 0.008 | 0.010 | 0.81x |
+| `scfxm1` | 1.84167590e+04 | 1.84167590e+04 | yes | 0.075 | 0.035 | 2.14x |
+| `scorpion` | 1.87812482e+03 | 1.87812482e+03 | yes | 0.032 | 0.012 | 2.70x |
+| `scrs8` | 9.04296954e+02 | 9.04296954e+02 | yes | 0.143 | 0.044 | 3.26x |
+| `scsd1` | 8.66666667e+00 | 8.66666667e+00 | yes | 0.031 | 0.009 | 3.59x |
+| `scsd6` | 5.05000001e+01 | 5.05000001e+01 | yes | 0.083 | 0.013 | 6.67x |
+| `scsd8` | 9.05000000e+02 | 9.05000000e+02 | yes | 0.302 | 0.063 | 4.77x |
+| `sctap1` | 1.41225000e+03 | 1.41225000e+03 | yes | 0.014 | 0.007 | 2.02x |
+| `share1b` | -7.65893186e+04 | -7.65893186e+04 | yes | 0.010 | 0.007 | 1.47x |
+| `share2b` | -4.15732241e+02 | -4.15732241e+02 | yes | 0.004 | 0.002 | 2.18x |
+| `ship04l` | 1.79332454e+06 | 1.79332454e+06 | yes | 0.029 | 0.009 | 3.10x |
+| `ship04s` | 1.79871470e+06 | 1.79871470e+06 | yes | 0.016 | 0.010 | 1.58x |
+| `stair` | -2.51266951e+02 | -2.51266951e+02 | yes | 0.048 | 0.020 | 2.40x |
+| `standata` | 1.25769950e+03 | 1.25769950e+03 | yes | 0.007 | 0.007 | 1.02x |
+| `standmps` | 1.40601750e+03 | 1.40601750e+03 | yes | 0.020 | 0.008 | 2.42x |
+| `stocfor1` | -4.11319762e+04 | -4.11319762e+04 | yes | 0.006 | 0.003 | 1.99x |
+| `tuff` | 2.92147765e-01 | 2.92147765e-01 | yes | 0.017 | 0.013 | 1.31x |
+| `wood1p` | 1.44290241e+00 | 1.44290241e+00 | yes | 0.175 | 0.096 | 1.83x |
 
 **Summary**
 
-- SANKHYA shifted geometric mean: **0.191s**
-- HiGHS shifted geometric mean: **0.058s**
-- SANKHYA is **3.3x** the HiGHS time by that measure
+- SANKHYA shifted geometric mean: **0.067s**
+- HiGHS shifted geometric mean: **0.046s**
+- SANKHYA is **1.5x** the HiGHS time by that measure
 
-- per-instance ratio: median **1.40x**, worst **39.09x**, faster than HiGHS on **18 of 50** instances
+- per-instance ratio: median **1.38x**, worst **6.67x**, faster than HiGHS on **16 of 50** instances
 
-We are **3.27x slower** than HiGHS by this measure, and publish that rather than bury it. HiGHS is a decade of specialist work with presolve, a dual simplex and a mature pricing scheme, and this solver still has neither of the first two. The part that has to be right first is that **the answers agree** - the problem statement asks us to compare, not to win.
+We are **1.46x slower** than HiGHS by this measure, and publish that rather than bury it. HiGHS is a decade of specialist work with presolve, a dual simplex and a mature pricing scheme, and this solver still has neither of the first two. The part that has to be right first is that **the answers agree** - the problem statement asks us to compare, not to win.
 
 ---
 
@@ -422,13 +448,13 @@ certificate, moves. The reduced version runs in CI (`tests/robustness/`), togeth
 adversarial families judged by the exact rational oracle and the classic cycling examples
 of Beale and Kuhn.
 
-Measured on commit `d9a09c7` (Windows-AMD64), 192 solves, 5 families. Source: `robustness-d9a09c7.csv`.
+Measured on commit `adcee1b` (Windows-AMD64), 192 solves, 5 families. Source: `robustness-adcee1b.csv`.
 
 | family | parameter | last k that passed on every instance | first k that failed | what failed |
 |---|---|---|---|---|
 | `conditioning` | entry spread 10^k | 10 | 12 | infeasible, relative error 1.0e+00, verified no: row 7 needs activity of at least 8e-06 but the column bounds cap it at 0 |
-| `near_parallel` | twin rows differing by a relative 10^-k | 6 | 7 | optimal, relative error 4.8e-09, verified 0: [FAIL] strong duality              primal 4.999999976013e+00  dual 4.999999793581e+00  gap 1.824e-07 (relative |
-| `cost_ratio` | costs spanning 10^k | 7 | 8 | optimal, relative error 2.1e-15, verified 0: [FAIL] strong duality              primal 1.553873000000e+09  dual -inf  gap inf (relative inf) |
+| `near_parallel` | twin rows differing by a relative 10^-k | 16 | passes the whole sweep (k up to 16) | - |
+| `cost_ratio` | costs spanning 10^k | 9 | 10 | optimal, relative error 5.7e-16, verified 0: [FAIL] complementary slackness     worst /multiplier/ * slack = 1.599e-05 on R4 |
 | `redundancy` | k times the row count of implied rows | 32 | passes the whole sweep (k up to 32) | - |
 | `degeneracy` | k times the column count of rows, all active | 64 | passes the whole sweep (k up to 64) | - |
 
@@ -438,15 +464,18 @@ Reading the table: the `conditioning` cliff is `kZeroDrop` (`tolerances.hpp`), t
 
 ## 6. What these numbers do not say
 
-- **Nothing here supports a claim about large models.** The medium tier is capped at
-  instances Netlib publishes with a few hundred rows. PS26119 asks about "thousands to
-  millions of variables"; that is not demonstrated anywhere on this page, and no pass rate
-  above substitutes for it. Tracked as part of #54.
+- **Nothing here supports a claim about large models.** Section 1d is the evidence at
+  the scale PS26119's "thousands to millions of variables" means, and it is a table of
+  named time limits: the solver reaches Netlib's largest instances and stops there. No
+  pass rate above substitutes for that table. Tracked as part of #54.
 - Wall-clock times at this size are dominated by process start-up and file reading, so
   ratios between solvers are not meaningful until the instances get big enough to matter.
-  The comparison in section 3 uses solver-internal time on both sides for that reason.
+  The comparison in section 4 uses solver-internal time on both sides for that reason.
 - The failures in section 1b are real and are not going to be quietly dropped from a later
   edition of this file. Each one carries the issue tracking it.
-- The largest remaining gap is not on this page at all: there is no QP engine, no
-  interior-point method and no GPU backend, all three named in PS26119. `docs/PROVENANCE.md`
-  and issue #54 carry the full accounting.
+- Two engines named in PS26119 are not measured on this page. The interior-point method
+  (`algorithm=ipm`, #56) is opt-in and produces no basis, so it is not the engine behind any
+  table above; its own Netlib run is committed as `netlib-full-*-ipm.csv` and quoted in
+  `docs/PS26119_COVERAGE.md`, not here, because a run made with a non-default option is a
+  measurement of that option rather than the tier's evidence. There is no GPU backend on
+  `main` (#16-#19). `docs/PROVENANCE.md` and issue #54 carry the full accounting.

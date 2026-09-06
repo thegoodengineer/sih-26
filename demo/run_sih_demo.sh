@@ -536,11 +536,14 @@ cat <<'GAPS' | sed -e "s|@FULL@|${FULL_SUMMARY}|g" -e "s|@MEDIUM@|${MEDIUM_SUMMA
                         objective agrees with HiGHS (bench/runners/cross_check_highs.py), and
                         HiGHS disagrees with the readme by the same amount.
 
-                        On size, the largest we solve is fit2d at 25 x 10500 with 129018
-                        nonzeros in 9.0s, and degen3 at 1503 x 1818 takes 123.6s - which is
-                        the honest shape of it: we are correct more often than we are fast,
-                        and both curves bend well before "millions of variables". That is
-                        issue #34. Reproduce with:
+                        On size, the largest Netlib instance we solve is fit2d at 25 x
+                        10500 with 129018 nonzeros in 1.4s; the slowest we solve is d2q06c
+                        at 2171 x 5167 in 43.1s, and dfl001, fit2p and pilot87 hit the 120s
+                        limit (bench/results/netlib-full-adcee1b.csv). On Mittelmann's eight
+                        smallest LPs, 14646 to 376500 rows, the result is 0 of 8 inside 300s
+                        (bench/runners/mittelmann.py) - which is the honest shape of it:
+                        correct wherever we finish, and both curves bend well before
+                        "millions of variables". That is issue #34. Reproduce with:
                             python bench/runners/fetch_data.py --set full
                             python bench/runners/netlib.py --time-limit 120
     MIPLIB              PS26119 names MIPLIB before Netlib, and this demo does not run it.
