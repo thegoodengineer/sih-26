@@ -27,7 +27,6 @@
 #include "sankhya/model.hpp"
 
 #include "mip/cuts.hpp"
-#include "simplex/primal_simplex.hpp"
 
 #include "oracles/lp_generator.hpp"
 #include "oracles/rational_simplex.hpp"
@@ -1187,6 +1186,81 @@ TEST(GmiCut, ContinuousNegative) {
 
   double eval_int = cut->coeff[0] * (-2.0) + cut->coeff[1] * (3.0) + cut->coeff[2] * (2.0);
   EXPECT_LE(eval_int, cut->rhs + 1e-9);
+}
+
+// Test: Cut.IntegerAtNonIntegralBound
+// Verifies that integer variables substituted at non-integral active bounds
+// use the continuous GMI branch, because the shifted variable is non-integral.
+TEST(GmiCut, IntegerAtNonIntegralBound) {
+  Model m;
+  m.resize_columns(3);
+  m.resize_rows(1);
+  m.matrix.reset(1, 3);
+  m.matrix.add_entry(0, 0, 1.0);
+  m.matrix.add_entry(0, 1, 1.4);
+  m.matrix.add_entry(0, 2, -2.1);
+  m.matrix.finalize();
+  m.col_type = {VarType::kInteger, VarType::kInteger, VarType::kInteger};
+  m.col_lower = {-kInfinity, 2.5, 0.0};
+  m.col_upper = {kInfinity, kInfinity, 2.5};
+  m.row_lower = {0.0};
+  m.row_upper = {kInfinity};
+
+  Solution s;
+  s.col_status = {BasisStatus::kBasic, BasisStatus::kAtLower, BasisStatus::kAtUpper};
+  s.col_value = {1.75, 2.5, 2.5};
+  s.row_status = {BasisStatus::kAtLower};
+  s.row_activity = {0.0};
+
+  auto cut = mip::generate_gmi_cut(m, s, 0);
+  ASSERT_TRUE(cut.has_value());
+
+  // Verify continuous branch coefficients:
+  EXPECT_NEAR(cut->coeff[0], -4.0, 1e-9);
+  EXPECT_NEAR(cut->coeff[1], -112.0 / 15.0, 1e-9);
+  EXPECT_NEAR(cut->coeff[2], 168.0 / 15.0, 1e-9);
+  EXPECT_NEAR(cut->rhs, 4.0 / 3.0, 1e-9);
+
+  // Negative control: If the integer branch were incorrectly used for x1 and x2,
+  // the resulting invalid cut would be: -4.0*x0 - 92/15*x1 + 128/15*x2 <= -2.0.
+  // We manually evaluate this OLD treatment at the feasible integer point (0, 3, 2).
+  const double old_c0 = -4.0;
+  const double old_c1 = -92.0 / 15.0;
+  const double old_c2 = 128.0 / 15.0;
+  const double old_rhs = -2.0;
+  const double old_eval = old_c0 * (0.0) + old_c1 * (3.0) + old_c2 * (2.0);
+  // -18.4 + 17.0666 = -1.3333 > -2.0. It incorrectly cuts off the feasible integer point!
+  EXPECT_GT(old_eval, old_rhs + 1e-9) << "Negative control failed: the old integer formula "
+                                         "treatment does not cut off the valid point.";
+
+  // Validate the TRUE continuous cut on the entire integer domain using the exact MILP oracle.
+  // The model domain is 10 x0 + 14 x1 - 21 x2 = 0, x1 >= 3, 0 <= x2 <= 2.
+  oracle::GeneratedLp lp;
+  lp.num_rows = 2;
+  lp.num_cols = 3;
+  lp.a = {{10, 14, -21}, {-10, -14, 21}};
+  lp.b = {0, 0};
+  lp.lower = {-1000, 3, 0};
+  lp.upper = {1000, 1000, 2};
+  lp.integral = {1, 1, 1};
+  // We want to maximize the cut evaluation: coeff * x.
+  // The oracle minimizes c * x, so we set c = -coeff * 15 (to maintain integers).
+  lp.c = {60, 112, -168};
+
+  oracle::OracleResult exact_res = oracle::solve_exact_milp(lp, 100000);
+  ASSERT_EQ(exact_res.status, oracle::OracleStatus::kOptimal);
+
+  // max_eval = - (min_obj / 15.0)
+  double exact_min_obj = 0.0;
+  for (std::size_t j = 0; j < 3; ++j) {
+    double x_val = static_cast<double>(exact_res.x[j].numerator()) /
+                   static_cast<double>(exact_res.x[j].denominator());
+    exact_min_obj += static_cast<double>(lp.c[j]) * x_val;
+  }
+  double max_eval = -exact_min_obj / 15.0;
+
+  EXPECT_LE(max_eval, cut->rhs + 1e-9)
+      << "The generated continuous-branch cut is invalid for the exact integer optimum!";
 }
 
 // Test F: Cut.LogicalLower

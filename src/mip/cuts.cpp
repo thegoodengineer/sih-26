@@ -576,7 +576,15 @@ std::optional<Cut> compute_gmi_from_tableau(const Model& model,
     if (std::abs(alpha_prime) <= tol::kZeroDrop) continue;
 
     double pi = 0.0;
-    if (model.col_type[static_cast<std::size_t>(j)] == VarType::kInteger) {
+    bool treat_as_integer = (model.col_type[static_cast<std::size_t>(j)] == VarType::kInteger);
+    if (treat_as_integer) {
+      const double f_bound = bound_val - std::floor(bound_val);
+      if (f_bound > tol::kIntegrality && f_bound < 1.0 - tol::kIntegrality) {
+        treat_as_integer = false;
+      }
+    }
+
+    if (treat_as_integer) {
       const double fj = alpha_prime - std::floor(alpha_prime);
       if ((fj > 0.0 && fj < tol::kIntegrality) || (fj > 1.0 - tol::kIntegrality && fj < 1.0)) {
         return std::nullopt;
