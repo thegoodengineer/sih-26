@@ -276,6 +276,15 @@ class Solution {
   double complementarity_violation = 0.0;
   double integrality_violation = 0.0;
 
+  /// Iterative refinement of the final basis (#72; Wilkinson, "Rounding Errors in Algebraic
+  /// Processes", 1963). Steps taken, and the largest residual of the basic system - the
+  /// primal B x_B = -N x_N and the dual B^T y = c_B, whichever is worse - before the first
+  /// step and after the last. Zero steps when the engine produces no basis. Reported so a
+  /// point that only meets tolerance after refinement is visible as such rather than hidden.
+  Count refinement_steps = 0;
+  double residual_before_refinement = 0.0;
+  double residual_after_refinement = 0.0;
+
   /// (objective - dual_bound) in absolute and relative terms. Zero for a solved LP.
   double absolute_gap = 0.0;
   double relative_gap = 0.0;

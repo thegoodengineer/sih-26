@@ -17,6 +17,7 @@
 
 #include "core/status_guard.hpp"
 #include "presolve/presolve.hpp"
+#include "sankhya/ipm.hpp"
 #include "sankhya/logging.hpp"
 #include "sankhya/mip.hpp"
 #include "sankhya/model.hpp"
@@ -24,6 +25,7 @@
 #include "sankhya/pdhg.hpp"
 #include "sankhya/qp.hpp"
 #include "sankhya/timer.hpp"
+#include "util/threads.hpp"
 
 #include "../simplex/primal_simplex.hpp"
 
@@ -160,6 +162,7 @@ Solution solve(const Model& model, const Options& options) {
   }
 
   Logger logger(options.get_bool("log_to_console") ? stdout : nullptr);
+  apply_thread_option(options, logger);
   LogLevel level = LogLevel::kInfo;
   if (parse_log_level(options.get_string("log_level"), &level)) logger.set_level(level);
   const std::string progress_out = options.get_string("progress_out");
@@ -184,8 +187,10 @@ Solution solve(const Model& model, const Options& options) {
     // is both faster and exact. It is selected explicitly, and it becomes the automatic
     // choice only once there is evidence for a crossover point to switch on.
     const bool want_pdhg = requested == "pdhg";
+    const bool want_ipm = requested == "ipm";
     const bool want_dual = requested == "dual-simplex" || requested == "auto";
-    if (requested != "auto" && requested != "simplex" && !want_pdhg && !want_dual) {
+    if (requested != "auto" && requested != "simplex" && !want_pdhg && !want_dual &&
+        !want_ipm) {
       solution.status = SolveStatus::kNotSolved;
       solution.algorithm = "none";
       solution.message = fmt::format(
@@ -222,12 +227,14 @@ Solution solve(const Model& model, const Options& options) {
         return solution;
       }
       Solution inner = want_pdhg   ? pdhg::solve_pdhg(reduced.model, options, logger)
+                       : want_ipm  ? ipm::solve_ipm(reduced.model, options, logger)
                        : want_dual ? solve_dual_simplex(reduced.model, options, logger)
                                    : solve_primal_simplex(reduced.model, options, logger);
       solution = presolve::postsolve(reduced, model, inner);
       solution.solve_seconds = timer.elapsed_seconds();
     } else {
       solution = want_pdhg   ? pdhg::solve_pdhg(model, options, logger)
+                 : want_ipm  ? ipm::solve_ipm(model, options, logger)
                  : want_dual ? solve_dual_simplex(model, options, logger)
                              : solve_primal_simplex(model, options, logger);
     }

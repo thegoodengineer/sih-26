@@ -461,6 +461,125 @@ void Simplex::remove_perturbation() {
   compute_basic_values();
 }
 
+namespace {
+
+/// Error-free product and sum (Dekker/Knuth as used by Ogita, Rump & Oishi): the returned
+/// pair (s, e) satisfies s + e == a * b exactly, and likewise for the sum.
+struct Compensated {
+  double sum = 0.0;
+  double error = 0.0;
+  void add(double value) {
+    const double s = sum + value;
+    const double bb = s - sum;
+    error += (sum - (s - bb)) + (value - bb);
+    sum = s;
+  }
+  void add_product(double a, double b) {
+    const double p = a * b;
+    const double e = std::fma(a, b, -p);
+    add(p);
+    error += e;
+  }
+  [[nodiscard]] double value() const { return sum + error; }
+};
+
+}  // namespace
+
+void Simplex::refine_final_basis() {
+  refinement_steps_ = 0;
+  residual_before_refinement_ = 0.0;
+  residual_after_refinement_ = 0.0;
+  if (m_ == 0) return;
+
+  // The primal residual r = -N x_N - B x_B, accumulated in compensated arithmetic over the
+  // whole of [A | -I] x: every column, basic or not, at its current value.
+  const auto primal_residual = [&](std::vector<double>* r) {
+    std::vector<Compensated> acc(static_cast<std::size_t>(m_));
+    for (Index k = 0; k < total_; ++k) {
+      const double value = variable_value(k);
+      if (value == 0.0) continue;
+      for_each_entry(k, [&](Index row, double coefficient) {
+        acc[static_cast<std::size_t>(row)].add_product(-coefficient, value);
+      });
+    }
+    double worst = 0.0;
+    for (Index i = 0; i < m_; ++i) {
+      (*r)[static_cast<std::size_t>(i)] = acc[static_cast<std::size_t>(i)].value();
+      worst = std::max(worst, std::fabs((*r)[static_cast<std::size_t>(i)]));
+    }
+    return worst;
+  };
+  // The dual residual s = c_B - B^T y over the basic columns.
+  const auto dual_residual = [&](std::vector<double>* s) {
+    double worst = 0.0;
+    for (Index slot = 0; slot < m_; ++slot) {
+      const Index k = basis_[static_cast<std::size_t>(slot)];
+      Compensated acc;
+      acc.add(cost_[static_cast<std::size_t>(k)]);
+      for_each_entry(k, [&](Index row, double coefficient) {
+        acc.add_product(-coefficient, y_[static_cast<std::size_t>(row)]);
+      });
+      (*s)[static_cast<std::size_t>(slot)] = acc.value();
+      worst = std::max(worst, std::fabs((*s)[static_cast<std::size_t>(slot)]));
+    }
+    return worst;
+  };
+
+  std::vector<double> r(static_cast<std::size_t>(m_));
+  std::vector<double> s(static_cast<std::size_t>(m_));
+  double primal_worst = primal_residual(&r);
+  double dual_worst = dual_residual(&s);
+  residual_before_refinement_ = std::max(primal_worst, dual_worst);
+  residual_after_refinement_ = residual_before_refinement_;
+
+  for (int step = 0; step < kMaxRefinementSteps; ++step) {
+    if (residual_after_refinement_ == 0.0) break;
+    // Corrections from the same factors: B dx = r, B^T dy = s.
+    lu_.solve(r.data());
+    lu_.solve_transpose(s.data());
+    std::vector<double> x_saved = x_basic_;
+    std::vector<double> y_saved = y_;
+    for (Index i = 0; i < m_; ++i) {
+      x_basic_[static_cast<std::size_t>(i)] += r[static_cast<std::size_t>(i)];
+      y_[static_cast<std::size_t>(i)] += s[static_cast<std::size_t>(i)];
+    }
+    primal_worst = primal_residual(&r);
+    dual_worst = dual_residual(&s);
+    const double now = std::max(primal_worst, dual_worst);
+    if (now >= residual_after_refinement_) {
+      // No improvement: the factors cannot say more than they already have. Keep the
+      // previous iterate, which was at least as good.
+      x_basic_ = std::move(x_saved);
+      y_ = std::move(y_saved);
+      break;
+    }
+    residual_after_refinement_ = now;
+    ++refinement_steps_;
+  }
+  if (refinement_steps_ > 0) {
+    // The reduced costs follow from y and are recomputed from it, phase-2 costs.
+    for (Index k = 0; k < total_; ++k) {
+      const auto u = static_cast<std::size_t>(k);
+      if (basis_position_[u] >= 0) {
+        reduced_cost_[u] = 0.0;
+        continue;
+      }
+      double dot = 0.0;
+      for_each_entry(k, [&](Index row, double coefficient) {
+        dot += y_[static_cast<std::size_t>(row)] * coefficient;
+      });
+      reduced_cost_[u] = cost_[u] - dot;
+    }
+    logger_.info(
+        "Refinement: {} step(s) on the final basis; largest basic-system residual {:.3e} "
+        "-> {:.3e}",
+        refinement_steps_, residual_before_refinement_, residual_after_refinement_);
+  } else {
+    logger_.verbose("Refinement: no step improved the final basis (residual {:.3e})",
+                    residual_before_refinement_);
+  }
+}
+
 void Simplex::compute_basic_values() {
   // [A | -I][x ; s] = 0, so B x_B = -N x_N.
   std::vector<double> rhs(static_cast<std::size_t>(m_), 0.0);
@@ -524,6 +643,11 @@ void Simplex::compute_reduced_costs(bool phase_one) {
   y_ = cost_basic_;
   lu_.solve_transpose(y_.data());
 
+  // One reduced cost per column, each written by one thread and read by none: a gather,
+  // deterministic at any thread count (#57).
+#ifdef SANKHYA_HAVE_OPENMP
+#pragma omp parallel for schedule(static)
+#endif
   for (Index k = 0; k < total_; ++k) {
     if (basis_position_[static_cast<std::size_t>(k)] >= 0) {
       reduced_cost_[static_cast<std::size_t>(k)] = 0.0;
@@ -923,6 +1047,14 @@ Solution Simplex::finish(SolveStatus status, const std::string& message, Count i
   // one available. Restoring here, at the single choke point, means no exit can miss it.
   remove_perturbation();
 
+  // ITERATIVE REFINEMENT, on the optimal exit only (#72). The basis is final and the
+  // factors are fresh (optimality is declared on fresh factors or not at all), so the
+  // residual of B x_B = -N x_N and of B^T y = c_B is exactly what those factors leave
+  // behind; two solves per step buy back the digits that rounding took. Not on any other
+  // exit: a limit or a failure has no basis worth polishing, and polishing one would
+  // manufacture a tidier-looking point for a claim that was never made.
+  if (status == SolveStatus::kOptimal) refine_final_basis();
+
   // The ratio of refactorizations to iterations is the cheapest available read on how well
   // the basis update is holding up: a run that refactorizes on most pivots has gained
   // nothing, and a high rejection count means the bases being produced are ill conditioned.
@@ -956,6 +1088,9 @@ Solution Simplex::finish(SolveStatus status, const std::string& message, Count i
   solution.message = message;
   solution.iterations = iterations;
   solution.solve_seconds = seconds;
+  solution.refinement_steps = refinement_steps_;
+  solution.residual_before_refinement = residual_before_refinement_;
+  solution.residual_after_refinement = residual_after_refinement_;
 
   const bool have_point = status == SolveStatus::kOptimal || status == SolveStatus::kFeasible ||
                           status == SolveStatus::kIterationLimit ||

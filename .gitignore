@@ -23,3 +23,9 @@ Highs.log
 # rather than committing - a 10k x 10k instance is tens of MB for something fully
 # reproducible from the generator and a seed recorded in the file's own header comment.
 bench/large/
+
+# Mittelmann LP instances are fetched by bench/runners/fetch_mittelmann.py; the manifest
+# (reference.json) is committed, the archives and the decompressed MPS files are not.
+data/mittelmann/*.bz2
+data/mittelmann/*.mps
+data/mittelmann/*.part

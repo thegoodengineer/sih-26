@@ -1,0 +1,87 @@
+{
+  "benchmark_page": "https://plato.asu.edu/ftp/lpfeas.html",
+  "instance_set": "small",
+  "instances": {
+    "Linf_520c": {
+      "archive": "Linf_520c.bz2",
+      "archive_bytes": 1978708,
+      "archive_sha256": "76b2547af1e7b982a133c885ba92aa7b6405ae4b2e3fc8e682cbd048888cf819",
+      "in_set": "small",
+      "mps_bytes": 21818764,
+      "mps_sha256": "f92054c0b86f40f524b74d9f3315d2466e432fc3df57e8db724eb92f32b29207",
+      "name": "Linf_520c",
+      "url": "https://plato.asu.edu/ftp/lptestset/Linf_520c.bz2"
+    },
+    "bdry2": {
+      "archive": "bdry2.bz2",
+      "archive_bytes": 3075981,
+      "archive_sha256": "f8a65391062e1f302b24ed8c52c85fbc032aef962b8889f5855490d0e3c82708",
+      "in_set": "small",
+      "mps_bytes": 67191618,
+      "mps_sha256": "c7c372628defdb8889499ef5a949bbdbdbfd9a96dd00ceecf2ce5427639bc7a9",
+      "name": "bdry2",
+      "url": "https://plato.asu.edu/ftp/lptestset/bdry2.bz2"
+    },
+    "brazil3": {
+      "archive": "brazil3.mps.bz2",
+      "archive_bytes": 351217,
+      "archive_sha256": "7d92b6b86cbcf24bd2109b6e45931e3a01e79accd3f429971abcb934f0479c7e",
+      "in_set": "small",
+      "mps_bytes": 23910218,
+      "mps_sha256": "28cfec922c8c239645c823b7746ae221e38a6208e827a9f040ddf50d9203d125",
+      "name": "brazil3",
+      "url": "https://plato.asu.edu/ftp/lptestset/brazil3.mps.bz2"
+    },
+    "chromaticindex1024-7": {
+      "archive": "chromaticindex1024-7.mps.bz2",
+      "archive_bytes": 1876242,
+      "archive_sha256": "859ce3ee24403567c13176faf44ac3a9b6764c8fdd8c4e5817793b367bf9c275",
+      "in_set": "small",
+      "mps_bytes": 23033404,
+      "mps_sha256": "5b6f1d9daf867e4d5928e8a48fd1fc5f5c1a3249a18b738f46945ff2ff721b05",
+      "name": "chromaticindex1024-7",
+      "url": "https://plato.asu.edu/ftp/lptestset/chromaticindex1024-7.mps.bz2"
+    },
+    "irish-electricity": {
+      "archive": "irish-electricity.mps.bz2",
+      "archive_bytes": 1650055,
+      "archive_sha256": "1c1c117d1fda3922e5aaff5cadb14581522f1b8b5dc6741cddc318cf1d9ae875",
+      "in_set": "small",
+      "mps_bytes": 55594485,
+      "mps_sha256": "60d7ec4482bae32a3747f09c2d8294b8e50dda31d1a82c37a6f6bf17c8c84458",
+      "name": "irish-electricity",
+      "url": "https://plato.asu.edu/ftp/lptestset/irish-electricity.mps.bz2"
+    },
+    "qap15": {
+      "archive": "qap15.mps.bz2",
+      "archive_bytes": 282733,
+      "archive_sha256": "edc084e9e3d8ccc5dd25f30c6593e6dbb00cba86c5e664c471d1de37ae28b68a",
+      "in_set": "small",
+      "mps_bytes": 3513415,
+      "mps_sha256": "a24d84de54c73d7ea01ebaf07739e6884d57794d4b1184c0e01a6a4495695712",
+      "name": "qap15",
+      "url": "https://plato.asu.edu/ftp/lptestset/qap15.mps.bz2"
+    },
+    "rmine15": {
+      "archive": "rmine15.mps.bz2",
+      "archive_bytes": 3267065,
+      "archive_sha256": "8b9a80f802bf5ed0c4fa2cc7a62823e5786fcfbf82fbc76dfeb24a543b150e66",
+      "in_set": "small",
+      "mps_bytes": 80701590,
+      "mps_sha256": "49bef3a70183d8c465bcff0719c2522f42fec0ef63a6e4b0a33714f2bec5e4bc",
+      "name": "rmine15",
+      "url": "https://plato.asu.edu/ftp/lptestset/rmine15.mps.bz2"
+    },
+    "supportcase10": {
+      "archive": "supportcase10.mps.bz2",
+      "archive_bytes": 2038347,
+      "archive_sha256": "7ae9279ef7d66fec1a60be7ccf5831a0f1dbad66831d4a510e7807e293ca2bf7",
+      "in_set": "small",
+      "mps_bytes": 37679627,
+      "mps_sha256": "e65868b17479a5a4c408af4a8e6a412c61d681918d7c9d5ad3bbe46966634f0b",
+      "name": "supportcase10",
+      "url": "https://plato.asu.edu/ftp/lptestset/supportcase10.mps.bz2"
+    }
+  },
+  "source": "https://plato.asu.edu/ftp/lptestset/"
+}

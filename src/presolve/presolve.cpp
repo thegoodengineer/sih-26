@@ -1650,6 +1650,9 @@ Solution postsolve(const Result& result, const Model& original, const Solution& 
   // The reduced model carries the folded objective offset, so its bound is already in the
   // original problem's units.
   solution.dual_bound = reduced.dual_bound;
+  solution.refinement_steps = reduced.refinement_steps;
+  solution.residual_before_refinement = reduced.residual_before_refinement;
+  solution.residual_after_refinement = reduced.residual_after_refinement;
   solution.recompute_quality(original);
 
   return solution;

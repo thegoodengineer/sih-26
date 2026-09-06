@@ -16,6 +16,8 @@
 // Check 2 is the reason lu.hpp forbids deleting DenseLu when the sparse version ships.
 
 #include <cmath>
+#include <cstdint>
+#include <iostream>
 #include <random>
 #include <vector>
 
@@ -613,6 +615,77 @@ TEST(SparseLuUpdate, AsksToRefactorizeOnceTheEtaFileGrows) {
   }
   EXPECT_TRUE(lu.should_refactorize())
       << "the eta file grew without bound; the refactorization trigger never fired";
+}
+
+TEST(SparseLu, HyperSparseSolveAgreesWithTheReferenceGather) {
+  // #68: solve() back-substitutes through U by column, skipping zero results;
+  // solve_reference() gathers over every entry of U. Same factors, same right-hand sides,
+  // sparse and dense, before and after product-form updates: they must agree to rounding.
+  std::mt19937_64 rng(68001);
+  std::uniform_real_distribution<double> value(-3.0, 3.0);
+  std::uniform_real_distribution<double> unit(0.0, 1.0);
+  double worst = 0.0;
+  int compared = 0;
+  for (int trial = 0; trial < 40; ++trial) {
+    const Index m = 5 + static_cast<Index>(trial % 30);
+    // A random sparse nonsingular matrix: diagonal dominance guarantees the pivots.
+    std::vector<std::vector<Index>> rows(static_cast<std::size_t>(m));
+    std::vector<std::vector<double>> values(static_cast<std::size_t>(m));
+    for (Index j = 0; j < m; ++j) {
+      for (Index i = 0; i < m; ++i) {
+        if (i == j || unit(rng) < 0.15) {
+          rows[static_cast<std::size_t>(j)].push_back(i);
+          values[static_cast<std::size_t>(j)].push_back(i == j ? 10.0 + unit(rng) : value(rng));
+        }
+      }
+    }
+    std::vector<LuColumn> columns(static_cast<std::size_t>(m));
+    for (Index j = 0; j < m; ++j) {
+      columns[static_cast<std::size_t>(j)].rows = rows[static_cast<std::size_t>(j)].data();
+      columns[static_cast<std::size_t>(j)].values = values[static_cast<std::size_t>(j)].data();
+      columns[static_cast<std::size_t>(j)].size =
+          static_cast<Index>(rows[static_cast<std::size_t>(j)].size());
+    }
+    SparseLu lu;
+    ASSERT_TRUE(lu.factorize(columns, m, tol::kPivotTolerance, tol::kMarkowitzThreshold));
+    for (int round = 0; round < 3; ++round) {
+      for (int kind = 0; kind < 2; ++kind) {
+        std::vector<double> rhs(static_cast<std::size_t>(m), 0.0);
+        if (kind == 0) {
+          rhs[static_cast<std::size_t>(rng() % static_cast<std::uint64_t>(m))] =
+              1.0;  // one nonzero
+        } else {
+          for (auto& v : rhs) v = value(rng);
+        }
+        std::vector<double> a = rhs;
+        std::vector<double> b = rhs;
+        lu.solve(a.data());
+        lu.solve_reference(b.data());
+        for (Index i = 0; i < m; ++i) {
+          const double scale = std::max(1.0, std::fabs(b[static_cast<std::size_t>(i)]));
+          worst = std::max(worst, std::fabs(a[static_cast<std::size_t>(i)] -
+                                            b[static_cast<std::size_t>(i)]) /
+                                      scale);
+        }
+        ++compared;
+      }
+      // A product-form update: replace a random basis column with a random new column, so
+      // the eta pass is exercised too.
+      std::vector<double> alpha(static_cast<std::size_t>(m));
+      for (auto& v : alpha) v = unit(rng) < 0.3 ? value(rng) : 0.0;
+      const Index leaving = static_cast<Index>(rng() % static_cast<std::uint64_t>(m));
+      alpha[static_cast<std::size_t>(leaving)] = 5.0 + unit(rng);
+      std::vector<double> column = alpha;
+      lu.solve(column.data());  // alpha as B^-1 a: a = B alpha; the update takes alpha
+      if (!lu.update(leaving, alpha.data())) break;
+    }
+  }
+  std::cout << "sparse lu hyper-sparse vs reference: " << compared << " solves, worst relative "
+            << "difference " << worst << "\n";
+  // 1e-10, not machine epsilon: the two back-substitutions accumulate in different orders
+  // (push versus gather), and after three product-form updates on a basis of condition
+  // around 1e3 the difference is a few 1e-12 - rounding, with no error in either path.
+  EXPECT_LT(worst, 1e-10);
 }
 
 }  // namespace
