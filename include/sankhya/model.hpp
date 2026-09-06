@@ -265,6 +265,12 @@ class Solution {
   /// honest scale is the size of the prices it sits among. That is a weaker test than the
   /// column one and is stated as such: it says "this price is small relative to its
   /// neighbours", not "this price is right".
+  ///
+  /// A COMPLEMENTARITY PRODUCT |multiplier| * slack is divided by the multiplier's scale
+  /// (as above) times the primal quantity's (as for primal_infeasibility_scaled): it is a
+  /// product of two measured numbers and inherits the precision of both. A reduced cost
+  /// that is a rounding residue of its terms, on a column that is interior by hundreds,
+  /// is a product of order 1e-7 and a violation of nothing.
   double dual_infeasibility_scaled = 0.0;
   double dual_infeasibility = 0.0;  ///< max violation of the reduced-cost sign conditions
   double complementarity_violation = 0.0;
