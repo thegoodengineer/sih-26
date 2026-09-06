@@ -24,7 +24,7 @@ Petrochemicals Limited.
 | 3 | Verification spine: rational oracle, independent checker, Netlib harness | **done** |
 | 4 | Restarted PDHG — **CPU done**, CUDA backend not started (no GPU available) | partial |
 | 5 | Branch & bound → MILP | **done** (cuts still deferred, see #23; MIPLIB now benchmarked) |
-| 6–10 | Performance, branch & cut, IPM/QP, robustness, packaging | convex QP **done** (Phase 8, `src/qp/`); IPM, cuts, packaging remain |
+| 6–10 | Performance, branch & cut, IPM/QP, robustness, packaging | convex QP **done** (Phase 8, `src/qp/`); interior point **done, opt-in** (`src/ipm/`, no basis); robustness sweep **done** (`bench/runners/robustness.py`); cuts and packaging remain |
 
 LP is solved by a bounded-variable revised primal simplex (or restarted PDHG), MILP by
 branch and bound, and convex QP by a Condat-Vu primal-dual method — and MIQP by branch and
@@ -173,11 +173,11 @@ src/util          logging, timers, arena allocator, option registry
 src/io            MPS + LP readers (including QPS QUADOBJ), solution and JSON writers
 src/presolve      reductions + postsolve               (on by default)
 src/simplex       primal and dual revised simplex (the dual is the branch-and-bound node engine)
-src/la            sparse containers, sparse Markowitz LU, dense LU (test oracle only)
+src/la            sparse containers, sparse Markowitz LU (hyper-sparse FTRAN), sparse LDL^T, dense LU (test oracle only)
 src/pdhg          restarted PDHG, CPU                  (CUDA backend: not started)
 src/mip           branch and bound + diving heuristic  (cutting planes: Phase 7)
 src/qp            convex QP, Condat-Vu primal-dual     (done)
-src/ipm           interior point                       (Phase 8, not started)
+src/ipm           Mehrotra interior point, sparse LDL^T (opt-in: algorithm=ipm, no basis)
 bindings/python   Python bindings — ctypes over the C API, nothing to compile
 tests/  bench/  tools/  docs/  demo/
 ```
@@ -193,11 +193,11 @@ tracks every PS26119 requirement against what exists on `main`; section 6 of
 |---|---|
 | **GPU acceleration** | The first-order method it needs exists and runs on CPU. The CUDA backend is unwritten (#16-#19); `--gpu` warns and falls back. No speed-up is claimed. |
 | **Scale** | The largest real instance solved is `fit2d`, 25x10500 with 129018 nonzeros, in 9.0s; `degen3` at 1503x1818 takes 123.6s. A generated 5000x5000 instance is also demonstrated against an optimum known by construction. Nothing here supports the *"millions of variables"* end of the problem statement. |
-| **Interior point** | Not started (#56). The continuous engines are revised simplex and restarted PDHG. |
-| **Cutting planes** | Branch and bound is plain - no Gomory, MIR or cover cuts, no pseudocost branching (#23). This is why MIPLIB proves few optima. |
+| **Interior point as a default** | An interior-point method exists (#56, `--option algorithm=ipm`, Mehrotra predictor-corrector over a from-scratch sparse LDL^T) and is opt-in: it produces no basis, so it cannot warm-start branch and bound and cannot certify infeasibility, and on the full Netlib set it verifies fewer instances than the dual simplex (`docs/PS26119_COVERAGE.md`). The default continuous engine is the simplex. |
+| **Cutting planes** | Branch and bound has reliability branching (pseudocosts with strong branching, #69) and warm-started dual node LPs (#65), but no Gomory, MIR or cover cuts (#23). This is why MIPLIB proves few optima. |
 | **Non-convex QP** | Refused deliberately, with an LDL^T certificate. A local optimum reported as a global one is not something this solver will do. |
 | **MIQP bound quality** | MIQP is implemented, but its node bound comes from a first-order method and is only accurate to the tolerance it converged to, so pruning is deliberately kept on the conservative side and costs nodes. With no cuts either, expect incumbents more often than proofs. |
-| **Parallelism** | Single-threaded. |
+| **Parallelism** | Single-threaded by default. `--option threads=N` runs the column loops of an iteration under OpenMP, deterministically - results are bit-identical at 1 and 8 threads - and at Netlib scale it is measured to buy nothing, because an iteration is too short to amortize the fork (#57). It is a correctness-preserving switch, not a speed claim. |
 
 On speed against HiGHS: on the committed instances the two are **indistinguishable**, not
 faster. They solve in single-digit milliseconds and the timing envelopes overlap, so
