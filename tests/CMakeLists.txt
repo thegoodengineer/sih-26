@@ -32,7 +32,8 @@ add_executable(sankhya_tests
   oracles/rational_simplex.cpp
   oracles/lp_generator.cpp
   oracles/test_rational_oracle.cpp
-  oracles/test_fuzz_against_oracle.cpp)
+  oracles/test_fuzz_against_oracle.cpp
+  robustness/test_robustness.cpp)
 
 # nlohmann_json is PRIVATE to sankhya_objects, so the stats-blob test has to ask for it
 # directly rather than inheriting it.
