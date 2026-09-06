@@ -179,11 +179,14 @@ Solution solve(const Model& model, const Options& options) {
     // today the simplex is both faster and exact. It is selected explicitly, and it becomes
     // the automatic choice only once there is evidence for a crossover point to switch on.
     const bool want_pdhg = requested == "pdhg";
-    if (requested != "auto" && requested != "simplex" && !want_pdhg) {
+    const bool want_dual = requested == "dual-simplex";
+    if (requested != "auto" && requested != "simplex" && !want_pdhg && !want_dual) {
       solution.status = SolveStatus::kNotSolved;
       solution.algorithm = "none";
       solution.message = fmt::format(
-          "algorithm '{}' is not implemented yet; simplex and pdhg are available", requested);
+          "algorithm '{}' is not implemented yet; simplex, dual-simplex and pdhg are "
+          "available",
+          requested);
       logger.warning("{}", solution.message);
       solution.solve_seconds = timer.elapsed_seconds();
       return solution;
@@ -213,13 +216,15 @@ Solution solve(const Model& model, const Options& options) {
                     solution.solve_seconds);
         return solution;
       }
-      Solution inner = want_pdhg ? pdhg::solve_pdhg(reduced.model, options, logger)
-                                 : solve_primal_simplex(reduced.model, options, logger);
+      Solution inner = want_pdhg   ? pdhg::solve_pdhg(reduced.model, options, logger)
+                       : want_dual ? solve_dual_simplex(reduced.model, options, logger)
+                                   : solve_primal_simplex(reduced.model, options, logger);
       solution = presolve::postsolve(reduced, model, inner);
       solution.solve_seconds = timer.elapsed_seconds();
     } else {
-      solution = want_pdhg ? pdhg::solve_pdhg(model, options, logger)
-                           : solve_primal_simplex(model, options, logger);
+      solution = want_pdhg   ? pdhg::solve_pdhg(model, options, logger)
+                 : want_dual ? solve_dual_simplex(model, options, logger)
+                             : solve_primal_simplex(model, options, logger);
     }
     reconcile_status_with_measurement(&solution, options, logger, /*check_dual=*/true);
     logger.info("Result: {}  objective {:.10g}  {} iterations  {:.3f}s",

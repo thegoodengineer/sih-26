@@ -20,6 +20,7 @@ add_executable(sankhya_tests
   unit/test_lp_reader.cpp
   unit/test_presolve.cpp
   unit/test_simplex.cpp
+  unit/test_dual_simplex.cpp
   unit/test_dense_lu.cpp
   unit/test_sparse_lu.cpp
   unit/test_writer.cpp

@@ -172,7 +172,7 @@ src/core          Model/Solution implementation and the solve() dispatcher
 src/util          logging, timers, arena allocator, option registry
 src/io            MPS + LP readers (including QPS QUADOBJ), solution and JSON writers
 src/presolve      reductions + postsolve               (on by default)
-src/simplex       primal revised simplex               (dual simplex: Phase 6)
+src/simplex       primal and dual revised simplex (the dual is the branch-and-bound node engine)
 src/la            sparse containers, sparse Markowitz LU, dense LU (test oracle only)
 src/pdhg          restarted PDHG, CPU                  (CUDA backend: not started)
 src/mip           branch and bound + diving heuristic  (cutting planes: Phase 7)

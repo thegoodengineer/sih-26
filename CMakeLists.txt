@@ -195,6 +195,7 @@ set(SANKHYA_CORE_SOURCES
   src/mip/cuts.cpp
   src/presolve/presolve.cpp
   src/pdhg/pdhg.cpp
+  src/simplex/dual_simplex.cpp
   src/simplex/primal_simplex.cpp
   src/util/logging.cpp
   src/util/options.cpp
