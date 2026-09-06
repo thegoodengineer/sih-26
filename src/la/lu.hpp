@@ -88,6 +88,9 @@ class SparseLu {
 
   /// Solve B z = b in place. FTRAN.
   void solve(double* b) const;
+  /// The same solve with the back-substitution as a row-wise gather over every entry of
+  /// U, kept as the reference the hyper-sparse push form is tested against (#68). Tests only.
+  void solve_reference(double* b) const;
 
   /// Solve B^T z = b in place. BTRAN.
   void solve_transpose(double* b) const;
@@ -186,6 +189,17 @@ class SparseLu {
   std::vector<Index> u_start_;  ///< m_ + 1 entries
   std::vector<Index> u_steps_;
   std::vector<double> u_values_;
+  /// U BY COLUMN (#68): for step k, the steps i < k with U(i, k) != 0 and their values, so
+  /// the back-substitution in solve() can push each nonzero result upward and skip the
+  /// zeros. Built by build_column_u() at the end of factorize(); the product-form update
+  /// never touches U, so it stays valid until the next factorization.
+  std::vector<Index> uc_start_;  ///< m_ + 1 entries
+  std::vector<Index> uc_steps_;
+  std::vector<double> uc_values_;
+  void build_column_u();
+  /// The three passes of solve(), so the reference and the hyper-sparse form share two.
+  void forward_l(double* b) const;
+  void apply_etas(double* b) const;
 
   /// Eta file: one entry per update, stored sparsely. eta_pivot_position_[k] is the basis
   /// position that changed, and the (row, value) pairs are the nonzeros of alpha.
