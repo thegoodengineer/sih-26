@@ -292,6 +292,16 @@ def main() -> int:
         manifest = json.loads(manifest_path.read_text())
     manifest.setdefault("source", NETLIB_BASE)
     manifest.setdefault("instances", {})
+    # A NAMED SET REPLACES THE MANIFEST'S INSTANCE LIST. The previous entries were kept and
+    # only overwritten, which is right for an explicit instance list (adding one instance
+    # to whatever is there) and wrong for a tier: after `--set full`, `--set medium` wrote
+    # instance_set "medium" over a manifest still holding all 89 entries, netlib.py ran
+    # every one of them and named the CSV netlib-medium-*. CI never saw it because CI starts
+    # from the committed nine-instance manifest; a machine that had fetched the full set
+    # first produced an 89-row "medium tier". The tier's instances are exactly `wanted`.
+    if chosen_set != "explicit":
+        manifest["instances"] = {name: entry for name, entry in manifest["instances"].items()
+                                 if name in wanted}
     # The denominator, recorded so that make_benchmarks_doc.py can state coverage honestly
     # without re-fetching. Without it the generated table says "8 of 8", which reads as full
     # coverage of Netlib rather than of what was run.
