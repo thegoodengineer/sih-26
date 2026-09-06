@@ -36,7 +36,7 @@
 // It is bounded below by zero by construction, so "phase 1 stalls with no improving
 // column" is a proof of infeasibility rather than an inconclusive result.
 //
-// SCOPE. Dantzig pricing (default) with an optional Devex mode and a Bland fallback, the
+// SCOPE. Devex pricing (default) with Dantzig behind an option and a Bland fallback, the
 // Harris two-pass ratio test with long-step bound flipping (issue #67, below), and a full
 // dense refactorization every iteration. Perturbation is still open (#67 leaves it there
 // deliberately - see the ratio test comment).
@@ -384,12 +384,26 @@ class PrimalSimplex {
   // Measured before this landed: 1147 simplex iterations against HiGHS's 531 across the
   // committed Netlib set, worst 4.21x on blend. See issue #66 for the table.
   //
-  // #67 HAS NOW LANDED (Harris two-pass ratio test, below) AND DOES NOT CHANGE THIS. The
-  // hope going in was that Harris would defend devex's pivot magnitude and let it become the
-  // default; measured on the medium tier it does not - see ratio_test_ below for the number.
-  // Devex stays opt-in for the same reason it always was: it costs two correct answers on the
-  // medium tier for headline iteration counts, and CLAUDE.md settles that.
-  bool devex_ = false;  ///< opt-in; see the option description, #66 and ratio_test_ below
+  // DEVEX IS THE DEFAULT, since the basis chain changed under it. It was opt-in while it
+  // drove grow22 and scsd8 to "basis became singular" - the weights were audited and one
+  // real defect fixed (kDevexAccuracyFactor), and grow22 still failed at iteration 679; #67
+  // (Harris) did not rescue it. The failure class itself was then removed by #144 (the
+  // Markowitz search no longer declares a basis singular for want of budget) and #147
+  // (rank-deficient bases are repaired rather than abandoned), and the comment that stood
+  // here said this should be re-measured the moment the conditioning chain changed. It was:
+  //
+  //   Netlib medium tier, 120 s, dba3a65 (#160 + #162), one option changed per run
+  //     dantzig           46/50 PASS, 49 optimal, 0 failures, 51968 iterations, 191.0 s
+  //     devex             46/50 PASS, 49 optimal, 0 failures, 34580 iterations, 128.0 s
+  //     devex + harris    46/50 PASS, 49 optimal, 0 failures, 38352 iterations, 128.5 s
+  //     dantzig + harris  46/50 PASS, 49 optimal, 0 failures, 51547 iterations, 274.8 s
+  //   (iterations and time over the 49 instances every rule solves; d6cube times out under
+  //   all four; grow22 and scsd8 solve under devex in 1324 and 1790 iterations)
+  //
+  // Same answers, a third fewer iterations, a third less time, and the extra BTRAN per
+  // iteration is paid for on every instance where it matters. Dantzig stays selectable so
+  // this table can be regenerated (bench/results/netlib-medium-dba3a65-*.csv).
+  bool devex_ = true;  ///< pricing=dantzig selects the old rule; see #66 and ratio_test_ below
   std::vector<double> devex_weight_;
   std::vector<double> rho_;  ///< B^-T e_r, scratch: rho . a_j gives the leaving row's alpha_rj
   Count devex_resets_ = 0;
@@ -1386,30 +1400,18 @@ Solution PrimalSimplex::run() {
   // Dantzig is kept reachable so the before/after in issue #66 can be REGENERATED rather
   // than quoted from a commit message, and so a suspected pricing bug can be bisected
   // against the rule this replaced without checking out an old tree.
-  // DEVEX IS NOT THE DEFAULT YET, and the reason is measured rather than cautious. It cuts
-  // iterations substantially - 1147 to 830 on the committed small set, and 52250 to 31618
-  // across the Netlib medium set once d6cube (which fails under both rules) is set aside -
-  // but under the default (textbook) ratio test it also turns grow22 from `optimal` into
-  // "basis became singular" at iteration 679.
-  //
-  // #67 landed to test whether the Harris two-pass ratio test would fix this by defending
-  // the pivot magnitude devex's choice of column relies on. MEASURED, on grow22, all four
-  // pricing/ratio-test combinations:
-  //
-  //   dantzig + textbook (default)   optimal
-  //   dantzig + harris                numerical_error, primal infeasibility 8.904e-07
-  //   devex   + textbook              numerical_error, "basis became singular" at 679
-  //   devex   + harris                numerical_error, "basis became singular" at 444
-  //
-  // Harris does not rescue devex on this instance - it fails EARLIER under Harris than under
-  // the textbook rule, not later. Landing devex as the default would trade a headline
-  // iteration count for a wrong answer, which CLAUDE.md settles regardless of which ratio
-  // test is paired with it.
+  // DEVEX IS THE DEFAULT (issue #66), measured rather than assumed - the table is on the
+  // member declaration above. The history is worth one paragraph because it is a lesson
+  // about ordering: devex was held back for a singular-basis failure on grow22 that survived
+  // a weight audit and the Harris ratio test, and turned out to be a defect in the LU (#144)
+  // and the absence of basis repair (#147), not in the pricing. A pricing rule that steers
+  // towards ill-conditioned bases exposes weaknesses below it; fix those first, then measure
+  // the rule again.
   const std::string pricing = options_.get_string("pricing");
-  devex_ = pricing == "devex";
+  devex_ = pricing != "dantzig";
   if (pricing != "devex" && pricing != "dantzig" && !pricing.empty()) {
-    logger_.warning("pricing '{}' is not recognised; using dantzig", pricing);
-    devex_ = false;
+    logger_.warning("pricing '{}' is not recognised; using devex", pricing);
+    devex_ = true;
   }
 
   // TEXTBOOK IS THE DEFAULT (issue #67), measured rather than assumed. Harris passes 40/50 on

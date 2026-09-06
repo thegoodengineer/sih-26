@@ -93,6 +93,7 @@ CSV_COLUMNS = [
     "git_commit",
     "machine",
     "timestamp_utc",
+    "solver_options",
 ]
 
 
@@ -158,7 +159,8 @@ def default_binary() -> Path:
     raise SystemExit("no solver binary found; build first, or pass --binary")
 
 
-def run_one(binary: Path, mps: Path, time_limit: float, verify: bool) -> dict:
+def run_one(binary: Path, mps: Path, time_limit: float, verify: bool,
+            solver_options: list[str] | None = None) -> dict:
     """Solve one instance, then verify the solution independently."""
     with tempfile.TemporaryDirectory() as tmp:
         stats_path = Path(tmp) / "stats.json"
@@ -170,6 +172,8 @@ def run_one(binary: Path, mps: Path, time_limit: float, verify: bool) -> dict:
             "--time-limit", str(time_limit),
             "--option", "log_to_console=false",
         ]
+        for option in solver_options or []:
+            command += ["--option", option]
         started = time.perf_counter()
         completed = subprocess.run(command, capture_output=True, text=True)
         wall = time.perf_counter() - started
@@ -229,6 +233,10 @@ def main() -> int:
                         help="fail ONLY when the independent verifier rejects a solution, "
                              "not when an instance merely fails to reach the published "
                              "optimum. This is the gate for tiers with known failures.")
+    parser.add_argument("--solver-option", action="append", default=[], metavar="KEY=VALUE",
+                        help="passed to the solver as --option KEY=VALUE; repeatable. Recorded "
+                             "in the CSV so a run with a non-default option is distinguishable "
+                             "from the default at the same commit (#66, #67 re-measurements)")
     parser.add_argument("--out", type=Path, default=None,
                         help="destination CSV; relative paths are resolved "
                              "against the repository root")
@@ -255,8 +263,10 @@ def main() -> int:
     timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
 
     rows: list[dict] = []
+    solver_options = " ".join(args.solver_option)
     print(f"solver   {binary}")
-    print(f"commit   {commit}   machine {machine}")
+    print(f"commit   {commit}   machine {machine}"
+          + (f"   options {solver_options}" if solver_options else ""))
     print()
     print(f"{'instance':<11}{'status':<9}{'our objective':>22}{'published':>22}"
           f"{'rel err':>10}{'iters':>7}{'time':>8}  verified  result")
@@ -270,7 +280,7 @@ def main() -> int:
             continue
 
         published = entry["published_optimal"]
-        blob = run_one(binary, mps, args.time_limit, not args.no_verify)
+        blob = run_one(binary, mps, args.time_limit, not args.no_verify, args.solver_option)
         status = blob["status"]
         ours = blob.get("objective")
         verified = blob.get("verified")
@@ -331,6 +341,7 @@ def main() -> int:
             "iterations": blob.get("iterations", ""),
             "algorithm": blob.get("algorithm", ""),
             "git_commit": commit,
+            "solver_options": solver_options,
             "machine": machine,
             "timestamp_utc": timestamp,
         })
