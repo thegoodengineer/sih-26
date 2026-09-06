@@ -7,8 +7,8 @@
       "archive_bytes": 1978708,
       "archive_sha256": "76b2547af1e7b982a133c885ba92aa7b6405ae4b2e3fc8e682cbd048888cf819",
       "in_set": "small",
-      "mps_bytes": 4640806,
-      "mps_sha256": "f4e11d1538cf14d1121859a229ff6ef3dfb4b2fc74f8a47557b3ac0558277bd2",
+      "mps_bytes": 21818764,
+      "mps_sha256": "f92054c0b86f40f524b74d9f3315d2466e432fc3df57e8db724eb92f32b29207",
       "name": "Linf_520c",
       "url": "https://plato.asu.edu/ftp/lptestset/Linf_520c.bz2"
     },
@@ -17,8 +17,8 @@
       "archive_bytes": 3075981,
       "archive_sha256": "f8a65391062e1f302b24ed8c52c85fbc032aef962b8889f5855490d0e3c82708",
       "in_set": "small",
-      "mps_bytes": 15589520,
-      "mps_sha256": "de4d235124e9a5cefb0aef898b82450aa209eb7638f3c130ce1da5fefa3027ee",
+      "mps_bytes": 67191618,
+      "mps_sha256": "c7c372628defdb8889499ef5a949bbdbdbfd9a96dd00ceecf2ce5427639bc7a9",
       "name": "bdry2",
       "url": "https://plato.asu.edu/ftp/lptestset/bdry2.bz2"
     },

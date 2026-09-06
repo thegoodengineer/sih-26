@@ -37,6 +37,9 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import fetch_data  # noqa: E402  - Netlib's emps decoder, built once, for the packed files
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = REPO_ROOT / "data" / "mittelmann"
 BASE_URL = "https://plato.asu.edu/ftp/lptestset/"
@@ -65,6 +68,24 @@ FULL_SET = SMALL_SET + [
     "set-cover-model.mps.bz2", "thk_63.mps.bz2", "thk_48.mps.bz2", "L2CTA3D.mps.bz2",
     "dlr2.mps.bz2", "Dual2_5000.mps.bz2",
 ]
+
+
+def is_packed(path: Path) -> bool:
+    """Netlib's packed format: line 2 is eight integers (row/column/nonzero counts...)."""
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as handle:
+            lines = []
+            for line in handle:
+                if line.strip():
+                    lines.append(line)
+                if len(lines) == 2:
+                    break
+    except OSError:
+        return False
+    if len(lines) < 2 or not lines[0].startswith("NAME"):
+        return False
+    fields = lines[1].split()
+    return len(fields) == 8 and all(field.lstrip("-").isdigit() for field in fields)
 
 
 def instance_name(archive: str) -> str:
@@ -148,6 +169,16 @@ def main() -> int:
                     if not chunk:
                         break
                     dst.write(chunk)
+        # Some archives (the ones without ".mps" in their name) hold Netlib's PACKED format
+        # rather than MPS: a NAME line, a line of eight counts, then encoded rows. The
+        # decoder is Netlib's own emps.c, which fetch_data.py already downloads and builds.
+        # Checked on every run, so a file decompressed before this existed is decoded too.
+        if is_packed(mps_path):
+            print(f"  {name} is in Netlib's packed format; decoding with emps")
+            packed = mps_path.with_suffix(".packed")
+            mps_path.replace(packed)
+            emps, _ = fetch_data.build_emps(DATA_DIR)
+            fetch_data.decompress(emps, packed, mps_path)
         manifest["instances"][name] = {
             "name": name,
             "archive": archive,

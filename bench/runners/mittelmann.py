@@ -122,8 +122,10 @@ def run_one(binary: Path, mps: Path, time_limit: float, verify: bool,
         completed = subprocess.run(command, capture_output=True, text=True)
         wall = time.perf_counter() - started
         if not stats_path.exists():
-            return {"status": "crashed" if completed.returncode not in (0, 1) else "no_output",
-                    "wall_seconds": wall, "message": completed.stderr.strip()[:300]}
+            stderr = completed.stderr.strip()
+            status = ("read_error" if "error:" in stderr
+                      else "crashed" if completed.returncode not in (0, 1) else "no_output")
+            return {"status": status, "wall_seconds": wall, "message": stderr[:300]}
         blob = json.loads(stats_path.read_text())
         result, model, effort = blob.get("result", {}), blob.get("model", {}), blob.get("effort", {})
         flat = {

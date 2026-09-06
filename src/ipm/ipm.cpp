@@ -60,6 +60,15 @@ constexpr double kIpmTolerance = 1e-8;
 /// threshold of 1e-9 turned a point optimal to ten digits into eleven stalled iterations
 /// and a `feasible` verdict; 1e-8 accepts it at iteration 12 and still clears the guard.
 constexpr double kIpmComplementarity = 1e-8;
+/// The relative duality gap at convergence. 1e-8, the same as the feasibility measures,
+/// and MEASURED: 1e-9 and 1e-10 were tried against the verifier's strong-duality threshold
+/// and stalled one or two of 150 KKT instances a hair short with the objective already
+/// exact, while buying nothing on the instances the verifier rejects (pilot4, scagr25):
+/// those rejections arise in original units after postsolve, where an absolute
+/// complementarity product of 2e-6 is 1e-9 in the scaled units this loop converges in.
+/// A tolerance in one space cannot be met by tightening a tolerance in the other; the
+/// verifier's verdict on those instances is reported as it stands.
+constexpr double kIpmGap = 1e-8;
 /// Primal regularization rho added to every Theta^-1 (Altman & Gondzio): holds free
 /// variables and keeps Theta finite as a slack goes to zero.
 constexpr double kPrimalRegularization = 1e-8;
@@ -524,7 +533,7 @@ Solution InteriorPoint::run() {
         "regularized pivots so far {}",
         iterations, mu_, relative_gap, max_product_, regularized_pivots_);
     if (primal_infeasibility_ <= kIpmTolerance && dual_infeasibility_ <= kIpmTolerance &&
-        relative_gap <= kIpmTolerance && max_product_ <= kIpmComplementarity) {
+        relative_gap <= kIpmGap && max_product_ <= kIpmComplementarity) {
       return finish(SolveStatus::kOptimal, {}, iterations, timer.elapsed_seconds());
     }
     if (iterations >= kMaxIterations ||
