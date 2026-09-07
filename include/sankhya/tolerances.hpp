@@ -153,6 +153,15 @@ inline constexpr double kCutMaxDensity = 0.2;
 /// Prevents extreme coefficient scaling from ruining the numerical stability of the LP.
 inline constexpr double kCutMaxCoefficientRatio = 1e6;
 
+/// A cut coefficient this far below the cut's own largest coefficient is the ROUNDING of
+/// the arithmetic that produced it rather than a quantity. The Gomory derivation is a few
+/// dozen multiply-adds over the tableau row, so its relative error is a small multiple of the
+/// machine epsilon (2.2e-16); 1e-14 leaves two orders of margin. Anything at or below this is
+/// treated as the zero it is. Anything ABOVE it that is nevertheless dropped - because the
+/// solver treats coefficients under kZeroDrop as zero everywhere - is paid for by weakening
+/// the cut's constant, which is what keeps the cut valid; see src/mip/cuts.cpp.
+inline constexpr double kCutNoiseRelative = 1e-14;
+
 /// Minimum root-LP violation for a cut to be accepted. Valid cuts that are not violated
 /// or barely violated are safely rejected to save LP solves.
 inline constexpr double kCutViolationTolerance = 1e-5;

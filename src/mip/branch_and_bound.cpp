@@ -668,6 +668,8 @@ Solution BranchAndBound::run() {
       return solution;
     }
     if (relaxation.status != SolveStatus::kOptimal) {
+      // A node whose LP did not solve cannot be fathomed honestly: pruning it could discard
+      // the optimum. Stop and report rather than quietly continuing on a broken bound.
       leave();
       solution.status = SolveStatus::kNumericalError;
       solution.message = fmt::format("node LP returned {} at node {}",

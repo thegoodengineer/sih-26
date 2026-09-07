@@ -446,7 +446,20 @@ TEST(BranchAndBound, CarriesTheObjectiveOffset) {
 // The gate
 // =========================================================================================
 
-TEST(BranchAndBound, FuzzAgainstTheExactMilpOracle) {
+/// What one sweep of the MILP fuzz found. The sweep is a function rather than a test body so
+/// that the SAME 600 instances can be put through the search twice: once as it has always
+/// run, and once with root cuts on. #23 names that second sweep as the acceptance bar for
+/// cutting planes, and a bar the suite never runs is not a bar - with cuts off by default,
+/// the original sweep exercises no cut at all.
+struct FuzzTally {
+  int agreed_optimal = 0;
+  int agreed_infeasible = 0;
+  int oracle_abstained = 0;
+  int mismatched = 0;
+  std::vector<std::string> failures;
+};
+
+FuzzTally run_milp_fuzz(const Options& options, const char* label) {
   std::mt19937_64 rng(20260906);
   oracle::GeneratorConfig config;
   // Small: the oracle explores the tree in exact arithmetic and copies both bound vectors
@@ -457,11 +470,12 @@ TEST(BranchAndBound, FuzzAgainstTheExactMilpOracle) {
   config.max_cols = 5;
   config.magnitude = 4;
 
-  int agreed_optimal = 0;
-  int agreed_infeasible = 0;
-  int oracle_abstained = 0;
-  int mismatched = 0;
-  std::vector<std::string> failures;
+  FuzzTally tally;
+  int& agreed_optimal = tally.agreed_optimal;
+  int& agreed_infeasible = tally.agreed_infeasible;
+  int& oracle_abstained = tally.oracle_abstained;
+  int& mismatched = tally.mismatched;
+  std::vector<std::string>& failures = tally.failures;
 
   for (int trial = 0; trial < 600; ++trial) {
     oracle::GeneratedLp lp = oracle::random_lp(rng, config);
@@ -487,7 +501,7 @@ TEST(BranchAndBound, FuzzAgainstTheExactMilpOracle) {
       model.col_upper[static_cast<std::size_t>(j)] =
           static_cast<double>(lp.upper[static_cast<std::size_t>(j)]);
     }
-    const Solution s = solve(model, mip_options());
+    const Solution s = solve(model, options);
 
     const auto disagree = [&](const std::string& why) {
       ++mismatched;
@@ -554,7 +568,7 @@ TEST(BranchAndBound, FuzzAgainstTheExactMilpOracle) {
     disagree("an integer optimum exists but the search did not prove one");
   }
 
-  std::cout << "\n=== MILP fuzz against the exact oracle ===\n"
+  std::cout << "\n=== MILP fuzz against the exact oracle (" << label << ") ===\n"
             << "  agreed optimal      " << agreed_optimal << "\n"
             << "  agreed infeasible   " << agreed_infeasible << "\n"
             << "  oracle abstained    " << oracle_abstained << "\n"
@@ -562,11 +576,38 @@ TEST(BranchAndBound, FuzzAgainstTheExactMilpOracle) {
   for (const std::string& failure : failures) {
     std::cout << "\n--- failing instance ---\n" << failure << "\n";
   }
+  return tally;
+}
 
-  EXPECT_EQ(mismatched, 0);
-  EXPECT_GT(agreed_optimal + agreed_infeasible, 300)
+void expect_clean_sweep(const FuzzTally& tally) {
+  EXPECT_EQ(tally.mismatched, 0);
+  EXPECT_GT(tally.agreed_optimal + tally.agreed_infeasible, 300)
       << "too few instances were actually compared for this to mean anything";
-  EXPECT_GT(agreed_optimal, 50) << "the generator produced almost no feasible MILPs";
+  EXPECT_GT(tally.agreed_optimal, 50) << "the generator produced almost no feasible MILPs";
+}
+
+TEST(BranchAndBound, FuzzAgainstTheExactMilpOracle) {
+  expect_clean_sweep(run_milp_fuzz(mip_options(), "no cuts"));
+}
+
+// =========================================================================================
+// The acceptance bar #23 sets for cutting planes
+//
+// A cut that is very slightly invalid removes the optimum, and the search then PROVES the
+// second-best answer optimal: status `optimal`, the point integral and feasible, the bound
+// equal to the objective. Nothing about that output looks wrong, and no test that checks the
+// solver against itself can see it. The exact rational oracle can - it knows the true optimum
+// of every instance below, so an objective that disagrees with it by more than 1e-6 relative
+// is a cut that removed a point it had no right to remove.
+//
+// The same 600 instances as the sweep above, the same seed, the same comparisons. The only
+// difference is that every root LP here gets GMI and knapsack cover cuts.
+// =========================================================================================
+
+TEST(BranchAndBound, FuzzAgainstTheExactMilpOracleWithRootCuts) {
+  Options options = mip_options();
+  options.set_bool("enable_root_cuts", true);
+  expect_clean_sweep(run_milp_fuzz(options, "root cuts"));
 }
 
 // =========================================================================================

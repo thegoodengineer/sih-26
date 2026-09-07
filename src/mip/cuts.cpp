@@ -544,6 +544,49 @@ std::optional<Cut> compute_gmi_from_tableau(const Model& model,
   double beta_raw = 1.0;
   bool has_useful_pi = false;
 
+  // EVERY DROPPED TERM IS PAID FOR. The cut being built is  sum_j pi_j t_j >= 1  with every
+  // pi_j >= 0 and every t_j >= 0 (the distance of a nonbasic variable from the bound it sits
+  // at). Dropping a term with pi_j > 0 makes the left-hand side smaller, which makes the
+  // inequality HARDER to satisfy - a strengthening. Strengthening a valid cut is precisely how
+  // it stops being valid, and this file's header says what that costs: the search proves the
+  // second-best answer optimal and nothing in the output looks wrong.
+  //
+  // Over the feasible region t_j <= u_j - l_j, so
+  //     sum_{kept} pi_j t_j  >=  1 - sum_{dropped} pi_j (u_j - l_j)
+  // is valid, and the accumulated slack is subtracted from the constant at the end.
+  //
+  // A term is dropped for free only when it is BELOW THE ARITHMETIC'S OWN NOISE - the tableau
+  // row is a dot product, and a coefficient 1e-14 under the row's largest is that dot
+  // product's rounding, not a quantity. Anything larger that gets dropped is charged for; a
+  // charge that cannot be computed, because the column's range is infinite, abandons the cut
+  // rather than emitting one with an unpayable debt.
+  double row_scale = 1.0;
+  for (Index j = 0; j < n; ++j) {
+    row_scale =
+        std::max(row_scale, std::abs(tableau.structural_coefs[static_cast<std::size_t>(j)]));
+  }
+  for (Index i = 0; i < m; ++i) {
+    row_scale =
+        std::max(row_scale, std::abs(tableau.logical_coefs[static_cast<std::size_t>(i)]));
+  }
+  const double alpha_noise = tol::kCutNoiseRelative * row_scale;
+  double dropped_slack = 0.0;
+  bool drop_is_unpayable = false;
+  /// Charge for a dropped term whose pi is at most `pi_bound` and whose t ranges over
+  /// [0, range]. Returns false when the debt cannot be paid.
+  const auto charge_drop = [&](double pi_bound, double range) {
+    if (pi_bound <= 0.0) return true;
+    if (!std::isfinite(range)) {
+      drop_is_unpayable = true;
+      return false;
+    }
+    dropped_slack += pi_bound * range;
+    return true;
+  };
+  // pi is at most |alpha'| / min(f0, 1 - f0) under both the integer and the continuous formula
+  // below, which bounds a term dropped before its pi was computed.
+  const double pi_scale = 1.0 / std::min(f0, 1.0 - f0);
+
   for (Index j = 0; j < n; ++j) {
     if (tableau.structural_status[static_cast<std::size_t>(j)] == BasisStatus::kBasic) continue;
 
@@ -573,7 +616,16 @@ std::optional<Cut> compute_gmi_from_tableau(const Model& model,
       return std::nullopt;
     }
 
-    if (std::abs(alpha_prime) <= tol::kZeroDrop) continue;
+    // t_j runs over [0, u - l] whichever bound it sits at, so the range is the same either way.
+    const double range = (is_finite_bound(L) && is_finite_bound(U)) ? U - L : kInfinity;
+
+    if (std::abs(alpha_prime) <= tol::kZeroDrop) {
+      if (std::abs(alpha_prime) > alpha_noise &&
+          !charge_drop(std::abs(alpha_prime) * pi_scale, range)) {
+        return std::nullopt;
+      }
+      continue;
+    }
 
     double pi = 0.0;
     bool treat_as_integer = (model.col_type[static_cast<std::size_t>(j)] == VarType::kInteger);
@@ -610,6 +662,8 @@ std::optional<Cut> compute_gmi_from_tableau(const Model& model,
       } else {
         beta_raw -= pi * bound_val;
       }
+    } else if (pi > alpha_noise * pi_scale && !charge_drop(pi, range)) {
+      return std::nullopt;
     }
   }
 
@@ -642,7 +696,15 @@ std::optional<Cut> compute_gmi_from_tableau(const Model& model,
       return std::nullopt;
     }
 
-    if (std::abs(alpha_prime) <= tol::kZeroDrop) continue;
+    const double range = (is_finite_bound(L) && is_finite_bound(U)) ? U - L : kInfinity;
+
+    if (std::abs(alpha_prime) <= tol::kZeroDrop) {
+      if (std::abs(alpha_prime) > alpha_noise &&
+          !charge_drop(std::abs(alpha_prime) * pi_scale, range)) {
+        return std::nullopt;
+      }
+      continue;
+    }
 
     double pi_s = 0.0;
     if (alpha_prime > 0.0) {
@@ -659,10 +721,14 @@ std::optional<Cut> compute_gmi_from_tableau(const Model& model,
       } else {
         beta_raw -= pi_s * bound_val;
       }
+    } else if (pi_s > alpha_noise * pi_scale && !charge_drop(pi_s, range)) {
+      return std::nullopt;
     }
   }
 
   if (!has_useful_pi) return std::nullopt;
+  if (drop_is_unpayable) return std::nullopt;
+  beta_raw -= dropped_slack;  // the constant carries everything that was dropped on the way
 
   std::vector<double> final_gamma = gamma_j;
   for (Index j = 0; j < n; ++j) {
@@ -674,16 +740,45 @@ std::optional<Cut> compute_gmi_from_tableau(const Model& model,
     }
   }
 
+  // THE EMITTED CUT CARRIES NO COEFFICIENT ITS CONSUMER WILL SILENTLY DROP. The cut goes back
+  // as  sum_j coeff_j x_j <= rhs  and is materialized as a matrix row, where entries at or
+  // below kZeroDrop are skipped - the same strengthening one layer down, this time on a
+  // coefficient that survived because two contributions nearly cancelled. So the zeroing is
+  // done here, where the bounds are in hand: removing coeff_j raises the left-hand side by
+  // -coeff_j x_j, at most max(-coeff_j l_j, -coeff_j u_j) over the column's box, and the
+  // right-hand side is loosened by that (never tightened - a term that can only lower the left
+  // side is free). Coefficients under the cut's own noise floor are zero to the precision the
+  // arithmetic had and cost nothing; a charge that lands on an infinite bound abandons the cut.
+  double coeff_scale = 1.0;
+  for (Index j = 0; j < n; ++j) {
+    coeff_scale = std::max(coeff_scale, std::abs(final_gamma[static_cast<std::size_t>(j)]));
+  }
+  const double coeff_noise = tol::kCutNoiseRelative * coeff_scale;
+
   bool has_nonzero_coeff = false;
   Cut cut;
   cut.coeff.resize(static_cast<std::size_t>(n), 0.0);
+  double rhs = -beta_raw;
   for (Index j = 0; j < n; ++j) {
-    cut.coeff[static_cast<std::size_t>(j)] = -final_gamma[static_cast<std::size_t>(j)];
-    if (std::abs(cut.coeff[static_cast<std::size_t>(j)]) > tol::kZeroDrop) {
-      has_nonzero_coeff = true;
+    const double coeff = -final_gamma[static_cast<std::size_t>(j)];
+    if (std::abs(coeff) <= tol::kZeroDrop) {
+      if (std::abs(coeff) > coeff_noise) {
+        const double lo = model.col_lower[static_cast<std::size_t>(j)];
+        const double hi = model.col_upper[static_cast<std::size_t>(j)];
+        const double at_lower =
+            is_finite_bound(lo) ? -coeff * lo : (coeff > 0.0 ? kInfinity : -kInfinity);
+        const double at_upper =
+            is_finite_bound(hi) ? -coeff * hi : (coeff > 0.0 ? -kInfinity : kInfinity);
+        const double extra = std::max(at_lower, at_upper);
+        if (!std::isfinite(extra)) return std::nullopt;
+        rhs += std::max(0.0, extra);
+      }
+      continue;  // left at exactly 0.0
     }
+    cut.coeff[static_cast<std::size_t>(j)] = coeff;
+    has_nonzero_coeff = true;
   }
-  cut.rhs = -beta_raw;
+  cut.rhs = rhs;
 
   if (!has_nonzero_coeff) return std::nullopt;
   return cut;
