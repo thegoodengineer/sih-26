@@ -41,18 +41,33 @@ constexpr int kStallLimit = 20 * tol::kBlandSwitchIterations;
 /// leftover violation is below the tolerance the answer is judged against. At 1e-9 against a
 /// 1e-7 feasibility tolerance there are two orders of margin, and phase 1 does not even
 /// re-engage on the restored bounds.
-/// Most basis repairs a single solve may make (#34).
+/// Most basis repairs a single solve may make (#34, #174).
 ///
 /// A repair moves the current point, so it can hand the search a basis that goes singular
 /// again a few pivots later, and repairing THAT one costs another move. Measured on pilot4
 /// before the size guard existed, the ungated repair fired 202 times and never terminated -
 /// a fast clean failure turned into a hang, which is strictly worse than the failure.
 ///
-/// The size guard makes that particular runaway impossible, but it bounds the size of each
-/// repair, not the number of them. This bounds the number. A solve needing more than a
-/// handful of repairs is not being rescued by them, and should report the singular basis it
-/// actually has rather than grind.
-constexpr Count kMaxBasisRepairs = 8;
+/// THE NUMBER USED TO BE 8, AND 8 WAS THE WRONG QUESTION. What distinguishes a rescue from a
+/// hang is not how many repairs a solve makes but whether it gets anywhere between them.
+/// Measured on Mittelmann's qap15 (6,330 x 22,275, bench/results/mittelmann-592aea3.csv):
+/// nine singular bases between iterations 12,355 and 13,954, every one of them a single
+/// dependent column, separated by 39, 27, 14, 65, 283, 304, 639 and 228 iterations of
+/// ordinary progress - a solve being carried by the repair, killed on the ninth because the
+/// count had run out. The pilot4 runaway looks nothing like that: it was the same enormous
+/// repair over and over with no progress at all, and the size guard below already refuses it.
+///
+/// So the ceiling is high enough not to end a solve that is still moving, and the stall guard
+/// beside it is what actually stops a loop.
+constexpr Count kMaxBasisRepairs = 64;
+
+/// Repairs allowed without the solve advancing in between (#174).
+///
+/// A repair moves the point, so the next iteration should be able to pivot. Two repairs at
+/// the same iteration mean it could not, and a third is a loop rather than a rescue - which
+/// is the shape the pilot4 hang actually had. This is the guard that bounds the work; the
+/// count above is a backstop.
+constexpr Count kMaxStalledBasisRepairs = 3;
 
 constexpr double kPerturbationSize = 1e-9;
 
@@ -369,6 +384,11 @@ class Simplex {
   /// Number of basis columns swapped for logicals to escape a singular basis (#34).
   Count repaired_columns_ = 0;
   Count repairs_ = 0;
+  /// The iteration the last repair happened at, and how many have happened since the solve
+  /// last advanced. See kMaxStalledBasisRepairs.
+  Count last_repair_iteration_ = 0;
+  Count stalled_repairs_ = 0;
+  bool has_repaired_ = false;
 
   /// ADAPTIVE REFACTORIZATION (#68, redirected). Eta-file nonzeros summed over every
   /// iteration since the last refactorization: a deterministic proxy for the extra solve

@@ -191,6 +191,18 @@ bool Simplex::repair_basis() {
   // it is unambiguously better than the alternative, which was to return kNumericalError and
   // no answer at all. It is a REPAIR, not a free lunch, and the counters report how often it
   // fired so a run that limps to an answer cannot be mistaken for one that never stumbled.
+  // TWO GUARDS, AND THEY ASK DIFFERENT QUESTIONS. The stall guard asks whether the repair is
+  // rescuing this solve or looping on it: a repair moves the point, so the next iteration
+  // should be able to pivot, and repairs that keep arriving at the same iteration are not
+  // getting anywhere. The count is a backstop for a pathology neither guard anticipated.
+  if (has_repaired_ && iterations_seen_ > last_repair_iteration_) stalled_repairs_ = 0;
+  if (stalled_repairs_ >= kMaxStalledBasisRepairs) {
+    logger_.warning(
+        "basis singular again at iteration {} with no progress since the last {} repair(s); "
+        "not repairing",
+        iterations_seen_, stalled_repairs_);
+    return false;
+  }
   if (repairs_ >= kMaxBasisRepairs) {
     logger_.warning("basis singular again at iteration {} after {} repair(s); not repairing",
                     iterations_seen_, repairs_);
@@ -253,6 +265,13 @@ bool Simplex::repair_basis() {
   if (patched == 0) return false;
   repaired_columns_ += static_cast<Count>(patched);
   ++repairs_;
+  if (has_repaired_ && iterations_seen_ == last_repair_iteration_) {
+    ++stalled_repairs_;
+  } else {
+    stalled_repairs_ = 1;
+  }
+  last_repair_iteration_ = iterations_seen_;
+  has_repaired_ = true;
   // Logged HERE, where the count for this repair is in scope. Reporting the running total
   // instead reads as one enormous repair rather than several small ones - which is exactly
   // how the first version of this was misread while it was being debugged.
