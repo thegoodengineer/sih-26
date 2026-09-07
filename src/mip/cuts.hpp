@@ -17,6 +17,10 @@
 // tableau and is not here yet.
 #pragma once
 
+#include <optional>
+#include <vector>
+
+#include "la/lu.hpp"
 #include "sankhya/logging.hpp"
 #include "sankhya/model.hpp"
 
@@ -27,6 +31,156 @@ struct RowTightening {
   Count rows_tightened = 0;
   Count bounds_moved = 0;  ///< a range row can have both sides moved
 };
+
+// =========================================================================================
+// Basis Reconstruction and Tableau Generation (Stage 2)
+// =========================================================================================
+
+namespace detail {
+/// Reconstructed tableau row for testing, so the infrastructure stays strictly internal.
+struct ReconstructedTableauRow {
+  Index basis_row = -1;
+  bool basic_is_structural = false;
+  Index basic_index = -1;
+  double rhs = 0.0;
+  std::vector<double> structural_coefs;
+  std::vector<double> logical_coefs;
+  std::vector<BasisStatus> structural_status;
+  std::vector<BasisStatus> logical_status;
+};
+
+/// Try to reconstruct the basis and extract one tableau row. Returns std::nullopt if the
+/// statuses are invalid or the basis is singular.
+[[nodiscard]] std::optional<ReconstructedTableauRow> get_tableau_for_testing(
+    const Model& model, const Solution& solution, Index basis_row);
+}  // namespace detail
+
+// =========================================================================================
+// Knapsack cover cuts with exact sequential lifting (#23)
+// =========================================================================================
+
+/// The result of knapsack cover generation for a single model row.
+///
+/// The lifted cover inequality over the ORIGINAL model columns is:
+///
+///     sum(coeff[k] * x[col_index[k]]) <= rhs
+///
+/// where coeff[k] is the final (base or lifted) coefficient for column col_index[k].
+///
+/// Invariants guaranteed by the generator:
+///   - col_index is sorted ascending (deterministic iteration order).
+///   - Every coeff[k] >= 0.
+///   - rhs == |C| - 1 where |C| is the cover cardinality (before lifting assigns
+///     new coefficients to non-cover variables).
+///   - The inequality is valid: no integer-feasible point of the original supported
+///     row is separated by it.
+struct KnapsackCoverCut {
+  std::vector<Index> col_index;  ///< original model column indices, ascending
+  std::vector<double> coeff;     ///< per-column coefficient (>= 0)
+  double rhs = 0.0;              ///< right-hand side (|C| - 1)
+};
+
+/// Try to generate a lifted knapsack cover cut from row `row` of `model`.
+///
+/// SUPPORTED CLASS: the generator accepts ONLY rows of the form
+///
+///     sum(a_j * x_j) <= b
+///
+/// where every a_j > 0, every x_j is kInteger with bounds exactly [0, 1] (binary),
+/// b is finite and positive, and no continuous column appears.
+///
+/// Any row outside that class returns std::nullopt. No cut is ever emitted when an
+/// ambiguous or potentially invalid coefficient cannot be established exactly.
+///
+/// LIFTING: exact sequential lifting is applied (Issue #23 requirement). For each
+/// variable outside the cover its lifting coefficient is computed from an exact 0/1
+/// knapsack auxiliary problem. Lifting coefficients of zero are valid and are included.
+///
+/// The function does NOT append the cut to `model`. The caller is responsible for that.
+[[nodiscard]] std::optional<KnapsackCoverCut> generate_knapsack_cover_cut(const Model& model,
+                                                                          Index row);
+
+// =========================================================================================
+// Gomory mixed-integer cuts (Stage 3B)
+// =========================================================================================
+
+/// The result of Gomory mixed-integer cut generation for a single tableau row.
+///
+/// The returned inequality is canonically oriented over the ORIGINAL model columns:
+///
+///     sum(coeff[j] * x_j) <= rhs
+///
+/// The generator guarantees that this cut is mathematically valid. No filtering is applied.
+struct Cut {
+  std::vector<double> coeff;  ///< per-column coefficient (indexed by model.num_cols())
+  double rhs = 0.0;           ///< right-hand side
+};
+
+/// Try to generate a Gomory mixed-integer cut from a specific basis row.
+///
+/// Returns std::nullopt if the basic variable is not eligible, the fraction is
+/// near-integral, or a numerically ambiguous state is encountered.
+[[nodiscard]] std::optional<Cut> generate_gmi_cut(const Model& model, const Solution& solution,
+                                                  Index basis_row);
+
+/// Reusable production context for multi-row GMI generation.
+/// Performs exactly one basis reconstruction and one SparseLu factorization.
+struct RootGmiContext {
+  std::vector<unsigned char> slot_is_structural;
+  std::vector<Index> slot_original_index;
+  std::vector<double> logical_values;
+  std::vector<Index> logical_rows;
+  std::vector<LuColumn> columns;
+  SparseLu lu;
+  bool is_valid = false;
+
+  /// Construct the context from the root solution. Factorizes the basis exactly once.
+  RootGmiContext(const Model& model, const Solution& solution);
+
+  // Non-copyable and non-movable to prevent LuColumn pointer invalidation
+  RootGmiContext(const RootGmiContext&) = delete;
+  RootGmiContext& operator=(const RootGmiContext&) = delete;
+  RootGmiContext(RootGmiContext&&) = delete;
+  RootGmiContext& operator=(RootGmiContext&&) = delete;
+
+  /// Get the tableau row for a specific basis slot without re-factorizing.
+  [[nodiscard]] std::optional<detail::ReconstructedTableauRow> tableau_row(
+      const Model& model, const Solution& solution, Index basis_row) const;
+};
+
+/// Production multi-row GMI generator.
+/// Iterates over all fractional basic structural integer variables, generating one cut per
+/// eligible row. Returns candidates in deterministic basis-slot order.
+[[nodiscard]] std::vector<Cut> generate_gmi_cuts(const Model& model, const Solution& solution);
+
+// =========================================================================================
+// Cut Filtering and Deduplication (Stage 4C)
+// =========================================================================================
+
+/// Reason why a cut candidate was rejected (or accepted) during filtering.
+enum class CutFilterReason {
+  kAccepted,
+  kNonfinite,
+  kEmptySupport,
+  kTooDense,
+  kCoefficientRatio,
+  kInsufficientViolation,
+  kDuplicate
+};
+
+/// A candidate cut paired with its acceptance/rejection status.
+struct FilteredCut {
+  Cut cut;
+  CutFilterReason reason;
+};
+
+/// Validates, filters, and deduplicates a set of candidate cuts.
+///
+/// Enforces density, coefficient-ratio, and root-LP violation policies, and rejects numerical
+/// duplicates. Returns the complete set of candidates (accepted and rejected) without modifying
+/// their original mathematical representation.
+[[nodiscard]] std::vector<FilteredCut> filter_and_deduplicate_cuts(
+    const Model& model, const Solution& root_solution, const std::vector<Cut>& candidates);
 
 /// Round the bounds of rows whose activity must be integral.
 ///

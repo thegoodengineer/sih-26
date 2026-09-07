@@ -923,7 +923,7 @@ Solution BranchAndBound::run() {
       continue;
     }
 
-    const Solution relaxation = solve_node();
+    Solution relaxation = solve_node();
 
     if (relaxation.status == SolveStatus::kInfeasible) {
       leave();
@@ -946,6 +946,86 @@ Solution BranchAndBound::run() {
       solution.message = fmt::format("node LP returned {} at node {}",
                                      to_string(relaxation.status), nodes_explored_);
       return solution;
+    }
+
+    if (node_index == 0 && options_.get_bool("enable_root_cuts")) {
+      const Index original_root_rows = working_.num_rows();
+      Model pre_cut_model = working_;
+      auto pre_cut_scaling = scaling_;
+      Solution initial_relaxation = relaxation;
+
+      std::vector<Cut> candidates;
+      for (Index i = 0; i < original_root_rows; ++i) {
+        auto cover = generate_knapsack_cover_cut(working_, i);
+        if (cover.has_value()) {
+          Cut cut;
+          cut.coeff.resize(static_cast<std::size_t>(working_.num_cols()), 0.0);
+          for (std::size_t k = 0; k < cover->col_index.size(); ++k) {
+            cut.coeff[static_cast<std::size_t>(cover->col_index[k])] = cover->coeff[k];
+          }
+          cut.rhs = cover->rhs;
+          candidates.push_back(std::move(cut));
+        }
+      }
+
+      std::vector<Cut> gmi = generate_gmi_cuts(working_, initial_relaxation);
+      candidates.insert(candidates.end(), gmi.begin(), gmi.end());
+
+      auto filtered = filter_and_deduplicate_cuts(working_, initial_relaxation, candidates);
+      std::vector<Cut> accepted;
+      for (const auto& fc : filtered) {
+        if (fc.reason == CutFilterReason::kAccepted) accepted.push_back(fc.cut);
+      }
+
+      if (!accepted.empty()) {
+        const Index old_rows = original_root_rows;
+        const Index old_cols = working_.num_cols();
+        const Index new_rows = old_rows + static_cast<Index>(accepted.size());
+
+        SparseMatrix new_matrix(new_rows, old_cols);
+        for (Index j = 0; j < old_cols; ++j) {
+          ColumnView view = working_.matrix.column(j);
+          for (Index k = 0; k < view.size; ++k) {
+            new_matrix.add_entry(view.rows[k], j, view.values[k]);
+          }
+        }
+
+        for (std::size_t i = 0; i < accepted.size(); ++i) {
+          const Cut& cut = accepted[i];
+          const Index row_idx = old_rows + static_cast<Index>(i);
+          for (Index j = 0; j < old_cols; ++j) {
+            if (std::abs(cut.coeff[static_cast<std::size_t>(j)]) > tol::kZeroDrop) {
+              new_matrix.add_entry(row_idx, j, cut.coeff[static_cast<std::size_t>(j)]);
+            }
+          }
+        }
+
+        new_matrix.finalize();
+        working_.matrix = std::move(new_matrix);
+        working_.resize_rows(new_rows);
+
+        for (std::size_t i = 0; i < accepted.size(); ++i) {
+          working_.row_lower[static_cast<std::size_t>(old_rows) + i] = -kInfinity;
+          working_.row_upper[static_cast<std::size_t>(old_rows) + i] = accepted[i].rhs;
+        }
+
+        assert(working_.matrix.num_rows() == working_.num_rows());
+        assert(working_.matrix.num_cols() == old_cols);
+        assert(working_.row_lower.size() == static_cast<std::size_t>(working_.num_rows()));
+        assert(working_.row_upper.size() == static_cast<std::size_t>(working_.num_rows()));
+
+        scaling_ = build_node_scaling(working_, node_options_);
+        Solution final_relaxation = solve_node();
+        if (final_relaxation.status == SolveStatus::kOptimal) {
+          relaxation = final_relaxation;
+        } else {
+          working_ = std::move(pre_cut_model);
+          scaling_ = std::move(pre_cut_scaling);
+          relaxation = std::move(initial_relaxation);
+          logger_.info("Root cuts induced failure: {}; rolled back to initial relaxation",
+                       to_string(final_relaxation.status));
+        }
+      }
     }
 
     // Node bound in minimise space, excluding the offset (added back on report).
