@@ -1776,12 +1776,31 @@ Solution solve_with_scaling(const Model& model, const Options& options, Logger& 
   // fails outright. What it costs is any model that scaling solves in more than half the
   // budget - and on the full Netlib set at a 120 s limit, no passing instance needs more
   // than 28 s scaled. A caller who knows better sets a larger limit or turns scaling off.
+  //
+  // THE ROUTE IS RECORDED (#172). Under a time limit the clock decides whether the scaled
+  // attempt finishes, and with it which attempt's iterations the answer carries: fit2p took
+  // 10,432 scaled iterations on one machine and, on one 1.5x slower, 5,290 unscaled ones
+  // after the scaled attempt ran out its share - same objective to 1e-11, both verified. A
+  // time limit cannot be made clock-independent, so the choice it made is written into the
+  // message instead of being inferred later from an iteration count that does not match.
+  // Without a time limit the route depends on the numerics alone and is deterministic.
   const double time_limit = options.get_double("time_limit");
   const bool limited = time_limit < 1e300;  // the option's no-limit sentinel is DBL_MAX
   Timer budget;
   Options scaled_options = options;
   if (limited) scaled_options.set_double("time_limit", 0.5 * time_limit);
   Solution solution = run_engine(scaled, scaled_options);
+  const double scaled_seconds = budget.elapsed_seconds();
+  const auto note_route = [&](Solution& kept, const char* what) {
+    const std::string note =
+        limited ? fmt::format(
+                      "route: the scaled attempt returned {} after {:.1f} s of its "
+                      "{:.0f} s share; {}",
+                      to_string(solution.status), scaled_seconds, 0.5 * time_limit, what)
+                : fmt::format("route: the scaled attempt returned {}; {}",
+                              to_string(solution.status), what);
+    kept.message = kept.message.empty() ? note : kept.message + "; " + note;
+  };
 
   // UNSCALE, AND UNSCALE EVERYTHING. A diagonal change of variable that is undone for the
   // primal point but not for the duals produces a point that is feasible, an objective that
@@ -1840,7 +1859,10 @@ Solution solve_with_scaling(const Model& model, const Options& options, Logger& 
   Options retry_options = options;
   if (limited) {
     const double remaining = time_limit - budget.elapsed_seconds();
-    if (remaining <= 0.0) return solution;
+    if (remaining <= 0.0) {
+      note_route(solution, "nothing was left for an unscaled retry");
+      return solution;
+    }
     retry_options.set_double("time_limit", remaining);
   }
 
@@ -1852,6 +1874,7 @@ Solution solve_with_scaling(const Model& model, const Options& options, Logger& 
       unscaled.primal_infeasibility <= primal_tolerance;
   if (unscaled_usable) {
     logger.info("Unscaled solve succeeded where the scaled one did not");
+    note_route(unscaled, "the unscaled retry produced this answer");
     return unscaled;
   }
 
@@ -1874,12 +1897,20 @@ Solution solve_with_scaling(const Model& model, const Options& options, Logger& 
         claimant);
     kept.message = kept.message.empty() ? note : kept.message + "; " + note;
     logger.warning("{}", note);
+    note_route(kept, scaled_claims ? "the unscaled retry's result is reported"
+                                   : "the scaled attempt's result is reported");
     return kept;
   }
 
   // Neither worked. Report the one that came closer to feasibility, so the message the user
   // sees describes the better of the two attempts rather than whichever ran last.
-  return unscaled.primal_infeasibility < solution.primal_infeasibility ? unscaled : solution;
+  const bool prefer_unscaled = unscaled.primal_infeasibility < solution.primal_infeasibility;
+  Solution& closer = prefer_unscaled ? unscaled : solution;
+  note_route(closer, prefer_unscaled ? "neither attempt produced a usable point; the unscaled "
+                                       "retry came closer to feasibility and is reported"
+                                     : "neither attempt produced a usable point; the scaled "
+                                       "attempt came closer to feasibility and is reported");
+  return closer;
 }
 
 }  // namespace detail

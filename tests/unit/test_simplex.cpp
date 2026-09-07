@@ -923,5 +923,43 @@ TEST(PrimalSimplex, AMarginalPhaseOneStallIsNotCalledInfeasible) {
   EXPECT_NE(solution.message.find("far above"), std::string::npos) << solution.message;
 }
 
+// =========================================================================================
+// The route an answer took is written down (#172)
+//
+// Under a time limit the scaled attempt gets half the budget and an unscaled retry gets the
+// rest, so the clock decides which attempt's iterations the answer carries: fit2p solved in
+// 10,432 scaled iterations on one machine and in 5,290 unscaled ones on a slower one, same
+// objective to 1e-11. That cannot be made clock-independent, so it is made visible: the
+// message names the route. The one route a test can force on every machine is the
+// exhausted one - a limit so small that the scaled attempt is over before its first
+// iteration and nothing is left for a retry.
+// =========================================================================================
+
+TEST(PrimalSimplex, TheRouteAnAnswerTookIsRecorded) {
+  const Model model = make_model(ObjSense::kMaximize, {3.0, 5.0}, {0.0, 0.0}, {kInf, kInf},
+                                 {{1.0, 0.0}, {0.0, 2.0}, {3.0, 2.0}}, {-kInf, -kInf, -kInf},
+                                 {4.0, 12.0, 18.0});
+  Options options;
+  options.set_bool("log_to_console", false);
+  options.set_bool("presolve", false);  // presolve would solve this model outright
+  options.set_string("algorithm", "simplex");
+  options.set_double("time_limit", 1e-9);
+  const Solution solution = solve(model, options);
+  ASSERT_EQ(solution.status, SolveStatus::kTimeLimit) << solution.message;
+  EXPECT_NE(solution.message.find("route: the scaled attempt returned time_limit"),
+            std::string::npos)
+      << solution.message;
+  EXPECT_NE(solution.message.find("nothing was left for an unscaled retry"), std::string::npos)
+      << solution.message;
+
+  // Without a limit the route is decided by the numerics alone: the scaled attempt solves
+  // this model and no route note is attached, because there was no choice to record.
+  options.set_double("time_limit", 1e300);
+  const Solution solved = solve(model, options);
+  ASSERT_EQ(solved.status, SolveStatus::kOptimal) << solved.message;
+  EXPECT_NEAR(solved.objective, 36.0, 1e-9);
+  EXPECT_EQ(solved.message.find("route:"), std::string::npos) << solved.message;
+}
+
 }  // namespace
 }  // namespace sankhya
