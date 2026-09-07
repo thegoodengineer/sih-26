@@ -460,7 +460,7 @@ FULL_FAILURES="$("$PYTHON" bench/runners/latest_result.py "netlib-full-*.csv" --
 # The instance count in section 6 is READ, not typed. It said "eight" until someone
 # fetched a ninth instance, at which point the closing paragraph contradicted the table
 # printed directly above it. Same reasoning as MEDIUM_SUMMARY.
-NETLIB_COUNT="$("$PYTHON" -c "import json,pathlib;print(len(json.loads(pathlib.Path('data/netlib/reference.json').read_text())['instances']))" 2>/dev/null || echo "the committed")"
+NETLIB_COUNT="$("$PYTHON" -c "import csv,sys;print(sum(1 for _ in csv.DictReader(open(sys.argv[1], newline=''))))" "$WORK/netlib.csv" 2>/dev/null || echo "the committed")"
 
 rule "6. What PS26119 asks for that we do NOT yet have"
 # THE MEDIUM-TIER FIGURE BELOW IS READ FROM THE COMMITTED CSV, not typed here. The demo does
@@ -540,7 +540,7 @@ cat <<'GAPS' | sed -e "s|@FULL@|${FULL_SUMMARY}|g" -e "s|@MEDIUM@|${MEDIUM_SUMMA
                         10500 with 129018 nonzeros in 0.4s; the slowest we solve is fit2p
                         at 3000 x 13525 in 102.7s, and dfl001 hits the 120s
                         limit (bench/results/netlib-full-adcee1b.csv). On Mittelmann's eight
-                        smallest LPs, 14646 to 376500 rows, the result is 0 of 8 inside 300s
+                        smallest LPs, 6330 to 376500 rows, the result is 0 of 8 inside 300s
                         (bench/runners/mittelmann.py) - which is the honest shape of it:
                         correct wherever we finish, and both curves bend well before
                         "millions of variables". That is issue #34. Reproduce with:
