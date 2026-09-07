@@ -931,8 +931,8 @@ TEST(PrimalSimplex, AMarginalPhaseOneStallIsNotCalledInfeasible) {
 // 10,432 scaled iterations on one machine and in 5,290 unscaled ones on a slower one, same
 // objective to 1e-11. That cannot be made clock-independent, so it is made visible: the
 // message names the route. The one route a test can force on every machine is the
-// exhausted one - a limit so small that the scaled attempt is over before its first
-// iteration and nothing is left for a retry.
+// exhausted one - a limit so small that the scaled attempt is over after its first
+// iteration (the clock is read after a pivot, never before) and nothing is left for a retry.
 // =========================================================================================
 
 TEST(PrimalSimplex, TheRouteAnAnswerTookIsRecorded) {
@@ -953,7 +953,8 @@ TEST(PrimalSimplex, TheRouteAnAnswerTookIsRecorded) {
       << solution.message;
 
   // Without a limit the route is decided by the numerics alone: the scaled attempt solves
-  // this model and no route note is attached, because there was no choice to record.
+  // this model and no route note is attached, because no attempt failed. (A scaled attempt
+  // that fails without a limit still gets a note, minus the time figures.)
   options.set_double("time_limit", 1e300);
   const Solution solved = solve(model, options);
   ASSERT_EQ(solved.status, SolveStatus::kOptimal) << solved.message;

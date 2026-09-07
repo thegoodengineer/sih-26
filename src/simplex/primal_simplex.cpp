@@ -1774,8 +1774,11 @@ Solution solve_with_scaling(const Model& model, const Options& options, Logger& 
   // So the scaled attempt gets half the limit and the retry gets whatever is left. Half is
   // not tuned; it is the split that guarantees the retry a real share when the first attempt
   // fails outright. What it costs is any model that scaling solves in more than half the
-  // budget - and on the full Netlib set at a 120 s limit, no passing instance needs more
-  // than 28 s scaled. A caller who knows better sets a larger limit or turns scaling off.
+  // budget. On the full Netlib set at a 120 s limit the scaled attempt needs up to 55 s on a
+  // cool machine (pilot87 54.4 s, fit2p 50.2 s, bench/results/netlib-full-59ac6e3.csv), so
+  // the half share is the binding constraint on the two largest solvable instances whenever
+  // the machine is slower than that (#172). A caller who knows better sets a larger limit or
+  // turns scaling off.
   //
   // THE ROUTE IS RECORDED (#172). Under a time limit the clock decides whether the scaled
   // attempt finishes, and with it which attempt's iterations the answer carries: fit2p took
@@ -1783,7 +1786,8 @@ Solution solve_with_scaling(const Model& model, const Options& options, Logger& 
   // after the scaled attempt ran out its share - same objective to 1e-11, both verified. A
   // time limit cannot be made clock-independent, so the choice it made is written into the
   // message instead of being inferred later from an iteration count that does not match.
-  // Without a time limit the route depends on the numerics alone and is deterministic.
+  // Without a time limit the route depends on the numerics alone and is deterministic; a
+  // note is still attached when the scaled attempt fails, minus the time figures.
   const double time_limit = options.get_double("time_limit");
   const bool limited = time_limit < 1e300;  // the option's no-limit sentinel is DBL_MAX
   Timer budget;
@@ -1855,7 +1859,10 @@ Solution solve_with_scaling(const Model& model, const Options& options, Logger& 
   // gets what the scaled attempt left, which is at least half by construction above, and
   // if the limit was somehow exhausted anyway the scaled result is reported. Measured on
   // fit2p before this: a 60 s limit produced a 120.76 s run.
-  if (solution.status == SolveStatus::kIterationLimit) return solution;
+  if (solution.status == SolveStatus::kIterationLimit) {
+    note_route(solution, "an iteration limit has no remainder, so no unscaled retry was made");
+    return solution;
+  }
   Options retry_options = options;
   if (limited) {
     const double remaining = time_limit - budget.elapsed_seconds();
