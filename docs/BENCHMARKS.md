@@ -260,23 +260,23 @@ instances of that size and name what happens. These are the eight smallest archi
 Mittelmann's LP test set (`bench/runners/fetch_mittelmann.py`, provenance in
 `data/mittelmann/reference.json`).
 
-Source CSV: `bench/results/mittelmann-ca64dd5.csv`  
-Commit `ca64dd5` · machine `Windows-AMD64` · time limit 300 s per instance, both solvers
+Source CSV: `bench/results/mittelmann-592aea3.csv`  
+Commit `592aea3` · machine `Windows-AMD64` · time limit 300 s per instance, both solvers
 
-**0 of 8** instances reached `optimal` inside the limit; **0 of 8** also passed the independent verifier and agree with HiGHS. HiGHS, run as a separate process under the same limit, finished **4 of 8**.
+**0 of 8** instances reached `optimal` inside the limit; **0 of 8** also passed the independent verifier and agree with HiGHS. HiGHS, run as a separate process under the same limit, finished **2 of 8**.
 
 These are the smallest archives in Mittelmann's LP directory and they are still one to two orders of magnitude beyond Netlib's largest instance. No published optimum exists for them, so there is no pass-against-a-number column: the outcome is the status, the verifier's verdict where a solution was written, and HiGHS's objective where HiGHS finished. `our objective` on a `time_limit` row is the last iterate's value, not a bound, and is printed only so that a later run can be compared with it.
 
 | instance | rows | cols | nonzeros | status | our objective | HiGHS objective | rel. diff | iters | solver time (s) | verified |
 |---|---:|---:|---:|---|---:|---:|---:|---:|---:|:--:|
-| `Linf_520c` | 93326 | 69004 | 566193 | time_limit | 0.011540388 | Time limit reached | - | 1688 | 304.8 | - |
-| `bdry2` | 376500 | 250998 | 1500003 | time_limit | -0.0043 | Time limit reached | - | 1 | 389.2 | - |
-| `brazil3` | 14646 | 23968 | 133184 | time_limit | 0 | 2 | - | 28833 | 300.1 | - |
-| `chromaticindex1024-7` | 67583 | 73728 | 270324 | time_limit | 3 | 3 | - | 4368 | 300.8 | - |
-| `irish-electricity` | 104259 | 61728 | 523257 | time_limit | 0 | 2546254.563 | - | 5365 | 300.2 | - |
-| `qap15` | 6330 | 22275 | 94950 | time_limit | 1177.867221 | Time limit reached | - | 13088 | 304.5 | - |
-| `rmine15` | 358395 | 42438 | 879732 | time_limit | -8443.961371 | Time limit reached | - | 28 | 309.1 | - |
-| `supportcase10` | 165684 | 14770 | 555082 | time_limit | 0 | 3.383923666 | - | 1010 | 316.5 | - |
+| `Linf_520c` | 93326 | 69004 | 566193 | time_limit | 0.1049570954 | Time limit reached | - | 588 | 308.9 | - |
+| `bdry2` | 376500 | 250998 | 1500003 | time_limit | -0.0043 | Time limit reached | - | 1 | 648.7 | - |
+| `brazil3` | 14646 | 23968 | 133184 | time_limit | 0 | 2 | - | 10922 | 300.5 | - |
+| `chromaticindex1024-7` | 67583 | 73728 | 270324 | time_limit | 2 | Time limit reached | - | 1302 | 303.5 | - |
+| `irish-electricity` | 104259 | 61728 | 523257 | time_limit | 0 | 2546254.563 | - | 3121 | 304.0 | - |
+| `qap15` | 6330 | 22275 | 94950 | numerical_error | 0 | Time limit reached | - | 13954 | 297.5 | - |
+| `rmine15` | 358395 | 42438 | 879732 | time_limit | -8443.961371 | Time limit reached | - | 28 | 309.2 | - |
+| `supportcase10` | 165684 | 14770 | 555082 | time_limit | 0 | Time limit reached | - | 1266 | 306.2 | - |
 
 **Not solved inside the limit**, named rather than dropped: `Linf_520c`, `bdry2`, `brazil3`, `chromaticindex1024-7`, `irish-electricity`, `qap15`, `rmine15`, `supportcase10`.
 
