@@ -79,10 +79,13 @@ were written by this project (#75). Two independent solvers landing on the same 
 different order of evidence. The pass rate above is still measured against Netlib's table,
 unchanged: a project cannot grade itself against a solver of its own choosing.
 
-The failure class that *was* the largest is gone. `basis became singular` was 13 of 23
-failures on 2026-09-04 and has been **zero** since #144 found the pivot search treating "none
-of my first four candidates was admissible" as proof of singularity and #147 repaired the
-genuine rank defects that remained. Since then the dual simplex became the automatic engine
+The failure class that *was* the largest is gone from Netlib. `basis became singular` was 13
+of 23 failures on 2026-09-04 and has been **zero on the full Netlib set** since #144 found
+the pivot search treating "none of my first four candidates was admissible" as proof of
+singularity and #147 repaired the genuine rank defects that remained. It is not zero
+everywhere: on Mittelmann's `qap15` the unscaled retry went singular at iteration 13,954
+(`bench/results/mittelmann-592aea3.csv`, issue #174), the first reappearance in the evidence
+and on the Mittelmann instance closest to Netlib's size. Since then the dual simplex became the automatic engine
 (#165), reliability branching landed (#166), presolve's postsolve runs its dual passes to a
 fixed point (#162), and the FTRAN went hyper-sparse (#169): between them the full set went
 from 71 to 79 verified passes and the slowest solved instance from 123.6 s (`degen3`) to
@@ -97,8 +100,10 @@ branch and bound now has reliability branching and warm-started node LPs, but no
 planes (#23), so it finds good incumbents far more often than it closes the bound. For
 scale beyond what Netlib tests, `bench/runners/generate_large_lp.py` builds sparse LPs of
 any size with an exactly known analytic optimum, and `bench/runners/mittelmann.py` runs
-Mittelmann's LP set: on its eight smallest instances (14,646 to 376,500 rows) the result is
-**0 of 8** inside 300 s, every one named in section 1d of `docs/BENCHMARKS.md`.
+Mittelmann's LP set: on its eight smallest instances (6,330 to 376,500 rows) the result is
+**0 of 8** inside 300 s - seven time limits and one singular basis (`qap15`, #174) - every
+one named in section 1d of `docs/BENCHMARKS.md` (`bench/results/mittelmann-592aea3.csv`,
+run on `main` with the machine awake and on AC throughout).
 
 ## Reproduce everything
 
