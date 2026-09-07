@@ -25,6 +25,10 @@
 #                   blocked Release binary cannot. Same answers; the timing comparison is
 #                   skipped under it because it would no longer mean anything.
 #   --build-dir     build somewhere other than build/
+#   --miplib        also run the MIPLIB set (needs the instances; fetch them first with
+#                   bench/runners/fetch_miplib.py --count 30). Off by default because the
+#                   30 instances take about twenty minutes at the 60 s limit, which is
+#                   longer than everything else here put together.
 set -uo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
@@ -32,9 +36,11 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 BUILD_DIR="build"
 BUILD_TYPE="Release"
 FETCH_MEDIUM=0
+RUN_MIPLIB=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --fetch-medium) FETCH_MEDIUM=1 ;;
+    --miplib) RUN_MIPLIB=1 ;;
     # Debug exists here as the Smart App Control escape hatch, not as a developer
     # convenience: it produces different bytes, so it can run where a blocked Release
     # binary cannot. Answers and iteration counts are identical; only timings change.
@@ -56,6 +62,10 @@ skip() { printf '\n  \033[33mSKIPPED: %s\033[0m\n  %s\n' "$1" "$2"; SKIPPED+=("$
 START=$(date +%s)
 printf '\n\033[1mSANKHYA - reproducing every claim\033[0m\n'
 printf 'commit %s\n' "$(git rev-parse --short HEAD 2>/dev/null || echo 'not a git checkout')"
+# THE TOOLCHAIN IS PART OF THE RESULT. Every number below depends on which compiler built the
+# binary and which Python drove the harness, and a reproduction that does not say so cannot be
+# compared with docs/PROVENANCE.md section 2b, where the tested toolchains are recorded.
+printf 'machine %s\n' "$(uname -s -m 2>/dev/null || echo unknown)"
 
 # ---- 0. Preflight -------------------------------------------------------------------------
 rule "Preflight: can this machine build and run at all?"
@@ -150,6 +160,19 @@ fi
 "$PYTHON" bench/runners/robustness.py --binary "$BIN" \
   ${ROBUST_OUT[@]+"${ROBUST_OUT[@]}"} || skip "robustness sweep" "see the output above"
 
+# ---- 3c. MIPLIB, when asked ----------------------------------------------------------------
+if [ "$RUN_MIPLIB" = 1 ]; then
+  rule "MIPLIB 2017: the mixed-integer side, which is the weakest evidence here"
+  printf 'Two questions, kept apart: how many instances reach the published optimum, and how\n'
+  printf 'many the search PROVES. docs/BENCHMARKS.md section 2 is this table.\n\n'
+  MIPLIB_OUT=()
+  if [ "$BUILD_TYPE" != "Release" ]; then
+    MIPLIB_OUT=(--out "${TMPDIR:-/tmp}/miplib-$BUILD_TYPE-scratch.csv")
+  fi
+  "$PYTHON" bench/runners/miplib.py --binary "$BIN" --time-limit 60 \
+    ${MIPLIB_OUT[@]+"${MIPLIB_OUT[@]}"} || skip "MIPLIB benchmark" "see the output above"
+fi
+
 # ---- 4. Comparison against an established solver -------------------------------------------
 rule "Compared against HiGHS, as PS26119 requires"
 if [ "$BUILD_TYPE" != "Release" ]; then
@@ -176,6 +199,30 @@ printf 'robustness hazards, and the list of what we do NOT have.\n'
 # Control had blocked and skip the whole walkthrough for a reason unrelated to the run.
 SANKHYA_BIN="$(cd "$(dirname "$BIN")" && pwd)/$(basename "$BIN")" PYTHON="$PYTHON" \
   bash demo/run_sih_demo.sh || skip "demo" "see the output above"
+
+# ---- 6. The document the numbers become -----------------------------------------------------
+# THE POINT OF THE WHOLE SCRIPT. Everything above wrote a CSV; docs/BENCHMARKS.md is generated
+# from those CSVs so it cannot drift from them, and a reproduction that stops before this step
+# leaves the reader comparing screen output against a document nobody regenerated. A Debug run
+# is excluded because its CSVs went to a scratch file on purpose (see step 3) and the
+# generator would republish whatever it found instead.
+rule "Regenerating docs/BENCHMARKS.md from the CSVs this run just wrote"
+if [ "$BUILD_TYPE" != "Release" ]; then
+  skip "docs/BENCHMARKS.md" "this is a $BUILD_TYPE build, whose results deliberately did not
+  go into bench/results/. Regenerating would republish older numbers as though this run had
+  produced them."
+elif "$PYTHON" bench/runners/make_benchmarks_doc.py; then
+  if git diff --quiet -- docs/BENCHMARKS.md 2>/dev/null; then
+    printf '\ndocs/BENCHMARKS.md is unchanged: the committed document already states what this\n'
+    printf 'machine just measured.\n'
+  else
+    printf '\n\033[33mdocs/BENCHMARKS.md CHANGED.\033[0m That is the honest outcome of a run on a\n'
+    printf 'different machine - the pass rates should match, the timings will not. Inspect with\n'
+    printf '  git diff -- docs/BENCHMARKS.md\n'
+  fi
+else
+  skip "docs/BENCHMARKS.md" "see the output above"
+fi
 
 # ---- Summary --------------------------------------------------------------------------------
 ELAPSED=$(( $(date +%s) - START ))
