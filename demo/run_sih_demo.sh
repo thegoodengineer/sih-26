@@ -537,8 +537,8 @@ cat <<'GAPS' | sed -e "s|@FULL@|${FULL_SUMMARY}|g" -e "s|@MEDIUM@|${MEDIUM_SUMMA
                         HiGHS disagrees with the readme by the same amount.
 
                         On size, the largest Netlib instance we solve is fit2d at 25 x
-                        10500 with 129018 nonzeros in 1.4s; the slowest we solve is d2q06c
-                        at 2171 x 5167 in 43.1s, and dfl001, fit2p and pilot87 hit the 120s
+                        10500 with 129018 nonzeros in 0.4s; the slowest we solve is fit2p
+                        at 3000 x 13525 in 102.7s, and dfl001 hits the 120s
                         limit (bench/results/netlib-full-adcee1b.csv). On Mittelmann's eight
                         smallest LPs, 14646 to 376500 rows, the result is 0 of 8 inside 300s
                         (bench/runners/mittelmann.py) - which is the honest shape of it:
