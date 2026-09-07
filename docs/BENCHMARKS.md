@@ -7,9 +7,12 @@ This file is generated from the CSVs in `bench/results/`, so it cannot drift fro
 evidence. Every number below came out of a run that recorded the instance sha256, the git
 commit and the machine tag alongside it.
 
-Times are wall-clock, measured around the whole process, so they include reading the model
-and writing the outputs. That makes them slightly pessimistic and honest; it is not the
-figure to quote for algorithmic speed, and no attempt is made to dress it up.
+Times in sections 1a-1c and 2 are wall-clock, measured around the whole process, so they
+include reading the model and writing the outputs. That makes them slightly pessimistic and
+honest; it is not the figure to quote for algorithmic speed, and no attempt is made to
+dress it up. Section 1d prints solver-internal seconds (its instances take minutes, and the
+read is not what is being measured) and section 4 is solver-internal on both sides, as it
+says.
 
 Reporting follows Mittelmann's conventions: shifted geometric means with a
 1-second shift, an explicit time limit, and failures counted and named
@@ -24,7 +27,7 @@ Netlib's own `readme`. None of these values was typed from memory.
 
 ### 1a. The small set — what the demo runs
 
-Eight instances, committed to the repository so a fresh clone can reproduce this with no
+Nine instances, committed to the repository so a fresh clone can reproduce this with no
 network. **This is the set `demo/run_demo.sh` lets a judge pick from, and it is the easy end
 of Netlib.** Its pass rate is not the headline; section 1c is.
 
@@ -265,7 +268,7 @@ Commit `592aea3` · machine `Windows-AMD64` · time limit 300 s per instance, bo
 
 **0 of 8** instances reached `optimal` inside the limit; **0 of 8** also passed the independent verifier and agree with HiGHS. HiGHS, run as a separate process under the same limit, finished **2 of 8**.
 
-These are the smallest archives in Mittelmann's LP directory and they are still one to two orders of magnitude beyond Netlib's largest instance. No published optimum exists for them, so there is no pass-against-a-number column: the outcome is the status, the verifier's verdict where a solution was written, and HiGHS's objective where HiGHS finished. `our objective` on a `time_limit` row is the last iterate's value, not a bound, and is printed only so that a later run can be compared with it.
+These are the smallest archives in Mittelmann's LP directory; against Netlib's largest instance (dfl001, 6,071 rows, 35,632 nonzeros) they range from the same row count with 2.7x the nonzeros (qap15) to 62x the rows and 42x the nonzeros (bdry2). No published optimum exists for them, so there is no pass-against-a-number column: the outcome is the status, the verifier's verdict where a solution was written, and HiGHS's objective where HiGHS finished. `our objective` on a `time_limit` row is the last iterate's value, not a bound, and is printed only so that a later run can be compared with it.
 
 | instance | rows | cols | nonzeros | status | our objective | HiGHS objective | rel. diff | iters | solver time (s) | verified |
 |---|---:|---:|---:|---|---:|---:|---:|---:|---:|:--:|
@@ -294,7 +297,7 @@ Commit `adcee1b` · machine `Windows-AMD64`
 
 Those are different claims and are kept apart deliberately. Branch and bound here has no cutting planes - a rounding heuristic and a root dive, but nothing that tightens the relaxation - so it finds good incumbents far more often than it finishes the proof. Collapsing the two columns would hide exactly the thing #23 is meant to improve.
 
-**The time limit decides some of these, not the solver.** `enlight8` proves optimality in about 55 seconds on an idle machine and misses a 60-second budget when the rest of the set is running alongside it - so its row moves with background load rather than with anything about the search. Instances close to the limit should be read as "needs more time than we gave it", not as a capability. The remedy is a longer limit, and the reason this table does not already use one is that the full set takes about half an hour per run as it stands.
+**The time limit decides some of these, not the solver.** A row that stops at the limit with a small gap says "needs more time than we gave it", not "cannot"; which side of the limit such a row lands on moves with the machine's speed rather than with anything about the search. The remedy is a longer limit, and the reason this table does not already use one is that the set already adds up to 21 minutes of solve time per run at this one.
 
 Instances are the smallest MIPLIB 2017 instances tagged easy that carry a **proven** optimum (`=opt=` in MIPLIB's own solution file). A `=best=` value is the best anyone has found, not a proof, and scoring against one would let a wrong answer look like a record.
 
@@ -359,7 +362,7 @@ HiGHS is the reference. It runs as a SEPARATE PROCESS over the same MPS files; n
 is linked into, or read by, SANKHYA - see `docs/PROVENANCE.md`. Both sides are timed on
 solver-internal time only.
 
-The comparison below is run on **the same tier as section 1b**, not on the eight-instance
+The comparison below is run on **the same tier as section 1b**, not on the nine-instance
 demo set. Comparing only where we pass would be the easy version of this table and would say
 nothing: the instances we fail are exactly the ones a reader should want to see against a
 mature solver.
