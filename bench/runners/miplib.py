@@ -71,6 +71,7 @@ CSV_COLUMNS = [
     "git_commit",
     "machine",
     "timestamp_utc",
+    "solver_options",
 ]
 
 
@@ -111,20 +112,22 @@ def git_commit() -> str:
         return "unknown"
 
 
-def solve(binary: Path, instance: Path, time_limit: float, verify: bool) -> dict:
+def solve(binary: Path, instance: Path, time_limit: float, verify: bool,
+          solver_options: list | None = None) -> dict:
     import time
 
     with tempfile.TemporaryDirectory() as tmp:
         stats_path = Path(tmp) / "stats.json"
         sol_path = Path(tmp) / "solution.sol"
+        command = [str(binary), "solve", str(instance),
+                   "--time-limit", str(time_limit),
+                   "--stats", str(stats_path),
+                   "--write-sol", str(sol_path),
+                   "--option", "log_to_console=false"]
+        for option in solver_options or []:
+            command += ["--option", option]
         started = time.perf_counter()
-        completed = subprocess.run(
-            [str(binary), "solve", str(instance),
-             "--time-limit", str(time_limit),
-             "--stats", str(stats_path),
-             "--write-sol", str(sol_path),
-             "--option", "log_to_console=false"],
-            capture_output=True, text=True)
+        completed = subprocess.run(command, capture_output=True, text=True)
         wall = time.perf_counter() - started
 
         if not stats_path.exists():
@@ -172,6 +175,10 @@ def main() -> int:
     parser.add_argument("--instances", nargs="*")
     parser.add_argument("--no-verify", action="store_true")
     parser.add_argument("--out", type=Path, default=None)
+    parser.add_argument("--solver-option", action="append", default=[], metavar="KEY=VALUE",
+                        help="pass --option KEY=VALUE to the solver and record it in the CSV. "
+                             "A run made with one is a measurement OF that option, not the "
+                             "tier's evidence, and latest_result.py skips it for that reason.")
     args = parser.parse_args()
 
     binary = find_binary(args.binary)
@@ -207,7 +214,8 @@ def main() -> int:
             continue
 
         published = float(entry["published_optimal"])
-        blob = solve(binary, instance, args.time_limit, not args.no_verify)
+        blob = solve(binary, instance, args.time_limit, not args.no_verify,
+                     args.solver_option)
         ours = blob.get("objective")
         status = blob["status"]
 
@@ -241,6 +249,7 @@ def main() -> int:
             "git_commit": commit,
             "machine": machine,
             "timestamp_utc": stamp,
+            "solver_options": " ".join(args.solver_option),
         })
 
         gap_text = "-" if relative is None or not math.isfinite(relative) else f"{relative:.2e}"

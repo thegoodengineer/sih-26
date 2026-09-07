@@ -163,13 +163,21 @@ const std::vector<OptionSpec>& Options::registry() {
                  0.0,
                  0.0,
                  {}});
-    s.push_back({"enable_root_cuts",
-                 OptionType::Bool,
-                 false,
-                 "Enable root-node cutting planes (GMI and Knapsack Cover).",
-                 0.0,
-                 0.0,
-                 {}});
+    s.push_back(
+        {"enable_root_cuts",
+         OptionType::Bool,
+         false,
+         "Enable root-node cutting planes (Gomory mixed-integer and lifted knapsack cover). "
+         "OFF by default, and that is a measurement, not caution: on the 30-instance "
+         "MIPLIB set at a 60 s limit the cuts cut the node count to 0.887x over the "
+         "28 instances that end the same way - as much as 0.26x on individual ones - "
+         "and still lost two proofs, because a cut row makes every node LP dearer. "
+         "enlight8 proves its optimum in 74k nodes without them and needs 240 s with "
+         "them, having reached the same answer. See bench/results/miplib-cuts-off.csv "
+         "and miplib-cuts-on.csv.",
+         0.0,
+         0.0,
+         {}});
     s.push_back({"gpu",
                  OptionType::Bool,
                  false,
