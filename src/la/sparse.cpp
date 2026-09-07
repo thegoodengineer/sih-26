@@ -213,6 +213,11 @@ void SparseMatrix::multiply_add(const double* x, double* y, double alpha) const 
 
 void SparseMatrix::transpose_multiply_add(const double* x, double* y, double alpha) const {
   ensure_frozen();
+  // A gather per column: y[j] is written by exactly one thread, so the result is the same
+  // at any thread count (#57).
+#ifdef SANKHYA_HAVE_OPENMP
+#pragma omp parallel for schedule(static)
+#endif
   for (Index j = 0; j < num_cols_; ++j) {
     const ColumnView c = column(j);
     double dot = 0.0;

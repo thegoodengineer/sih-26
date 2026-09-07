@@ -87,6 +87,16 @@ const std::vector<OptionSpec>& Options::registry() {
                  0.0,
                  kNoLimit,
                  {}});
+    s.push_back({"refactor_work_ratio",
+                 OptionType::Double,
+                 128.0,
+                 "Simplex refactorizes once the eta-file nonzeros summed over iterations since "
+                 "the last refactorization exceed this multiple of the base factor size. "
+                 "Deterministic; calibrated from measurements on Netlib d2q06c and greenbea "
+                 "(#68). 0 refactorizes every iteration.",
+                 0.0,
+                 kNoLimit,
+                 {}});
     s.push_back({"iteration_limit",
                  OptionType::Int,
                  std::int64_t{-1},
@@ -106,18 +116,44 @@ const std::vector<OptionSpec>& Options::registry() {
     s.push_back({"algorithm",
                  OptionType::String,
                  std::string("auto"),
-                 "LP engine: auto, simplex, dual-simplex, pdhg, ipm.",
+                 "LP engine: auto (the dual simplex, #65: 78/89 on the Netlib full set "
+                 "against the primal's 74/89, in 0.37x the time), simplex (the primal), "
+                 "dual-simplex, pdhg, or ipm (#56: Mehrotra predictor-corrector on the "
+                 "normal equations with a sparse LDL^T; produces no basis and does not "
+                 "certify infeasibility or unboundedness).",
                  0.0,
                  0.0,
                  {"auto", "simplex", "dual-simplex", "pdhg", "ipm"}});
+    s.push_back({"mip_branching",
+                 OptionType::String,
+                 std::string("reliability"),
+                 "Branching rule: reliability (default; #69 - pseudocosts once a column has "
+                 "been branched on kPseudocostReliability times in a direction, strong "
+                 "branching with capped warm-started dual solves until then, product "
+                 "score) or most-fractional (the rule this replaced, kept for comparison).",
+                 0.0,
+                 0.0,
+                 {"reliability", "most-fractional"}});
+    s.push_back({"mip_node_engine",
+                 OptionType::String,
+                 std::string("dual"),
+                 "LP engine for branch-and-bound nodes below the root: dual (default) "
+                 "warm-starts each child from its parent's optimal basis with the dual "
+                 "simplex, which is dual feasible there and typically a few pivots from "
+                 "the child's optimum; primal re-solves every node from the slack basis, "
+                 "kept so the two can be compared (#65).",
+                 0.0,
+                 0.0,
+                 {"dual", "primal"}});
     s.push_back({"pricing",
                  OptionType::String,
-                 std::string("dantzig"),
-                 "Simplex entering-variable rule: dantzig (default) or devex. Devex takes "
-                 "far fewer iterations but is NOT yet numerically safe - it costs two Netlib "
-                 "medium instances to a singular basis under either ratio test. Measured "
-                 "against the Harris two-pass ratio test (#67) and unchanged; see #66 for "
-                 "both sets of numbers.",
+                 std::string("devex"),
+                 "Simplex entering-variable rule: devex (default) or dantzig. Devex was "
+                 "opt-in while it drove two Netlib medium instances to a singular basis; "
+                 "that failure class was removed by #144 and #147, and re-measured on the "
+                 "medium tier devex solves the same 49 instances in a third fewer "
+                 "iterations and a third less time (#66). Dantzig is kept so the "
+                 "comparison can be regenerated.",
                  0.0,
                  0.0,
                  {"devex", "dantzig"}});
@@ -188,11 +224,14 @@ const std::vector<OptionSpec>& Options::registry() {
     s.push_back({"threads",
                  OptionType::Int,
                  std::int64_t{1},
-                 "Worker threads; 0 means one per hardware core.",
+                 "Worker threads for the column loops of simplex pricing, the dual's pivot "
+                 "row and the sparse transpose product (#57); 0 means one per hardware "
+                 "core. Every parallel loop is a gather with no cross-thread reduction, so "
+                 "the answer is identical at any thread count. Ignored, with a note in the "
+                 "log, in a build without OpenMP.",
                  0.0,
                  1024.0,
-                 {},
-                 "Phase 7"});
+                 {}});
     s.push_back({"deterministic",
                  OptionType::Bool,
                  true,

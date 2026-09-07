@@ -411,6 +411,85 @@ def full_section(path: Path | None) -> str:
     return netlib_section(path)
 
 
+def mittelmann_section(path: Path | None) -> str:
+    """Mittelmann's LP set (#60): the scale evidence, which is a table of named failures.
+
+    No published optimum exists for these instances - Mittelmann's page publishes solver
+    TIMES - so a row cannot be a pass against a number. What the runner records instead is
+    the status inside the limit, the verifier's verdict on any solution written, and HiGHS's
+    objective as a separate process under the same limit. The point of the section is that
+    every instance beyond Netlib's size is named with the outcome it had, rather than the
+    page stopping where the solver does.
+    """
+    if path is None:
+        return chr(10).join([
+            "Not yet run at this commit. Reproduce with:",
+            "",
+            "```",
+            "python bench/runners/fetch_mittelmann.py",
+            "python bench/runners/mittelmann.py --time-limit 300",
+            "```",
+            "",
+        ])
+    rows = read_csv(path)
+    if not rows:
+        return "No Mittelmann results recorded yet." + chr(10)
+    commit = rows[0].get("git_commit", "unknown")
+    machine = rows[0].get("machine", "unknown")
+    limit = as_float(rows[0], "time_limit")
+    solved = [r for r in rows if r.get("status") == "optimal"]
+    passed = [r for r in rows if r.get("passed") == "1"]
+    highs_solved = [r for r in rows if as_float(r, "highs_objective") is not None]
+    out = [
+        f"Source CSV: `bench/results/{path.name}`  ",
+        f"Commit `{commit}` · machine `{machine}` · time limit "
+        f"{'-' if limit is None else f'{limit:g}'} s per instance, both solvers",
+        "",
+        f"**{len(solved)} of {len(rows)}** instances reached `optimal` inside the limit; "
+        f"**{len(passed)} of {len(rows)}** also passed the independent verifier and agree "
+        f"with HiGHS. HiGHS, run as a separate process under the same limit, finished "
+        f"**{len(highs_solved)} of {len(rows)}**.",
+        "",
+        "These are the smallest archives in Mittelmann's LP directory; against Netlib's largest "
+        "instance (dfl001, 6,071 rows, 35,632 nonzeros) they range from the same row count with "
+        "2.7x the nonzeros (qap15) to 62x the rows and 42x the nonzeros (bdry2). No published optimum "
+        "exists for them, so there is no pass-against-a-number column: the outcome is the "
+        "status, the verifier's verdict where a solution was written, and HiGHS's objective "
+        "where HiGHS finished. `our objective` on a `time_limit` row is the last iterate's "
+        "value, not a bound, and is printed only so that a later run can be compared with it.",
+        "",
+        "| instance | rows | cols | nonzeros | status | our objective | HiGHS objective | "
+        "rel. diff | iters | solver time (s) | verified |",
+        "|---|---:|---:|---:|---|---:|---:|---:|---:|---:|:--:|",
+    ]
+    for row in sorted(rows, key=lambda r: r["instance"]):
+        ours = as_float(row, "our_objective")
+        highs = as_float(row, "highs_objective")
+        # A relative difference to HiGHS is only meaningful for an answer; the objective
+        # on a time_limit row is the last iterate's and comparing it would print a
+        # distance nobody should read.
+        diff = as_float(row, "relative_difference") if row.get("status") == "optimal" else None
+        seconds = as_float(row, "solver_seconds")
+        verified = str(row.get("independently_verified", "")).strip()
+        mark = {"1": "yes", "0": "**NO**", "true": "yes", "false": "**NO**"}.get(verified, "-")
+        highs_cell = (f"{highs:.10g}" if highs is not None
+                      else (row.get("highs_objective") or "-").replace("|", "/"))
+        out.append(
+            f"| `{row['instance']}` | {row.get('rows', '')} | {row.get('columns', '')} "
+            f"| {row.get('nonzeros', '')} | {row.get('status', '')} "
+            f"| {'-' if ours is None else f'{ours:.10g}'} | {highs_cell} "
+            f"| {'-' if diff is None or not math.isfinite(diff) else f'{diff:.1e}'} "
+            f"| {row.get('iterations', '')} "
+            f"| {'-' if seconds is None else f'{seconds:.1f}'} | {mark} |")
+    unsolved = sorted(r["instance"] for r in rows if r.get("status") != "optimal")
+    if unsolved:
+        out += ["", "**Not solved inside the limit**, named rather than dropped: "
+                + ", ".join(f"`{n}`" for n in unsolved) + ".", ""]
+    else:
+        out += ["", "Every instance in the set finished inside the limit.", ""]
+    return chr(10).join(out)
+
+
 def milp_section(path: Path | None) -> str:
     """MIPLIB, where TWO questions have to be answered separately.
 
@@ -454,13 +533,12 @@ def milp_section(path: Path | None) -> str:
         "proof. Collapsing the two columns would hide exactly the thing #23 is meant to "
         "improve.",
         "",
-        "**The time limit decides some of these, not the solver.** `enlight8` proves optimality "
-        "in about 55 seconds on an idle machine and misses a 60-second budget when the rest of "
-        "the set is running alongside it - so its row moves with background load rather than "
-        "with anything about the search. Instances close to the limit should be read as "
-        "\"needs more time than we gave it\", not as a capability. The remedy is a longer limit, "
-        "and the reason this table does not already use one is that the full set takes about "
-        "half an hour per run as it stands.",
+        "**The time limit decides some of these, not the solver.** A row that stops at the limit "
+        "with a small gap says \"needs more time than we gave it\", not \"cannot\"; which side of "
+        "the limit such a row lands on moves with the machine's speed rather than with anything "
+        "about the search. The remedy is a longer limit, and the reason this table does not "
+        f"already use one is that the set already adds up to {sum(as_float(r, 'wall_seconds') or 0.0 for r in rows) / 60:.0f} minutes "
+        "of solve time per run at this one.",
         "",
         "Instances are the smallest MIPLIB 2017 instances tagged easy that carry a **proven** "
         "optimum (`=opt=` in MIPLIB's own solution file). A `=best=` value is the best anyone "
@@ -498,6 +576,72 @@ def milp_section(path: Path | None) -> str:
     return chr(10).join(out)
 
 
+def robustness_section(path: Path | None) -> str:
+    """Where each numerical hazard breaks the solver (#71), from bench/runners/robustness.py.
+
+    Every instance in the sweep has an optimum known by construction, so a pass means the
+    status was optimal, the objective matched to 1e-6 relative AND the independent verifier
+    accepted the certificate. The table names, per family, the last parameter that passed
+    on every instance and the first that failed on any, with the failing check. Families
+    that never fail are said to pass the whole sweep, with its extent; that is a statement
+    about the sweep, not a claim that nothing beyond it can fail.
+    """
+    if path is None:
+        return ("_No `robustness-*.csv` in `bench/results/`. Run "
+                "`python bench/runners/robustness.py`._\n")
+    rows = read_csv(path)
+    families: dict[str, dict] = {}
+    for row in rows:
+        family = row["family"]
+        entry = families.setdefault(family, {"parameter": row["parameter"], "points": {}})
+        k = int(float(row["value"]))
+        try:
+            relative_error = float(row["relative_error"])
+        except ValueError:
+            relative_error = float("inf")
+        passed = (row["status"] == "optimal" and relative_error <= 1e-6
+                  and str(row.get("verified", "")).strip() == "1")
+        point = entry["points"].setdefault(k, {"passed": True, "reason": ""})
+        if not passed and point["passed"]:
+            point["passed"] = False
+            point["reason"] = (f"{row['status']}, relative error {relative_error:.1e}, "
+                               f"verified {row.get('verified', '') or 'no'}"
+                               + (f": {row['message'][:110]}" if row.get("message") else ""))
+    out = [f"Measured on commit `{rows[0]['git_commit']}` ({rows[0]['machine']}), "
+           f"{len(rows)} solves, {len(families)} families. Source: `{path.name}`.", "",
+           "| family | parameter | last k that passed on every instance | first k that failed | what failed |",
+           "|---|---|---|---|---|"]
+    for family, entry in families.items():
+        ks = sorted(entry["points"])
+        last_pass, first_fail, reason = None, None, ""
+        for k in ks:
+            if entry["points"][k]["passed"]:
+                if first_fail is None:
+                    last_pass = k
+            elif first_fail is None:
+                first_fail, reason = k, entry["points"][k]["reason"]
+        if first_fail is None:
+            verdict = f"passes the whole sweep (k up to {ks[-1]})"
+            out.append(f"| `{family}` | {entry['parameter']} | {ks[-1]} | {verdict} | - |")
+        else:
+            out.append(f"| `{family}` | {entry['parameter']} | "
+                       f"{last_pass if last_pass is not None else 'none'} | {first_fail} | "
+                       f"{reason.replace('|', '/')} |")
+    out += ["",
+            "Reading the table: the `conditioning` cliff is `kZeroDrop` (`tolerances.hpp`), "
+            "the threshold below which a coefficient is treated as zero everywhere in the "
+            "solver. At an entry spread of 1e12 the smallest coefficients fall under 1e-11, "
+            "the model that gets solved is not the model that was written, and presolve then "
+            "reports - correctly, about the truncated model - that a row cannot reach its "
+            "bound. A model whose answer depends on a coefficient below 1e-11 is outside this "
+            "solver's range; lowering the threshold would move the cliff, not remove it. The "
+            "other limits are limits of the CERTIFICATE, not the answer: where the objective is "
+            "right to 1e-15 and the verifier still rejects, the reduced costs or multipliers "
+            "carry more rounding than its tolerances allow, which is worth knowing exactly "
+            "because those tolerances are what a downstream consumer of the duals gets.", ""]
+    return chr(10).join(out)
+
+
 def main() -> int:
     # Both tiers, separately. Reporting only one was the whole of issue #53: the small set
     # is 8/8, which reads as a solved problem, and the medium tier is the number that says
@@ -507,9 +651,11 @@ def main() -> int:
     medium_csv = newest("netlib-medium-*.csv")
     full_csv = newest("netlib-full-*.csv")
     milp_csv = newest("miplib-*.csv")
+    mittelmann_csv = newest("mittelmann-*.csv")
     compare_small_csv = newest("compare-highs-small-*.csv")
     compare_medium_csv = newest("compare-highs-medium-*.csv")
     compare_csv = compare_medium_csv or compare_small_csv or newest("compare-highs-*.csv")
+    robustness_csv = newest("robustness-*.csv")
 
     # Legacy untagged CSVs predate the tier tag; fall back so an old results directory still
     # generates something rather than failing.
@@ -529,9 +675,12 @@ This file is generated from the CSVs in `bench/results/`, so it cannot drift fro
 evidence. Every number below came out of a run that recorded the instance sha256, the git
 commit and the machine tag alongside it.
 
-Times are wall-clock, measured around the whole process, so they include reading the model
-and writing the outputs. That makes them slightly pessimistic and honest; it is not the
-figure to quote for algorithmic speed, and no attempt is made to dress it up.
+Times in sections 1a-1c and 2 are wall-clock, measured around the whole process, so they
+include reading the model and writing the outputs. That makes them slightly pessimistic and
+honest; it is not the figure to quote for algorithmic speed, and no attempt is made to
+dress it up. Section 1d prints solver-internal seconds (its instances take minutes, and the
+read is not what is being measured) and section 4 is solver-internal on both sides, as it
+says.
 
 Reporting follows Mittelmann's conventions: shifted geometric means with a
 {SHIFT_SECONDS:g}-second shift, an explicit time limit, and failures counted and named
@@ -546,7 +695,7 @@ Netlib's own `readme`. None of these values was typed from memory.
 
 ### 1a. The small set — what the demo runs
 
-Eight instances, committed to the repository so a fresh clone can reproduce this with no
+Nine instances, committed to the repository so a fresh clone can reproduce this with no
 network. **This is the set `demo/run_demo.sh` lets a judge pick from, and it is the easy end
 of Netlib.** Its pass rate is not the headline; section 1c is.
 
@@ -561,6 +710,15 @@ makes them the easier half of the library by construction; this is the number Ph
 ">= 95% of Netlib" exit criterion is measured against, and the one the README quotes.
 
 {full_section(full_csv)}
+### 1d. Beyond Netlib — Mittelmann's LP set
+
+Netlib's largest instance has about 6,000 rows. PS26119 asks about "thousands to millions
+of variables", and the only honest way to say where this solver stands on that is to run
+instances of that size and name what happens. These are the eight smallest archives in
+Mittelmann's LP test set (`bench/runners/fetch_mittelmann.py`, provenance in
+`data/mittelmann/reference.json`).
+
+{mittelmann_section(mittelmann_csv)}
 ---
 
 ## 2. MIPLIB — the mixed-integer side
@@ -595,7 +753,7 @@ HiGHS is the reference. It runs as a SEPARATE PROCESS over the same MPS files; n
 is linked into, or read by, SANKHYA - see `docs/PROVENANCE.md`. Both sides are timed on
 solver-internal time only.
 
-The comparison below is run on **the same tier as section 1b**, not on the eight-instance
+The comparison below is run on **the same tier as section 1b**, not on the nine-instance
 demo set. Comparing only where we pass would be the easy version of this table and would say
 nothing: the instances we fail are exactly the ones a reader should want to see against a
 mature solver.
@@ -603,20 +761,38 @@ mature solver.
 {comparison_section(compare_csv)}
 ---
 
-## 5. What these numbers do not say
+## 5. Robustness — where the solver stops working
 
-- **Nothing here supports a claim about large models.** The medium tier is capped at
-  instances Netlib publishes with a few hundred rows. PS26119 asks about "thousands to
-  millions of variables"; that is not demonstrated anywhere on this page, and no pass rate
-  above substitutes for it. Tracked as part of #54.
+PS26119 asks for "a clear demonstration of numerical robustness ... involving degeneracy,
+weak LP relaxations or ill-conditioned constraint matrices". `data/casestudies/` demonstrates
+each hazard on one chosen instance; this section is the sweep that finds the case we do not
+handle. Every instance is built from a chosen primal-dual pair, so its optimum is known
+before it is solved (the construction is `tests/oracles/lp_generator.hpp`'s, in
+`bench/runners/robustness.py`), and each family pushes one hazard until the answer, or the
+certificate, moves. The reduced version runs in CI (`tests/robustness/`), together with the
+adversarial families judged by the exact rational oracle and the classic cycling examples
+of Beale and Kuhn.
+
+{robustness_section(robustness_csv)}
+---
+
+## 6. What these numbers do not say
+
+- **Nothing here supports a claim about large models.** Section 1d is the evidence at
+  the scale PS26119's "thousands to millions of variables" means, and it is a table of
+  named time limits: the solver reaches Netlib's largest instances and stops there. No
+  pass rate above substitutes for that table. Tracked as part of #54.
 - Wall-clock times at this size are dominated by process start-up and file reading, so
   ratios between solvers are not meaningful until the instances get big enough to matter.
-  The comparison in section 3 uses solver-internal time on both sides for that reason.
+  The comparison in section 4 uses solver-internal time on both sides for that reason.
 - The failures in section 1b are real and are not going to be quietly dropped from a later
   edition of this file. Each one carries the issue tracking it.
-- The largest remaining gap is not on this page at all: there is no QP engine, no
-  interior-point method and no GPU backend, all three named in PS26119. `docs/PROVENANCE.md`
-  and issue #54 carry the full accounting.
+- Two engines named in PS26119 are not measured on this page. The interior-point method
+  (`algorithm=ipm`, #56) is opt-in and produces no basis, so it is not the engine behind any
+  table above; its own Netlib run is committed as `netlib-full-*-ipm.csv` and quoted in
+  `docs/PS26119_COVERAGE.md`, not here, because a run made with a non-default option is a
+  measurement of that option rather than the tier's evidence. There is no GPU backend on
+  `main` (#16-#19). `docs/PROVENANCE.md` and issue #54 carry the full accounting.
 """
 
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)

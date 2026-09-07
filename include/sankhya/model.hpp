@@ -228,9 +228,62 @@ class Solution {
   // ---- Reported quality. Never assumed - always measured before reporting. -------------
 
   double primal_infeasibility = 0.0;  ///< max violation over row and column bounds
-  double dual_infeasibility = 0.0;    ///< max violation of the reduced-cost sign conditions
+
+  /// The same violations, each divided by the numerical scale of the quantity it was
+  /// measured on (#34).
+  ///
+  /// WHY BOTH EXIST. `primal_infeasibility` is an absolute number, and an absolute number is
+  /// the wrong question on a badly scaled model. Netlib `grow7` is the case that forced this:
+  /// its largest solution value is 4.8e+07, so the 1e-7 absolute tolerance is 2.1e-15
+  /// RELATIVE - below what double precision can deliver after 297 iterations of arithmetic.
+  /// Its worst violation, 2.0e-07, is 4.2e-15 relative, about nineteen machine epsilons. The
+  /// point is as accurate as doubles allow and was being reported as a numerical failure.
+  ///
+  /// The scale is the ROW'S OWN TERM MAGNITUDE, max |a_ij * x_j|, not the row's bound. The
+  /// row that fails on grow7 is an equality to ZERO, so dividing by the bound would change
+  /// nothing; what makes its residual large is cancellation between terms of magnitude 1e+07,
+  /// and the achievable accuracy of a sum is set by the size of what is being summed. For a
+  /// column bound the scale is |x_j| for the same reason.
+  ///
+  /// The absolute figure is still what gets REPORTED, because it is the one a reader can
+  /// check by hand against the model. This is what the status decision uses.
+  double primal_infeasibility_scaled = 0.0;
+
+  /// The dual violations, each divided by the numerical scale of the quantity it was
+  /// measured on - the dual counterpart of primal_infeasibility_scaled, and needed for the
+  /// same model: grow7's dual infeasibility is 6.1 absolute against costs and prices of
+  /// order 1e+07, which is 6e-07 relative, i.e. a point at the precision floor being called
+  /// a failed optimality claim.
+  ///
+  /// A COLUMN'S scale is the larger of its cost and the largest term of A^T y in that
+  /// column: the reduced cost d_j = c_j - a_j^T y is a difference of those quantities, and
+  /// when they are large and nearly equal the leading digits cancel, so the achievable
+  /// accuracy of d_j is set by their size, exactly as a row activity's is by its terms.
+  ///
+  /// A ROW'S scale is the infinity norm of the whole dual vector. A row price has no terms
+  /// of its own to compare against - its sign condition is the condition - so the only
+  /// honest scale is the size of the prices it sits among. That is a weaker test than the
+  /// column one and is stated as such: it says "this price is small relative to its
+  /// neighbours", not "this price is right".
+  ///
+  /// A COMPLEMENTARITY PRODUCT |multiplier| * slack is divided by the multiplier's scale
+  /// (as above) times the primal quantity's (as for primal_infeasibility_scaled): it is a
+  /// product of two measured numbers and inherits the precision of both. A reduced cost
+  /// that is a rounding residue of its terms, on a column that is interior by hundreds,
+  /// is a product of order 1e-7 and a violation of nothing.
+  double dual_infeasibility_scaled = 0.0;
+  double dual_infeasibility = 0.0;  ///< max violation of the reduced-cost sign conditions
   double complementarity_violation = 0.0;
   double integrality_violation = 0.0;
+
+  /// Iterative refinement of the final basis (#72; Wilkinson, "Rounding Errors in Algebraic
+  /// Processes", 1963). Steps taken, and the largest residual of the basic system - the
+  /// primal B x_B = -N x_N and the dual B^T y = c_B, whichever is worse - before the first
+  /// step and after the last. Zero steps when the engine produces no basis. Reported so a
+  /// point that only meets tolerance after refinement is visible as such rather than hidden.
+  Count refinement_steps = 0;
+  double residual_before_refinement = 0.0;
+  double residual_after_refinement = 0.0;
 
   /// (objective - dual_bound) in absolute and relative terms. Zero for a solved LP.
   double absolute_gap = 0.0;

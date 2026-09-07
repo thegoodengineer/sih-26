@@ -17,6 +17,7 @@
 
 #include "core/status_guard.hpp"
 #include "presolve/presolve.hpp"
+#include "sankhya/ipm.hpp"
 #include "sankhya/logging.hpp"
 #include "sankhya/mip.hpp"
 #include "sankhya/model.hpp"
@@ -24,6 +25,7 @@
 #include "sankhya/pdhg.hpp"
 #include "sankhya/qp.hpp"
 #include "sankhya/timer.hpp"
+#include "util/threads.hpp"
 
 #include "../simplex/primal_simplex.hpp"
 
@@ -93,11 +95,20 @@ void reconcile_status_with_measurement(Solution* solution, const Options& option
   // A point that violates its own constraints is not feasible, so neither kOptimal nor
   // kFeasible is available. The engine stopped believing it had converged, so this is a
   // numerical failure and is reported as one, with the number that contradicts it.
-  if (solution->primal_infeasibility > primal_tolerance) {
+  //
+  // THE TEST IS ON THE SCALED VIOLATION, and the absolute one is still what gets printed.
+  // An absolute tolerance asks a badly scaled model for accuracy it cannot have: on Netlib
+  // grow7, whose largest solution value is 4.8e+07, 1e-7 absolute is 2.1e-15 relative, which
+  // is below double precision's reach after three hundred iterations of arithmetic. Judging
+  // that point infeasible says nothing about the point and everything about the units the
+  // question was asked in. See Solution::primal_infeasibility_scaled for the derivation.
+  if (solution->primal_infeasibility_scaled > primal_tolerance) {
     const std::string detail = fmt::format(
-        "engine reported {} but the returned point violates primal feasibility by {:.3e}, "
-        "above the {:.1e} tolerance; it is not a feasible point",
-        to_string(solution->status), solution->primal_infeasibility, primal_tolerance);
+        "engine reported {} but the returned point violates primal feasibility by {:.3e} "
+        "({:.3e} relative to the scale it was measured on), above the {:.1e} tolerance; it is "
+        "not a feasible point",
+        to_string(solution->status), solution->primal_infeasibility,
+        solution->primal_infeasibility_scaled, primal_tolerance);
     solution->status = SolveStatus::kNumericalError;
     solution->message = solution->message.empty() ? detail : solution->message + "; " + detail;
     logger.warning("{}", detail);
@@ -120,12 +131,17 @@ void reconcile_status_with_measurement(Solution* solution, const Options& option
 
   // Primal feasible but dual infeasible: the point is usable, the optimality claim is not
   // supported. kFeasible says exactly that and already exists for the purpose.
+  // The SCALED violation decides, the absolute one is still printed - the same split as
+  // the primal check above and for the same reason (#152). On grow7 the absolute dual
+  // infeasibility can be 6.1 against prices of order 1e+07; judged absolutely that is a
+  // failed optimality claim, judged against its own terms it is 6e-07 and the claim stands.
   if (check_dual && solution->status == SolveStatus::kOptimal &&
-      solution->dual_infeasibility > dual_tolerance) {
+      solution->dual_infeasibility_scaled > dual_tolerance) {
     const std::string detail = fmt::format(
-        "engine reported optimal but the reduced costs violate dual feasibility by {:.3e}, "
-        "above the {:.1e} tolerance; reporting a feasible point rather than a proof",
-        solution->dual_infeasibility, dual_tolerance);
+        "engine reported optimal but the reduced costs violate dual feasibility by {:.3e} "
+        "({:.3e} relative to the terms they are computed from), above the {:.1e} tolerance; "
+        "reporting a feasible point rather than a proof",
+        solution->dual_infeasibility, solution->dual_infeasibility_scaled, dual_tolerance);
     solution->status = SolveStatus::kFeasible;
     solution->message = solution->message.empty() ? detail : solution->message + "; " + detail;
     logger.warning("{}", detail);
@@ -146,6 +162,7 @@ Solution solve(const Model& model, const Options& options) {
   }
 
   Logger logger(options.get_bool("log_to_console") ? stdout : nullptr);
+  apply_thread_option(options, logger);
   LogLevel level = LogLevel::kInfo;
   if (parse_log_level(options.get_string("log_level"), &level)) logger.set_level(level);
   const std::string progress_out = options.get_string("progress_out");
@@ -160,16 +177,26 @@ Solution solve(const Model& model, const Options& options) {
   if (problem_class == ProblemClass::kLp) {
     const std::string requested = options.get_string("algorithm");
 
-    // "auto" means the simplex. PDHG is a first-order method: it converges to a tolerance
-    // rather than to a vertex, produces no basis, and on the small instances we benchmark
-    // today the simplex is both faster and exact. It is selected explicitly, and it becomes
-    // the automatic choice only once there is evidence for a crossover point to switch on.
+    // "auto" means the DUAL simplex (#65), measured rather than assumed: on the Netlib full
+    // set at 120 s it passes 78/89 against the primal's 74/89, solves d6cube, modszk1 and
+    // fit2p where the primal hits the limit, leaves no verifier rejection, and takes 0.37x
+    // the primal's time on the 83 instances both solve (bench/results/netlib-full-dual-
+    // a947a1e.csv against netlib-full-default-a947a1e.csv). The primal stays selectable as
+    // "simplex". PDHG is a first-order method: it converges to a tolerance rather than to a
+    // vertex, produces no basis, and on the small instances we benchmark today the simplex
+    // is both faster and exact. It is selected explicitly, and it becomes the automatic
+    // choice only once there is evidence for a crossover point to switch on.
     const bool want_pdhg = requested == "pdhg";
-    if (requested != "auto" && requested != "simplex" && !want_pdhg) {
+    const bool want_ipm = requested == "ipm";
+    const bool want_dual = requested == "dual-simplex" || requested == "auto";
+    if (requested != "auto" && requested != "simplex" && !want_pdhg && !want_dual &&
+        !want_ipm) {
       solution.status = SolveStatus::kNotSolved;
       solution.algorithm = "none";
       solution.message = fmt::format(
-          "algorithm '{}' is not implemented yet; simplex and pdhg are available", requested);
+          "algorithm '{}' is not implemented yet; simplex, dual-simplex and pdhg are "
+          "available",
+          requested);
       logger.warning("{}", solution.message);
       solution.solve_seconds = timer.elapsed_seconds();
       return solution;
@@ -199,13 +226,17 @@ Solution solve(const Model& model, const Options& options) {
                     solution.solve_seconds);
         return solution;
       }
-      Solution inner = want_pdhg ? pdhg::solve_pdhg(reduced.model, options, logger)
-                                 : solve_primal_simplex(reduced.model, options, logger);
+      Solution inner = want_pdhg   ? pdhg::solve_pdhg(reduced.model, options, logger)
+                       : want_ipm  ? ipm::solve_ipm(reduced.model, options, logger)
+                       : want_dual ? solve_dual_simplex(reduced.model, options, logger)
+                                   : solve_primal_simplex(reduced.model, options, logger);
       solution = presolve::postsolve(reduced, model, inner);
       solution.solve_seconds = timer.elapsed_seconds();
     } else {
-      solution = want_pdhg ? pdhg::solve_pdhg(model, options, logger)
-                           : solve_primal_simplex(model, options, logger);
+      solution = want_pdhg   ? pdhg::solve_pdhg(model, options, logger)
+                 : want_ipm  ? ipm::solve_ipm(model, options, logger)
+                 : want_dual ? solve_dual_simplex(model, options, logger)
+                             : solve_primal_simplex(model, options, logger);
     }
     reconcile_status_with_measurement(&solution, options, logger, /*check_dual=*/true);
     logger.info("Result: {}  objective {:.10g}  {} iterations  {:.3f}s",

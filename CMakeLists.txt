@@ -38,6 +38,7 @@ option(SANKHYA_BUILD_PYTHON "Build the pybind11 bindings (Phase 10)"    OFF)
 option(SANKHYA_BUILD_TESTS  "Build the GoogleTest suite"                ON)
 option(SANKHYA_SANITIZE     "Build with AddressSanitizer + UBSan"       OFF)
 option(SANKHYA_WITH_ZLIB    "Read gzip-compressed model files"          ON)
+option(SANKHYA_WITH_OPENMP  "Multi-core column loops through OpenMP (#57)" ON)
 
 # -----------------------------------------------------------------------------------------
 # Build identification. Every benchmark CSV records the commit, so the binary must know it.
@@ -187,6 +188,7 @@ set(SANKHYA_CORE_SOURCES
   src/io/writer.cpp
   src/qp/convexity.cpp
   src/qp/qp_condat_vu.cpp
+  src/la/ldl.cpp
   src/la/lu.cpp
   src/la/scaling.cpp
   src/la/sparse.cpp
@@ -194,7 +196,9 @@ set(SANKHYA_CORE_SOURCES
   src/mip/branch_and_bound.cpp
   src/mip/cuts.cpp
   src/presolve/presolve.cpp
+  src/ipm/ipm.cpp
   src/pdhg/pdhg.cpp
+  src/simplex/dual_simplex.cpp
   src/simplex/primal_simplex.cpp
   src/util/logging.cpp
   src/util/options.cpp
@@ -231,6 +235,21 @@ endif()
 if(SANKHYA_WITH_ZLIB AND SANKHYA_ZLIB_TARGET)
   target_link_libraries(sankhya_objects PUBLIC ${SANKHYA_ZLIB_TARGET})
   target_compile_definitions(sankhya_objects PUBLIC SANKHYA_WITH_ZLIB)
+endif()
+
+# OPENMP, OPTIONAL AND DETERMINISTIC (#57). Only loops whose every output element is
+# written by one thread are parallel - gathers, never reductions - so the answer does not
+# depend on the thread count. Without OpenMP the pragmas are ignored and the build is the
+# single-threaded one; the `threads` option then reports that it has nothing to set.
+if (SANKHYA_WITH_OPENMP)
+  find_package(OpenMP QUIET COMPONENTS CXX)
+  if (OpenMP_CXX_FOUND)
+    target_link_libraries(sankhya_objects PUBLIC OpenMP::OpenMP_CXX)
+    target_compile_definitions(sankhya_objects PUBLIC SANKHYA_HAVE_OPENMP)
+    message(STATUS "SANKHYA: OpenMP ${OpenMP_CXX_VERSION} found; column loops run multi-core")
+  else()
+    message(STATUS "SANKHYA: OpenMP not found; single-threaded build")
+  endif()
 endif()
 
 add_library(sankhya_core STATIC $<TARGET_OBJECTS:sankhya_objects>)

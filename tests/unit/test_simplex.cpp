@@ -806,6 +806,42 @@ TEST(PrimalSimplex, OptimalSolveReportsAZeroGap) {
   EXPECT_DOUBLE_EQ(solution.relative_gap, 0.0);
 }
 
+TEST(DualSimplex, ADualDegenerateModelSolvesWithoutHandingOver) {
+  // Every column has the same cost and every row the same shape, so at any dual feasible
+  // basis dozens of reduced costs are exactly zero and the dual ratio test ties on all of
+  // them: the dual-degenerate stall that handed dfl001 to the primal after 1000 zero-length
+  // dual steps. Cost perturbation breaks the ties; the answer must still be the exact one,
+  // which the primal (bound perturbation, its own remedy) establishes independently.
+  //   min sum x_j  s.t.  sum_j x_j >= 10 for each of 40 rows over shifted windows,
+  //   x in [0, 3]; 60 columns.
+  const Index n = 60;
+  const Index m = 40;
+  std::vector<std::vector<double>> rows(static_cast<std::size_t>(m),
+                                        std::vector<double>(static_cast<std::size_t>(n), 0.0));
+  for (Index i = 0; i < m; ++i) {
+    for (Index k = 0; k < 20; ++k) {
+      rows[static_cast<std::size_t>(i)][static_cast<std::size_t>((i + k) % n)] = 1.0;
+    }
+  }
+  const Model model =
+      make_model(ObjSense::kMinimize, std::vector<double>(60, 1.0),
+                 std::vector<double>(60, 0.0), std::vector<double>(60, 3.0), rows,
+                 std::vector<double>(40, 10.0), std::vector<double>(40, kInf));
+  Options options;
+  options.set_bool("log_to_console", false);
+  options.set_bool("presolve", false);
+  options.set_string("algorithm", "dual-simplex");
+  const Solution dual = solve(model, options);
+  options.set_string("algorithm", "simplex");
+  const Solution primal = solve(model, options);
+  ASSERT_EQ(dual.status, SolveStatus::kOptimal) << dual.message;
+  ASSERT_EQ(primal.status, SolveStatus::kOptimal) << primal.message;
+  EXPECT_NEAR(dual.objective, primal.objective,
+              1e-9 * std::max(1.0, std::fabs(primal.objective)));
+  EXPECT_LE(dual.primal_infeasibility, tol::kPrimalFeasibility);
+  EXPECT_LE(dual.dual_infeasibility_scaled, tol::kDualFeasibility) << dual.message;
+}
+
 TEST(PrimalSimplex, AnInterruptedSolveClaimsNoBound) {
   // Stopping on a limit yields an incumbent, not a proof. Reporting the incumbent as a dual
   // bound would let a Phase 5 branch-and-bound prune against a bound nothing established.
@@ -815,6 +851,7 @@ TEST(PrimalSimplex, AnInterruptedSolveClaimsNoBound) {
   Options options;
   options.set_bool("log_to_console", false);
   options.set_int("iteration_limit", 1);
+  options.set_string("algorithm", "simplex");
   const Solution solution = solve(model, options);
 
   ASSERT_EQ(solution.status, SolveStatus::kIterationLimit);
@@ -822,6 +859,17 @@ TEST(PrimalSimplex, AnInterruptedSolveClaimsNoBound) {
   EXPECT_TRUE(std::isinf(solution.dual_bound));
   EXPECT_GT(solution.dual_bound, 0.0);
   EXPECT_NE(solution.dual_bound, solution.objective);
+
+  // THE DUAL SIMPLEX IS THE EXCEPTION, and a principled one: its basis is dual feasible at
+  // every iteration, so the objective of the (primal infeasible) basic solution it stops
+  // at IS a bound on the optimum - what strong branching (#69) reads from a capped probe.
+  // The optimum here is 36 at (2, 6); a bound above it is a claim, a bound below it would
+  // be a wrong one.
+  options.set_string("algorithm", "dual-simplex");
+  const Solution interrupted_dual = solve(model, options);
+  ASSERT_EQ(interrupted_dual.status, SolveStatus::kIterationLimit) << interrupted_dual.message;
+  EXPECT_TRUE(std::isfinite(interrupted_dual.dual_bound));
+  EXPECT_GE(interrupted_dual.dual_bound, 36.0 - 1e-9);
 }
 
 // =========================================================================================
@@ -873,6 +921,45 @@ TEST(PrimalSimplex, AMarginalPhaseOneStallIsNotCalledInfeasible) {
   EXPECT_EQ(solution.status, SolveStatus::kInfeasible) << solution.message;
   // And it says so on the strength of a violation far above tolerance, not a marginal one.
   EXPECT_NE(solution.message.find("far above"), std::string::npos) << solution.message;
+}
+
+// =========================================================================================
+// The route an answer took is written down (#172)
+//
+// Under a time limit the scaled attempt gets half the budget and an unscaled retry gets the
+// rest, so the clock decides which attempt's iterations the answer carries: fit2p solved in
+// 10,432 scaled iterations on one machine and in 5,290 unscaled ones on a slower one, same
+// objective to 1e-11. That cannot be made clock-independent, so it is made visible: the
+// message names the route. The one route a test can force on every machine is the
+// exhausted one - a limit so small that the scaled attempt is over after its first
+// iteration (the clock is read after a pivot, never before) and nothing is left for a retry.
+// =========================================================================================
+
+TEST(PrimalSimplex, TheRouteAnAnswerTookIsRecorded) {
+  const Model model = make_model(ObjSense::kMaximize, {3.0, 5.0}, {0.0, 0.0}, {kInf, kInf},
+                                 {{1.0, 0.0}, {0.0, 2.0}, {3.0, 2.0}}, {-kInf, -kInf, -kInf},
+                                 {4.0, 12.0, 18.0});
+  Options options;
+  options.set_bool("log_to_console", false);
+  options.set_bool("presolve", false);  // presolve would solve this model outright
+  options.set_string("algorithm", "simplex");
+  options.set_double("time_limit", 1e-9);
+  const Solution solution = solve(model, options);
+  ASSERT_EQ(solution.status, SolveStatus::kTimeLimit) << solution.message;
+  EXPECT_NE(solution.message.find("route: the scaled attempt returned time_limit"),
+            std::string::npos)
+      << solution.message;
+  EXPECT_NE(solution.message.find("nothing was left for an unscaled retry"), std::string::npos)
+      << solution.message;
+
+  // Without a limit the route is decided by the numerics alone: the scaled attempt solves
+  // this model and no route note is attached, because no attempt failed. (A scaled attempt
+  // that fails without a limit still gets a note, minus the time figures.)
+  options.set_double("time_limit", 1e300);
+  const Solution solved = solve(model, options);
+  ASSERT_EQ(solved.status, SolveStatus::kOptimal) << solved.message;
+  EXPECT_NEAR(solved.objective, 36.0, 1e-9);
+  EXPECT_EQ(solved.message.find("route:"), std::string::npos) << solved.message;
 }
 
 }  // namespace

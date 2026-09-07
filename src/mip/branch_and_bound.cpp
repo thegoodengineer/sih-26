@@ -59,6 +59,15 @@ struct TreeNode {
   bool has_change = false;
   double bound = 0.0;  ///< the LP bound inherited from the parent, in minimise space
   Index depth = 0;
+  /// The parent's optimal basis, as statuses (#65). One bound differs between parent and
+  /// child, so this basis is dual feasible at the child and the dual simplex reaches the
+  /// child's optimum in a few pivots. Moved out when the node is processed, so an open
+  /// node costs n + m bytes and a closed one nothing.
+  WarmStart warm;
+  /// How far the branching moved the column from the parent's relaxation value: v - floor(v)
+  /// for the down child, ceil(v) - v for the up child. The pseudocost observation (#69) is
+  /// this node's bound gain divided by it.
+  double fraction = 0.0;
 };
 
 /// Convergence tolerance for a QP node relaxation in an MIQP search.
@@ -91,6 +100,14 @@ class BranchAndBound {
     node_limit_ =
         node_option < 0 ? std::numeric_limits<Count>::max() : static_cast<Count>(node_option);
     sense_ = model.sense_multiplier();
+
+    node_engine_dual_ = options.get_string("mip_node_engine") != "primal";
+    reliability_branching_ = options.get_string("mip_branching") != "most-fractional";
+    const auto columns = static_cast<std::size_t>(model.num_cols());
+    pseudo_down_sum_.assign(columns, 0.0);
+    pseudo_up_sum_.assign(columns, 0.0);
+    pseudo_down_count_.assign(columns, 0);
+    pseudo_up_count_.assign(columns, 0);
 
     // Node LPs are solved silently; the node table is the log the user wants, not several
     // hundred simplex iteration tables.
@@ -155,6 +172,15 @@ class BranchAndBound {
   /// The integer column furthest from integral, or -1 when the point is integral.
   [[nodiscard]] Index most_fractional(const std::vector<double>& x) const;
 
+  /// Reliability branching (#69): the column with the best pseudocost product score, with
+  /// strong branching on columns whose pseudocosts are not yet reliable. Requires the
+  /// node's bounds to be entered and current_warm_ to hold its relaxation's basis. Returns
+  /// -1 when the point is integral.
+  [[nodiscard]] Index select_branching_column(const std::vector<double>& x, double node_bound);
+
+  /// Fold one observed bound gain into a column's pseudocost.
+  void record_pseudocost(Index column, bool downward, double gain, double fraction);
+
   /// Round the relaxation to the nearest integers and test the result. Cheap, and on models
   /// with a lot of structure it finds the incumbent that makes every later bound useful.
   void try_rounding(const std::vector<double>& x);
@@ -175,9 +201,52 @@ class BranchAndBound {
   /// a one-line choice rather than a second search. The QP path carries no basis, so nothing
   /// downstream may assume one - the diving heuristic and the branching rule both read
   /// col_value only, which they already did.
-  [[nodiscard]] Solution solve_node() {
-    if (quadratic_) return qp::solve_convex_qp(working_, node_options_, logger_);
-    return solve_primal_simplex(working_, node_options_, logger_, scaling_);
+  [[nodiscard]] Solution solve_node() { return solve_node_with(node_options_); }
+
+  [[nodiscard]] Solution solve_node_with(const Options& options) {
+    if (quadratic_) return qp::solve_convex_qp(working_, options, logger_);
+    // WARM-STARTED DUAL SIMPLEX BELOW THE ROOT (#65). The basis in current_warm_ was
+    // optimal for a problem that differs from this one by a bound or two, so it is dual
+    // feasible here, which is exactly the state the dual simplex starts from. Measured
+    // before this: every node was a cold primal solve from the slack basis.
+    //
+    // The primal stays as the fallback, cold, for a node the dual could not finish: a
+    // numerical answer at a node cannot be fathomed honestly, and the search below stops
+    // on it, so it is worth one more solve to avoid.
+    if (node_engine_dual_ && !current_warm_.empty()) {
+      Solution warm = solve_dual_simplex(working_, options, logger_, scaling_, &current_warm_);
+      if (warm.status == SolveStatus::kOptimal || warm.status == SolveStatus::kInfeasible ||
+          warm.status == SolveStatus::kUnbounded ||
+          warm.status == SolveStatus::kIterationLimit) {
+        ++warm_node_solves_;
+        warm_node_iterations_ += warm.iterations;
+        return warm;
+      }
+      logger_.verbose(
+          "node LP: the warm-started dual simplex returned {}; re-solving cold "
+          "with the primal simplex",
+          to_string(warm.status));
+      ++cold_fallbacks_;
+    }
+    Solution cold = solve_primal_simplex(working_, options, logger_, scaling_);
+    ++cold_node_solves_;
+    cold_node_iterations_ += cold.iterations;
+    return cold;
+  }
+
+  /// The basis a solved relaxation reports, or an empty start when it reports none.
+  [[nodiscard]] static WarmStart basis_of(const Solution& relaxation) {
+    WarmStart warm;
+    if (relaxation.status != SolveStatus::kOptimal) return warm;
+    for (const BasisStatus status : relaxation.col_status) {
+      if (status == BasisStatus::kUnknown) return warm;
+    }
+    for (const BasisStatus status : relaxation.row_status) {
+      if (status == BasisStatus::kUnknown) return warm;
+    }
+    warm.col_status = relaxation.col_status;
+    warm.row_status = relaxation.row_status;
+    return warm;
   }
 
   [[nodiscard]] bool can_prune(double bound) const {
@@ -249,6 +318,27 @@ class BranchAndBound {
   bool quadratic_ = false;  ///< the node relaxation is a QP, not an LP
 
   NodeScaling scaling_;
+
+  /// mip_node_engine: warm-started dual (default) or cold primal for every node.
+  bool node_engine_dual_ = true;
+  /// mip_branching: reliability (default) or the most-fractional rule it replaced.
+  bool reliability_branching_ = true;
+  /// Pseudocosts (#69): per integer column, the sum and count of observed bound gains per
+  /// unit of fractionality, in each branching direction.
+  std::vector<double> pseudo_down_sum_;
+  std::vector<double> pseudo_up_sum_;
+  std::vector<Count> pseudo_down_count_;
+  std::vector<Count> pseudo_up_count_;
+  Options probe_options_;  ///< node_options_ with the strong-branching iteration cap
+  Count strong_branch_solves_ = 0;
+  Count strong_branch_iterations_ = 0;
+  /// The basis to start the NEXT node LP from; empty means the slack basis (the root).
+  WarmStart current_warm_;
+  Count warm_node_solves_ = 0;
+  Count cold_node_solves_ = 0;
+  Count cold_fallbacks_ = 0;
+  Count warm_node_iterations_ = 0;
+  Count cold_node_iterations_ = 0;
 
   std::vector<TreeNode> nodes_;
   std::vector<Index> open_;
@@ -419,6 +509,180 @@ Index BranchAndBound::most_fractional(const std::vector<double>& x) const {
   return best;
 }
 
+void BranchAndBound::record_pseudocost(Index column, bool downward, double gain,
+                                       double fraction) {
+  const auto u = static_cast<std::size_t>(column);
+  if (downward) {
+    pseudo_down_sum_[u] += gain / fraction;
+    ++pseudo_down_count_[u];
+  } else {
+    pseudo_up_sum_[u] += gain / fraction;
+    ++pseudo_up_count_[u];
+  }
+}
+
+// RELIABILITY BRANCHING (#69). Achterberg, Koch and Martin, "Branching rules revisited",
+// Operations Research Letters 33 (2005), 42-54.
+//
+// Most-fractional branching, which this replaces, chooses the column the relaxation is least
+// sure of. The paper measured it against a random choice and found no difference: what
+// decides a tree's size is how much each branch RAISES THE BOUND, and fractionality says
+// nothing about that. Pseudocosts remember it - the average bound gain per unit of
+// fractionality each time a column was branched on, in each direction - and the product of
+// the two directions' predicted gains is the score, because a branch whose two children
+// both improve is worth more than one that improves on one side only.
+//
+// A pseudocost that has never been observed predicts nothing. Reliability branching fills
+// the gap with STRONG BRANCHING: for a column that has fewer than kPseudocostReliability
+// observations in either direction, solve both children and measure the gain directly. That
+// was unaffordable when every child was a cold primal solve; with the warm-started dual
+// (#65) a child starts from the node's own basis, dual feasible, and a probe capped at
+// kStrongBranchingIterations still reports a valid bound because the dual's objective is a
+// bound at every iteration. The probes' gains are recorded as observations, so a column is
+// strong-branched a bounded number of times in the whole search. A probe that finds a
+// child infeasible scores that column above every other: that branch prunes one side at
+// once, which no pseudocost can promise.
+Index BranchAndBound::select_branching_column(const std::vector<double>& x, double node_bound) {
+  constexpr double kEpsilon = 1e-6;
+  struct Candidate {
+    Index column;
+    double fraction;  ///< v - floor(v)
+    bool reliable;
+  };
+  std::vector<Candidate> candidates;
+  for (const Index j : integer_columns_) {
+    const auto u = static_cast<std::size_t>(j);
+    const double v = x[u];
+    const double f = v - std::floor(v);
+    if (fractionality(v) <= integrality_tolerance_) continue;
+    const bool reliable = pseudo_down_count_[u] >= tol::kPseudocostReliability &&
+                          pseudo_up_count_[u] >= tol::kPseudocostReliability;
+    candidates.push_back({j, f, reliable});
+  }
+  if (candidates.empty()) return -1;
+
+  // Unreliable candidates are probed most-fractional first, up to the cap; the rest fall
+  // back to whatever pseudocost they have (a partial average, or the global average of
+  // the initialised columns when they have none at all - the paper's initialisation).
+  std::vector<std::size_t> to_probe;
+  for (std::size_t i = 0; i < candidates.size(); ++i) {
+    if (!candidates[i].reliable) to_probe.push_back(i);
+  }
+  std::sort(to_probe.begin(), to_probe.end(), [&](std::size_t a, std::size_t b) {
+    return fractionality(x[static_cast<std::size_t>(candidates[a].column)]) >
+           fractionality(x[static_cast<std::size_t>(candidates[b].column)]);
+  });
+  if (to_probe.size() > static_cast<std::size_t>(tol::kStrongBranchingCandidates)) {
+    to_probe.resize(static_cast<std::size_t>(tol::kStrongBranchingCandidates));
+  }
+
+  const WarmStart node_basis = current_warm_;
+  std::vector<double> measured_down(candidates.size(), -1.0);
+  std::vector<double> measured_up(candidates.size(), -1.0);
+  std::vector<bool> infeasible_side(candidates.size(), false);
+  for (const std::size_t i : to_probe) {
+    const Candidate& candidate = candidates[i];
+    const auto u = static_cast<std::size_t>(candidate.column);
+    const double v = x[u];
+    for (int direction = 0; direction < 2; ++direction) {
+      const bool downward = direction == 0;
+      const std::size_t saved_before = saved_.size();
+      if (downward) {
+        tighten_upper(u, std::floor(v));
+      } else {
+        tighten_lower(u, std::floor(v) + 1.0);
+      }
+      current_warm_ = node_basis;
+      const Solution probe = solve_node_with(probe_options_);
+      ++strong_branch_solves_;
+      strong_branch_iterations_ += probe.iterations;
+      // Undo only this probe's bound change; propagate()'s and the dive's stay.
+      for (std::size_t k = saved_.size(); k-- > saved_before;) {
+        const auto c = static_cast<std::size_t>(saved_[k].column);
+        if (saved_[k].is_upper) {
+          working_.col_upper[c] = saved_[k].value;
+        } else {
+          working_.col_lower[c] = saved_[k].value;
+        }
+      }
+      saved_.resize(saved_before);
+
+      double gain = 0.0;
+      if (probe.status == SolveStatus::kInfeasible) {
+        infeasible_side[i] = true;
+        gain = std::numeric_limits<double>::infinity();
+      } else if (probe.status == SolveStatus::kOptimal) {
+        gain = std::max(internal_objective(probe.col_value) - node_bound, 0.0);
+      } else if (probe.status == SolveStatus::kIterationLimit &&
+                 std::isfinite(probe.dual_bound)) {
+        // The dual's bound at the cap, converted to minimise space without the offset,
+        // which is what node_bound is measured in.
+        gain = std::max(sense_ * (probe.dual_bound - original_.objective_offset) - node_bound,
+                        0.0);
+      }
+      const double fraction = downward ? candidate.fraction : 1.0 - candidate.fraction;
+      if (downward) {
+        measured_down[i] = gain;
+      } else {
+        measured_up[i] = gain;
+      }
+      if (std::isfinite(gain) && fraction > 0.0) {
+        record_pseudocost(candidate.column, downward, gain, fraction);
+      }
+    }
+  }
+  current_warm_ = node_basis;
+
+  // Global averages for columns with no observation at all in a direction.
+  double average_down = 0.0;
+  double average_up = 0.0;
+  Count initialised_down = 0;
+  Count initialised_up = 0;
+  for (const Index j : integer_columns_) {
+    const auto u = static_cast<std::size_t>(j);
+    if (pseudo_down_count_[u] > 0) {
+      average_down += pseudo_down_sum_[u] / static_cast<double>(pseudo_down_count_[u]);
+      ++initialised_down;
+    }
+    if (pseudo_up_count_[u] > 0) {
+      average_up += pseudo_up_sum_[u] / static_cast<double>(pseudo_up_count_[u]);
+      ++initialised_up;
+    }
+  }
+  average_down =
+      initialised_down > 0 ? average_down / static_cast<double>(initialised_down) : 1.0;
+  average_up = initialised_up > 0 ? average_up / static_cast<double>(initialised_up) : 1.0;
+
+  Index best = candidates.front().column;
+  double best_score = -1.0;
+  for (std::size_t i = 0; i < candidates.size(); ++i) {
+    const Candidate& candidate = candidates[i];
+    const auto u = static_cast<std::size_t>(candidate.column);
+    double down;
+    double up;
+    if (infeasible_side[i]) {
+      down = std::numeric_limits<double>::infinity();
+      up = down;
+    } else {
+      const double pc_down =
+          pseudo_down_count_[u] > 0
+              ? pseudo_down_sum_[u] / static_cast<double>(pseudo_down_count_[u])
+              : average_down;
+      const double pc_up = pseudo_up_count_[u] > 0
+                               ? pseudo_up_sum_[u] / static_cast<double>(pseudo_up_count_[u])
+                               : average_up;
+      down = measured_down[i] >= 0.0 ? measured_down[i] : pc_down * candidate.fraction;
+      up = measured_up[i] >= 0.0 ? measured_up[i] : pc_up * (1.0 - candidate.fraction);
+    }
+    const double score = std::max(down, kEpsilon) * std::max(up, kEpsilon);
+    if (score > best_score) {
+      best_score = score;
+      best = candidate.column;
+    }
+  }
+  return best;
+}
+
 bool BranchAndBound::offer_incumbent(const std::vector<double>& x) {
   // Integrality, against the ORIGINAL bounds - a candidate must be feasible for the model
   // the user handed us, not merely for the node it was found in.
@@ -534,6 +798,8 @@ void BranchAndBound::dive_from_root(const std::vector<double>& start_x) {
     ++lp_resolves;
     if (probe.status != SolveStatus::kOptimal) return;  // dive dead-ends: infeasible or worse
     x = probe.col_value;
+    // The next probe fixes one more column of THIS point, so this basis is its warm start.
+    current_warm_ = basis_of(probe);
   }
   // Budget exhausted without reaching an integral point. Not a failure to report: every
   // bound fixed above lives on the same saved_ stack propagate() uses, so the caller's
@@ -557,6 +823,8 @@ Solution BranchAndBound::run() {
   // touched its bounds, though it would not matter if it had: only the matrix, the cost and
   // the row bounds feed the multipliers, and branching changes none of them.
   scaling_ = build_node_scaling(working_, node_options_);
+  probe_options_ = node_options_;
+  probe_options_.set_int("iteration_limit", tol::kStrongBranchingIterations);
 
   logger_.info("Branch and bound: {} rows, {} columns, {} integer columns",
                original_.num_rows(), original_.num_cols(), integer_columns_.size());
@@ -645,6 +913,9 @@ Solution BranchAndBound::run() {
 
     enter(node_index);
     ++nodes_explored_;
+    // Moved, not copied: this node will not be solved twice, and the open list must not
+    // hold a basis per closed node.
+    current_warm_ = std::move(nodes_[static_cast<std::size_t>(node_index)].warm);
 
     if (!propagate()) {
       leave();
@@ -760,6 +1031,14 @@ Solution BranchAndBound::run() {
     // Node bound in minimise space, excluding the offset (added back on report).
     const double node_bound = internal_objective(relaxation.col_value);
 
+    // THE PSEUDOCOST OBSERVATION (#69): what branching on this node's column bought, per
+    // unit of the fractionality it removed, in the direction it went. Recorded whether or
+    // not the node is pruned next - the gain is real either way.
+    if (node.has_change && node.fraction > 0.0) {
+      record_pseudocost(node.change.column, node.change.is_upper,
+                        std::max(node_bound - node.bound, 0.0), node.fraction);
+    }
+
     if (can_prune(node_bound)) {
       leave();
       ++nodes_pruned_;
@@ -768,13 +1047,17 @@ Solution BranchAndBound::run() {
 
     try_rounding(relaxation.col_value);
 
-    const Index branch_column = most_fractional(relaxation.col_value);
-    if (branch_column < 0) {
+    if (most_fractional(relaxation.col_value) < 0) {
       // Integral relaxation: this node's optimum is a MILP solution.
       offer_incumbent(relaxation.col_value);
       leave();
       continue;
     }
+
+    // The children start from THIS relaxation's basis, captured before the dive and the
+    // strong-branching probes can replace current_warm_ with the bases of their own solves.
+    const WarmStart children_warm = basis_of(relaxation);
+    current_warm_ = children_warm;
 
     // Diving (#25): root only. node_index == 0 identifies the root directly - it is the
     // one node present in open_ before anything else can be pushed there, so the first
@@ -783,6 +1066,22 @@ Solution BranchAndBound::run() {
     // leave() below - already here for the branching case - undoes diving's fixes too.
     if (node_index == 0) {
       dive_from_root(relaxation.col_value);
+      current_warm_ = children_warm;
+    }
+
+    // The branching decision, with the node's bounds still entered: strong branching
+    // solves the two children in place and restores the bounds it moved.
+    const Index branch_column = reliability_branching_
+                                    ? select_branching_column(relaxation.col_value, node_bound)
+                                    : most_fractional(relaxation.col_value);
+    if (branch_column < 0) {
+      // Cannot happen after the integrality test above, but a rule that returns nothing
+      // must not be answered with a branch on column -1.
+      leave();
+      solution.status = SolveStatus::kNumericalError;
+      solution.message =
+          fmt::format("the branching rule found no column at node {}", nodes_explored_);
+      return solution;
     }
 
     const double value = relaxation.col_value[static_cast<std::size_t>(branch_column)];
@@ -797,6 +1096,8 @@ Solution BranchAndBound::run() {
     down.change = DomainChange{branch_column, true, floor_value};
     down.bound = node_bound;
     down.depth = node.depth + 1;
+    down.warm = children_warm;
+    down.fraction = value - floor_value;
 
     TreeNode up;
     up.parent = node_index;
@@ -804,6 +1105,8 @@ Solution BranchAndBound::run() {
     up.change = DomainChange{branch_column, false, floor_value + 1.0};
     up.bound = node_bound;
     up.depth = node.depth + 1;
+    up.warm = children_warm;
+    up.fraction = floor_value + 1.0 - value;
 
     nodes_.push_back(down);
     const auto down_index = static_cast<Index>(nodes_.size() - 1);
@@ -891,6 +1194,15 @@ Solution BranchAndBound::run() {
                to_string(solution.status), solution.objective, solution.dual_bound,
                solution.nodes, solution.solve_seconds);
   logger_.info("Nodes pruned {}, tree {} node(s) at exit", nodes_pruned_, open_.size());
+  if (!quadratic_) {
+    // How the node LPs were solved (#65). The ratio of warm to cold is the whole point of
+    // the dual node engine, and the iterations per solve are the evidence it pays.
+    logger_.info(
+        "Node LPs: {} warm-started dual ({} iterations), {} cold primal ({} iterations), {} "
+        "cold fallback(s) after a dual failure; strong branching {} probe(s), {} iterations",
+        warm_node_solves_, warm_node_iterations_, cold_node_solves_, cold_node_iterations_,
+        cold_fallbacks_, strong_branch_solves_, strong_branch_iterations_);
+  }
   if (!solution.message.empty()) logger_.info("{}", solution.message);
   return solution;
 }

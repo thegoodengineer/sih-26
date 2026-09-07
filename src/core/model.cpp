@@ -235,15 +235,37 @@ void Solution::recompute_quality(const Model& model) {
   if (m > 0) model.matrix.multiply(col_value.data(), row_activity.data());
 
   primal_infeasibility = 0.0;
+  primal_infeasibility_scaled = 0.0;
   integrality_violation = 0.0;
+
+  // Per-row numerical scale: the largest term the activity sum was built from. A residual
+  // cannot be expected to be smaller than the rounding error of the sum that produced it,
+  // and that error is set by the size of the terms, not by the size of the answer.
+  std::vector<double> row_scale(static_cast<std::size_t>(m), 1.0);
+  for (Index j = 0; j < n; ++j) {
+    const double x = col_value[static_cast<std::size_t>(j)];
+    if (x == 0.0) continue;
+    const ColumnView column = model.matrix.column(j);
+    for (Index k = 0; k < column.size; ++k) {
+      const auto r = static_cast<std::size_t>(column.rows[k]);
+      row_scale[r] = std::max(row_scale[r], std::fabs(column.values[k] * x));
+    }
+  }
+
+  const auto record = [&](double violation, double scale) {
+    if (violation <= 0.0) return;
+    primal_infeasibility = std::max(primal_infeasibility, violation);
+    primal_infeasibility_scaled =
+        std::max(primal_infeasibility_scaled, violation / std::max(1.0, scale));
+  };
   for (Index j = 0; j < n; ++j) {
     const auto u = static_cast<std::size_t>(j);
     const double x = col_value[u];
     if (is_finite_bound(model.col_lower[u])) {
-      primal_infeasibility = std::max(primal_infeasibility, model.col_lower[u] - x);
+      record(model.col_lower[u] - x, std::fabs(x));
     }
     if (is_finite_bound(model.col_upper[u])) {
-      primal_infeasibility = std::max(primal_infeasibility, x - model.col_upper[u]);
+      record(x - model.col_upper[u], std::fabs(x));
     }
     if (model.col_type[u] == VarType::kInteger) {
       integrality_violation = std::max(integrality_violation, std::fabs(x - std::round(x)));
@@ -253,10 +275,10 @@ void Solution::recompute_quality(const Model& model) {
     const auto u = static_cast<std::size_t>(i);
     const double a = row_activity[u];
     if (is_finite_bound(model.row_lower[u])) {
-      primal_infeasibility = std::max(primal_infeasibility, model.row_lower[u] - a);
+      record(model.row_lower[u] - a, row_scale[u]);
     }
     if (is_finite_bound(model.row_upper[u])) {
-      primal_infeasibility = std::max(primal_infeasibility, a - model.row_upper[u]);
+      record(a - model.row_upper[u], row_scale[u]);
     }
   }
 
@@ -265,8 +287,96 @@ void Solution::recompute_quality(const Model& model) {
   // Dual quality only when the engine produced duals of the right length.
   if (static_cast<Index>(row_dual.size()) == m && static_cast<Index>(col_dual.size()) == n) {
     dual_infeasibility = 0.0;
+    dual_infeasibility_scaled = 0.0;
     complementarity_violation = 0.0;
     const double sense = model.sense_multiplier();
+
+    // Per-column numerical scale of the reduced cost: the cost itself and the largest term
+    // of a_j^T y. See dual_infeasibility_scaled in model.hpp for why this is the right
+    // denominator and why the rows get a different one.
+    double dual_norm = 0.0;
+    for (Index i = 0; i < m; ++i) {
+      dual_norm = std::max(dual_norm, std::fabs(row_dual[static_cast<std::size_t>(i)]));
+    }
+    const auto column_scale = [&](Index j) {
+      const auto u = static_cast<std::size_t>(j);
+      double scale = std::fabs(model.col_cost[u]);
+      const ColumnView column = model.matrix.column(j);
+      for (Index k = 0; k < column.size; ++k) {
+        const auto r = static_cast<std::size_t>(column.rows[k]);
+        scale = std::max(scale, std::fabs(column.values[k] * row_dual[r]));
+      }
+      return std::max(1.0, scale);
+    };
+    const auto record_dual = [&](double violation, double scale) {
+      if (violation <= 0.0) return;
+      dual_infeasibility = std::max(dual_infeasibility, violation);
+      dual_infeasibility_scaled = std::max(dual_infeasibility_scaled, violation / scale);
+    };
+    // NO AT-BOUND WINDOW. The previous version decided whether a value sat "at" a bound with
+    // |value - bound| <= 1e-7, absolute, and then demanded the multiplier vanish if not.
+    // tools/verify_solution.py calls that a category error and it is right: on grow7 the row
+    // activities are of order 1e+07, so an active row recomputed from x misses its bound by a
+    // rounding width that is far more than 1e-7, is classified slack, and its perfectly good
+    // price of 0.66 is reported as a violation of 0.66. The verifier's formulation is used
+    // instead, so the two checkers cannot disagree on this again: a multiplier may only push
+    // against a bound that exists (the sign condition), and complementary slackness is the
+    // PRODUCT |multiplier| * slack - continuous in the slack, so a rounding-width
+    // displacement costs a rounding-width amount and not the whole price.
+    //
+    // The product is judged relative to the numerical scale of BOTH its factors: the
+    // multiplier's - column_scale for a reduced cost, the dual norm for a row price, the
+    // same denominators the sign conditions use - times the primal quantity's. An earlier
+    // version divided by |multiplier| * primal scale, which for any multiplier smaller than
+    // one over the primal scale is the absolute product against 1e-7: an absolute test in
+    // objective units, stricter than the verifier's own 1e-6 by a decade. It held while
+    // postsolve left the engine's exact 0.0 on basic columns; once every reduced cost is
+    // recomputed as c - A^T y (#157) a basic column carries a rounding residue of 1e-10
+    // from terms of order 1e+02..1e+04, times an interior value of a few hundred: greenbea
+    // 1.2e-7, pilot 3.4e-7, both downgraded to `feasible` on points the verifier accepts.
+    // A residue that is zero at the precision of its terms must count as zero here too.
+    const auto nearest_bound_distance = [](double value, double lo, double hi) {
+      double distance = kInfinity;
+      if (is_finite_bound(lo)) distance = std::min(distance, std::fabs(value - lo));
+      if (is_finite_bound(hi)) distance = std::min(distance, std::fabs(value - hi));
+      return distance;
+    };
+    const auto record_complementarity = [&](double multiplier, double slack,
+                                            double multiplier_scale, double primal_scale) {
+      if (multiplier == 0.0 || !is_finite_bound(slack)) return;
+      const double product = multiplier * slack;
+      complementarity_violation = std::max(complementarity_violation, product);
+      dual_infeasibility_scaled = std::max(
+          dual_infeasibility_scaled, product / std::max(1.0, multiplier_scale * primal_scale));
+    };
+    // THE REPORTED DUALS MUST AGREE WITH EACH OTHER. col_dual is supposed to be
+    // c - A^T row_dual; nothing below can tell if it is not, because every test takes both
+    // vectors as given. A postsolve that reconstructs one of them wrongly (#149, #157: recipe
+    // reports d off by exactly 4.000e-03 from what its own y implies) therefore passed the
+    // sign and slackness tests and was caught only by the independent verifier, which does
+    // recompute the difference. The solver should not hand out a certificate it has not
+    // checked for internal consistency, so the residual is measured here too, scaled by the
+    // terms it is a difference of, and counts as dual infeasibility.
+    // For a QP the gradient is c + Qx and the engine reports no reduced costs to compare, so
+    // the consistency test applies to the linear case only; the verifier derives d for QPs.
+    // For a MILP the reported duals belong to some node relaxation whose bounds are not the
+    // model's, so d = c - A^T y need not hold for the model - the verifier skips LP duality
+    // there for the same reason - and the test is confined to pure LPs.
+    const bool linear_gradient = !model.has_quadratic_objective() && !model.has_integrality();
+    for (Index j = 0; linear_gradient && j < n; ++j) {
+      const auto u = static_cast<std::size_t>(j);
+      double implied = model.col_cost[u];
+      double terms = std::fabs(model.col_cost[u]);
+      const ColumnView column = model.matrix.column(j);
+      for (Index k = 0; k < column.size; ++k) {
+        const auto r = static_cast<std::size_t>(column.rows[k]);
+        const double term = column.values[k] * row_dual[r];
+        implied -= term;
+        terms = std::max(terms, std::fabs(term));
+      }
+      record_dual(std::fabs(implied - col_dual[u]), std::max(1.0, terms));
+    }
+
     for (Index j = 0; j < n; ++j) {
       const auto u = static_cast<std::size_t>(j);
       // Sign conditions for a minimization problem: d_j >= 0 at the lower bound, d_j <= 0
@@ -276,19 +386,13 @@ void Solution::recompute_quality(const Model& model) {
       const double x = col_value[u];
       const double lo = model.col_lower[u];
       const double hi = model.col_upper[u];
-      const bool at_lower = is_finite_bound(lo) && std::fabs(x - lo) <= tol::kPrimalFeasibility;
-      const bool at_upper = is_finite_bound(hi) && std::fabs(x - hi) <= tol::kPrimalFeasibility;
-      if (at_lower && at_upper) continue;  // fixed column: any reduced cost is admissible
-      if (at_lower) {
-        dual_infeasibility = std::max(dual_infeasibility, -d);
-      } else if (at_upper) {
-        dual_infeasibility = std::max(dual_infeasibility, d);
-      } else {
-        dual_infeasibility = std::max(dual_infeasibility, std::fabs(d));
-      }
-      if (!at_lower && !at_upper) {
-        complementarity_violation = std::max(complementarity_violation, std::fabs(d));
-      }
+      if (lo == hi) continue;  // fixed column: any reduced cost is admissible
+      const double scale = column_scale(j);
+      // Sign: a positive reduced cost prices the lower bound, a negative one the upper.
+      if (d > 0.0 && !is_finite_bound(lo)) record_dual(d, scale);
+      if (d < 0.0 && !is_finite_bound(hi)) record_dual(-d, scale);
+      record_complementarity(std::fabs(d), nearest_bound_distance(x, lo, hi), scale,
+                             std::max(1.0, std::fabs(x)));
     }
 
     // The same conditions on the ROWS. Checking only the columns leaves half the KKT system
@@ -303,18 +407,12 @@ void Solution::recompute_quality(const Model& model) {
       const double a = row_activity[u];
       const double lo = model.row_lower[u];
       const double hi = model.row_upper[u];
-      const bool at_lower = is_finite_bound(lo) && std::fabs(a - lo) <= tol::kPrimalFeasibility;
-      const bool at_upper = is_finite_bound(hi) && std::fabs(a - hi) <= tol::kPrimalFeasibility;
-      if (at_lower && at_upper) continue;  // equality row: any multiplier is admissible
-      if (at_lower) {
-        dual_infeasibility = std::max(dual_infeasibility, -y);
-      } else if (at_upper) {
-        dual_infeasibility = std::max(dual_infeasibility, y);
-      } else {
-        // Slack row. Complementary slackness forces its price to zero.
-        dual_infeasibility = std::max(dual_infeasibility, std::fabs(y));
-        complementarity_violation = std::max(complementarity_violation, std::fabs(y));
-      }
+      if (lo == hi) continue;  // equality row: any multiplier is admissible
+      const double price_scale = std::max(1.0, dual_norm);
+      if (y > 0.0 && !is_finite_bound(lo)) record_dual(y, price_scale);
+      if (y < 0.0 && !is_finite_bound(hi)) record_dual(-y, price_scale);
+      record_complementarity(std::fabs(y), nearest_bound_distance(a, lo, hi), price_scale,
+                             row_scale[u]);
     }
   }
 

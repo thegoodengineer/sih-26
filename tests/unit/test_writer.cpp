@@ -226,7 +226,7 @@ TEST(SolutionWriter, HeaderCarriesTheFieldsTheCheckerNeeds) {
   }
   EXPECT_EQ(fields.at("status"), "optimal");
   EXPECT_EQ(fields.at("sense"), "maximize");
-  EXPECT_EQ(fields.at("algorithm"), "simplex-primal");
+  EXPECT_EQ(fields.at("algorithm").rfind("simplex-", 0), 0u) << fields.at("algorithm");
   EXPECT_EQ(fields.at("rows"), "3");
   EXPECT_EQ(fields.at("columns"), "3");
   // The offset is part of the objective the checker recomputes, so it has to be recoverable.

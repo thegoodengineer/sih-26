@@ -33,6 +33,7 @@ Every dependency is a general-purpose library. None of them solves an optimizati
 | **fmt** | 10.2.1 | MIT | yes, static | String formatting. Produces text from values. |
 | **CLI11** | 2.4.2 | BSD-3-Clause | header-only | Command-line argument parsing. |
 | **nlohmann/json** | 3.11.3 | MIT | header-only | JSON serialisation for the `--stats` result blob. |
+| **OpenMP runtime** (libgomp with GCC, libomp with Clang) | as shipped by the compiler | GPL-3.0 with the GCC Runtime Library Exception / Apache-2.0 with LLVM exception | optional, found by CMake | The compiler's own thread runtime for `#pragma omp parallel for`. Schedules loops; contains no numerical code of any kind. |
 | **zlib** | 1.3.1 | zlib | yes, static | DEFLATE decompression, for `.mps.gz` inputs (Phase 2). |
 | **GoogleTest** | 1.14.0 | BSD-3-Clause | test binary only | Unit test framework. Never linked into `sankhya_core`. |
 | **highspy** | pip, benchmark only | MIT | **never linked** | The HiGHS solver, used ONLY as the comparison baseline in `bench/runners/compare.py`. It runs in a separate Python process, is not a build dependency, and nothing in `src/` knows it exists. Its source does not inform ours - see the red line in section 1. |
@@ -66,8 +67,9 @@ mathematics, not transcribed from anyone's implementation.
 | Basis update, product form of the inverse | Dantzig & Orchard-Hays, *The product form for the inverse in the simplex method*, Mathematical Tables and Other Aids to Computation 8 (1954) | `src/la/lu.cpp` |
 | Bounded-variable revised primal simplex | Dantzig, *Linear Programming and Extensions* (1963); Chvátal, *Linear Programming* (1983), ch. 3 and 8 | `src/simplex/primal_simplex.cpp` |
 | Piecewise-linear (composite) phase 1, no artificial variables | Maros, *Computational Techniques of the Simplex Method*, ch. 9 | `src/simplex/primal_simplex.cpp` |
+| Bounded-variable revised dual simplex with the bound-flipping ratio test, dual devex pricing, artificial bounds for dual infeasibility, warm start from a basis (#65; `--option algorithm=dual-simplex`, and the branch-and-bound node engine) | Lemke, *The dual method of solving the linear programming problem*, Naval Research Logistics Quarterly 1 (1954); Maros, *Computational Techniques of the Simplex Method*, ch. 10; Koberstein, *The dual simplex method, techniques for a fast and stable implementation*, PhD thesis, Paderborn (2005), sec. 3.3 and 4.5; Forrest & Goldfarb (1992), above, sec. 3 for the dual weights | `src/simplex/dual_simplex.cpp`, shared state in `src/simplex/simplex_core.hpp` |
 | Bland's anti-cycling rule | Chvátal, *Linear Programming*, ch. 3 | `src/simplex/primal_simplex.cpp` |
-| Devex pricing (opt-in; `--option pricing=devex`, #66) | Forrest & Goldfarb, *Steepest-edge simplex algorithms for linear programming*, Mathematical Programming 57 (1992); the approximation is Harris (1973), below | `src/simplex/primal_simplex.cpp` |
+| Devex pricing (default since #66 was re-measured; `--option pricing=dantzig` selects the old rule) | Forrest & Goldfarb, *Steepest-edge simplex algorithms for linear programming*, Mathematical Programming 57 (1992); the approximation is Harris (1973), below | `src/simplex/primal_simplex.cpp` |
 | Harris two-pass ratio test, long-step bound flipping (opt-in; `--option ratio_test=harris`, #67) | Harris, P.M.J., *Pivot selection methods of the Devex LP code*, Mathematical Programming 5 (1973), 1-28; long-step generalises the piecewise-linear phase 1 already cited to Maros below | `src/simplex/primal_simplex.cpp` |
 | Exact rational tableau simplex (test oracle) | Chvátal, *Linear Programming*, ch. 2–3 | `tests/oracles/rational_simplex.cpp` |
 | Primal-dual hybrid gradient (the base iteration) | Chambolle & Pock, *A first-order primal-dual algorithm for convex problems with applications to imaging*, JMIV 40(1), 2011, Algorithm 1 | `src/pdhg/pdhg.cpp` |
@@ -79,16 +81,24 @@ mathematics, not transcribed from anyone's implementation.
 | Branch and bound | Land & Doig, *An automatic method of solving discrete programming problems*, Econometrica 28(3), 1960; Wolsey, *Integer Programming*, ch. 7 | `src/mip/branch_and_bound.cpp` |
 | Node propagation from row activities | Savelsbergh, *Preprocessing and probing for MIP*, ORSA J. Computing 6(4), 1994 | `src/mip/branch_and_bound.cpp` |
 | Search shape: propagation at nodes, incumbent as cutoff | Achterberg, *Constraint Integer Programming* (thesis, 2007), ch. 5–6 | `src/mip/branch_and_bound.cpp` |
+| Hyper-sparse back-substitution through U in the FTRAN, U stored by column as well as by row, zero results skipped; the row-wise gather kept as the reference the push form is tested against (#68) | Gilbert & Peierls, *Sparse partial pivoting in time proportional to arithmetic operations*, SIAM J. Sci. Stat. Comput. 9 (1988) | `src/la/lu.cpp` (`solve`, `solve_reference`) |
+| Sparse symmetric LDL^T: minimum degree ordering, elimination tree, symbolic pattern once, up-looking numeric factorization with diagonal regularization (#70) | Davis, *Direct Methods for Sparse Linear Systems*, SIAM (2006), ch. 4; Liu, *The role of elimination trees in sparse factorization*, SIAM J. Matrix Anal. Appl. 11 (1990); Tinney & Walker, Proc. IEEE 55 (1967); Altman & Gondzio, Optim. Methods Softw. 11 (1999) | `src/la/ldl.cpp` |
+| Primal-dual interior-point method, Mehrotra predictor-corrector on the normal equations of the bounded-variable form; no basis, no infeasibility certificate (#56; `--option algorithm=ipm`) | Mehrotra, SIAM J. Optim. 2 (1992); Wright, *Primal-Dual Interior-Point Methods*, SIAM (1997), ch. 10–11; Altman & Gondzio (1999) for the regularization | `src/ipm/ipm.cpp` |
+| Reliability branching: pseudocosts, strong branching on unreliable candidates with capped warm-started dual probes, product score (#69; `--option mip_branching=most-fractional` keeps the old rule) | Achterberg, Koch & Martin, *Branching rules revisited*, Operations Research Letters 33 (2005), 42–54 | `src/mip/branch_and_bound.cpp` |
+| Iterative refinement of the final basis, primal and dual, residual in compensated arithmetic (#72) | Wilkinson, *Rounding Errors in Algebraic Processes* (1963), ch. 4; Ogita, Rump & Oishi, *Accurate sum and dot product*, SIAM J. Sci. Comput. 26 (2005) | `src/simplex/primal_simplex.cpp` (`refine_final_basis`) |
+| Cost perturbation on a dual-degenerate stall, nonbasic costs only so dual feasibility is preserved by construction | Maros, *Computational Techniques of the Simplex Method*, ch. 9 (the bound-shifting scheme, applied to the dual's costs); Koberstein (2005), above, sec. 6.2 | `src/simplex/dual_simplex.cpp` |
+| Robustness suite: the classic cycling examples, adversarial families judged by the exact oracle, and the conditioning / near-parallel / cost-ratio / redundancy / degeneracy sweeps with an optimum known by construction (#71) | Beale, *Cycling in the dual simplex algorithm*, Naval Research Logistics Quarterly 2 (1955); Kuhn's example as given in Chvátal, *Linear Programming* (1983), ch. 3; the KKT construction is the oracle fuzz's (above) | `tests/robustness/test_robustness.cpp`, `bench/runners/robustness.py` |
 | MIQP: branch and bound over convex QP node relaxations | Gupta & Ravindran, *Branch and bound experiments in convex nonlinear integer programming*, Management Science 31(12), 1985 | `src/mip/branch_and_bound.cpp` |
 | Exact rational branch and bound (test oracle) | as above, in exact arithmetic | `tests/oracles/rational_simplex.cpp` |
 | Shifted geometric mean benchmark reporting | Mittelmann, plato.asu.edu benchmark methodology | `bench/runners/make_benchmarks_doc.py` |
 | LP duality checks (feasibility, complementary slackness, strong duality) | Chvátal, *Linear Programming*, ch. 5 | `tools/verify_solution.py` |
 
-Phases 6 onwards add: dual revised simplex (Maros; Huangfu & Hall), Forrest–Tomlin update
+Phases 6 onwards add: Forrest–Tomlin update
 (Forrest & Tomlin 1972), restarted PDHG (Applegate et al.; Lu & Yang, arXiv:2311.12180;
 arXiv:2507.14051), Mehrotra predictor–corrector (Nocedal & Wright; Gondzio), Gomory MIR and
 cover cuts (Marchand & Wolsey; Wolsey), and branch-and-cut search (Achterberg). Devex pricing
-and the Harris ratio test (#66, #67) have landed early, both opt-in - see the table above.
+(#66) has landed early and is the default; the Harris ratio test (#67) has landed and stays
+opt-in - see the table above.
 
 ---
 

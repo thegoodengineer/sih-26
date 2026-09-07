@@ -104,16 +104,27 @@ def find_binary(explicit: Path | None) -> Path | None:
 
 
 def git_commit() -> str:
+    """Short commit hash, with "-dirty" appended when tracked files other than the tier
+    manifests are modified. The manifests (data/netlib/reference.json and
+    data/mittelmann/reference.json) are rewritten by the fetch scripts as part of the
+    runner's own workflow and say nothing about what was measured; untracked files are
+    ignored for the same reason (fetched instances are untracked by design)."""
     try:
-        out = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=REPO_ROOT,
-                             capture_output=True, text=True, check=True)
-        return out.stdout.strip()
-    except (OSError, subprocess.CalledProcessError):
+        result = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=REPO_ROOT,
+                                capture_output=True, text=True, check=False)
+        commit = result.stdout.strip() or "unknown"
+        status = subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=no", "--",
+             ".", ":!data/netlib/reference.json", ":!data/mittelmann/reference.json"],
+            cwd=REPO_ROOT, capture_output=True, text=True, check=False)
+        if status.stdout.strip():
+            commit += "-dirty"
+        return commit
+    except OSError:
         return "unknown"
 
-
 def solve(binary: Path, instance: Path, time_limit: float, verify: bool,
-          solver_options: list | None = None) -> dict:
+          solver_options: list[str] | None = None) -> dict:
     import time
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -174,11 +185,11 @@ def main() -> int:
     parser.add_argument("--time-limit", type=float, default=600.0)
     parser.add_argument("--instances", nargs="*")
     parser.add_argument("--no-verify", action="store_true")
-    parser.add_argument("--out", type=Path, default=None)
     parser.add_argument("--solver-option", action="append", default=[], metavar="KEY=VALUE",
-                        help="pass --option KEY=VALUE to the solver and record it in the CSV. "
-                             "A run made with one is a measurement OF that option, not the "
-                             "tier's evidence, and latest_result.py skips it for that reason.")
+                        help="passed to the solver as --option KEY=VALUE; repeatable, and "
+                             "recorded in the CSV so a run with a non-default option is "
+                             "distinguishable from the default at the same commit")
+    parser.add_argument("--out", type=Path, default=None)
     args = parser.parse_args()
 
     binary = find_binary(args.binary)
@@ -199,7 +210,9 @@ def main() -> int:
     machine = f"{platform.system()}-{platform.machine()}"
     stamp = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
 
-    print(f"commit   {commit}   machine {machine}   time limit {args.time_limit:g}s")
+    solver_options = " ".join(args.solver_option)
+    print(f"commit   {commit}   machine {machine}   time limit {args.time_limit:g}s"
+          + (f"   options {solver_options}" if solver_options else ""))
     print()
     print(f"{'instance':<24}{'status':<14}{'our objective':>20}{'published':>20}"
           f"{'gap':>10}{'nodes':>9}{'time':>9}  match proved ver")
@@ -214,8 +227,7 @@ def main() -> int:
             continue
 
         published = float(entry["published_optimal"])
-        blob = solve(binary, instance, args.time_limit, not args.no_verify,
-                     args.solver_option)
+        blob = solve(binary, instance, args.time_limit, not args.no_verify, args.solver_option)
         ours = blob.get("objective")
         status = blob["status"]
 
@@ -247,9 +259,9 @@ def main() -> int:
             "wall_seconds": f"{blob['wall_seconds']:.6f}",
             "solver_seconds": blob.get("solver_seconds", ""),
             "git_commit": commit,
+            "solver_options": solver_options,
             "machine": machine,
             "timestamp_utc": stamp,
-            "solver_options": " ".join(args.solver_option),
         })
 
         gap_text = "-" if relative is None or not math.isfinite(relative) else f"{relative:.2e}"

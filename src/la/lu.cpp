@@ -73,11 +73,12 @@ constexpr double kUpdatePivotThreshold = 1e-7;
 
 /// Refactorize once the eta file reaches this many updates, whatever its size. Bounds the
 /// worst-case drift by bounding how long any single factorization is trusted.
-constexpr Index kMaxEtaCount = 64;
-
-/// Refactorize when the eta file has grown to this multiple of the factors it sits on top
-/// of. Past that point the updates cost more per solve than a fresh factorization would.
-constexpr double kMaxEtaFillRatio = 2.0;
+///
+/// Measured (#68): 128 passes every correctness gate - 320 unit tests and the rational
+/// oracle at 0 mismatches - while a sweep to 512 made d2q06c fail outright, so the ceiling
+/// is real and this sits well inside it. The time-based break-even in the simplex normally
+/// fires first; this is the backstop for a model whose solves are so cheap that it does not.
+constexpr Index kMaxEtaCount = 128;
 
 }  // namespace
 
@@ -204,8 +205,40 @@ bool SparseLu::factorize(const std::vector<LuColumn>& columns, Index m, double p
     if (step < 0) return false;  // a column that was never pivotal: structurally singular
     entry = step;
   }
+  build_column_u();
   base_nonzeros_ = factor_nonzeros();
   return true;
+}
+
+void SparseLu::build_column_u() {
+  // Transpose the row-wise U (row-step k holds the steps j > k of its off-pivot entries)
+  // into column form: column-step j holds the row-steps i < j that push into it.
+  const Index m = m_;
+  uc_start_.assign(static_cast<std::size_t>(m) + 1, 0);
+  for (Index k = 0; k < m; ++k) {
+    for (Index p = u_start_[static_cast<std::size_t>(k)];
+         p < u_start_[static_cast<std::size_t>(k) + 1]; ++p) {
+      const Index j = u_steps_[static_cast<std::size_t>(p)];
+      if (j <= k) continue;
+      ++uc_start_[static_cast<std::size_t>(j) + 1];
+    }
+  }
+  for (Index j = 0; j < m; ++j) {
+    uc_start_[static_cast<std::size_t>(j) + 1] += uc_start_[static_cast<std::size_t>(j)];
+  }
+  uc_steps_.assign(static_cast<std::size_t>(uc_start_[static_cast<std::size_t>(m)]), 0);
+  uc_values_.assign(uc_steps_.size(), 0.0);
+  std::vector<Index> fill(uc_start_.begin(), uc_start_.end() - 1);
+  for (Index k = 0; k < m; ++k) {
+    for (Index p = u_start_[static_cast<std::size_t>(k)];
+         p < u_start_[static_cast<std::size_t>(k) + 1]; ++p) {
+      const Index j = u_steps_[static_cast<std::size_t>(p)];
+      if (j <= k) continue;
+      const auto slot = static_cast<std::size_t>(fill[static_cast<std::size_t>(j)]++);
+      uc_steps_[slot] = k;
+      uc_values_[slot] = u_values_[static_cast<std::size_t>(p)];
+    }
+  }
 }
 
 // =========================================================================================
@@ -242,11 +275,11 @@ bool SparseLu::update(Index leaving_position, const double* alpha) {
 }
 
 bool SparseLu::should_refactorize() const noexcept {
-  const Index etas = eta_count();
-  if (etas >= kMaxEtaCount) return true;
-  const auto eta_nonzeros = static_cast<double>(eta_rows_.size());
-  const double base = std::max(1.0, static_cast<double>(base_nonzeros_));
-  return eta_nonzeros > kMaxEtaFillRatio * base;
+  // Only the drift bound remains here. The fill-ratio rule that used to sit beside it was
+  // replaced by the simplex's measured break-even (see primal_simplex.cpp): a fill ratio
+  // assumes a fixed relationship between eta size and eta cost that no single constant
+  // captured across instances.
+  return eta_count() >= kMaxEtaCount;
 }
 
 bool SparseLu::eliminate(Workspace& w, double pivot_tolerance, double threshold) {
@@ -628,9 +661,7 @@ bool SparseLu::eliminate(Workspace& w, double pivot_tolerance, double threshold)
 // Solves
 // =========================================================================================
 
-void SparseLu::solve(double* b) const {
-  if (m_ == 0) return;
-
+void SparseLu::forward_l(double* b) const {
   // Apply the elimination factors in increasing k. See the derivation at the top.
   for (Index k = 0; k < m_; ++k) {
     const auto uk = static_cast<std::size_t>(k);
@@ -643,7 +674,63 @@ void SparseLu::solve(double* b) const {
       b[static_cast<std::size_t>(l_rows_[up])] -= l_values_[up] * pivot_component;
     }
   }
+}
 
+void SparseLu::apply_etas(double* b) const {
+  // Then the recorded updates, OLDEST FIRST: x = E_k^-1 ... E_1^-1 (B_0^-1 b). Applying
+  // E^-1 is z_p = y_p / alpha_p followed by z_i = y_i - alpha_i z_p.
+  const Index etas = eta_count();
+  for (Index k = 0; k < etas; ++k) {
+    const auto uk = static_cast<std::size_t>(k);
+    const auto pivot_index = static_cast<std::size_t>(eta_pivot_position_[uk]);
+    const double scaled = b[pivot_index] / eta_pivot_value_[uk];
+    b[pivot_index] = scaled;
+    if (scaled == 0.0) continue;
+    const Index begin = eta_start_[uk];
+    const Index end = eta_start_[uk + 1];
+    for (Index t = begin; t < end; ++t) {
+      const auto ut = static_cast<std::size_t>(t);
+      b[static_cast<std::size_t>(eta_rows_[ut])] -= eta_values_[ut] * scaled;
+    }
+  }
+}
+
+void SparseLu::solve(double* b) const {
+  if (m_ == 0) return;
+  forward_l(b);
+
+  // HYPER-SPARSE BACK-SUBSTITUTION (#68; Gilbert & Peierls 1988). U is walked by COLUMN in
+  // decreasing step order, and a step whose result is exactly zero pushes nothing: on a
+  // right-hand side with a handful of nonzeros - the entering column of a large sparse
+  // basis - this touches a small fraction of U. The gather in solve_reference() reads all
+  // of U regardless; the two must agree to rounding, and a test says so.
+  for (Index k = 0; k < m_; ++k) {
+    work_[static_cast<std::size_t>(k)] =
+        b[static_cast<std::size_t>(pivot_row_[static_cast<std::size_t>(k)])];
+  }
+  for (Index k = m_ - 1; k >= 0; --k) {
+    const auto uk = static_cast<std::size_t>(k);
+    const double value = work_[uk] / pivot_value_[uk];
+    work_[uk] = value;
+    if (value == 0.0) continue;
+    const Index begin = uc_start_[uk];
+    const Index end = uc_start_[uk + 1];
+    for (Index p = begin; p < end; ++p) {
+      const auto up = static_cast<std::size_t>(p);
+      work_[static_cast<std::size_t>(uc_steps_[up])] -= uc_values_[up] * value;
+    }
+  }
+  for (Index k = 0; k < m_; ++k) {
+    b[static_cast<std::size_t>(pivot_col_[static_cast<std::size_t>(k)])] =
+        work_[static_cast<std::size_t>(k)];
+  }
+
+  apply_etas(b);
+}
+
+void SparseLu::solve_reference(double* b) const {
+  if (m_ == 0) return;
+  forward_l(b);
   // Back-substitute in decreasing k. work_ holds x indexed by elimination step, so that the
   // inner loop can index U directly; it is scattered back to column order at the end.
   for (Index k = m_ - 1; k >= 0; --k) {
@@ -665,22 +752,7 @@ void SparseLu::solve(double* b) const {
         work_[static_cast<std::size_t>(k)];
   }
 
-  // Then the recorded updates, OLDEST FIRST: x = E_k^-1 ... E_1^-1 (B_0^-1 b). Applying
-  // E^-1 is z_p = y_p / alpha_p followed by z_i = y_i - alpha_i z_p.
-  const Index etas = eta_count();
-  for (Index k = 0; k < etas; ++k) {
-    const auto uk = static_cast<std::size_t>(k);
-    const auto pivot_index = static_cast<std::size_t>(eta_pivot_position_[uk]);
-    const double scaled = b[pivot_index] / eta_pivot_value_[uk];
-    b[pivot_index] = scaled;
-    if (scaled == 0.0) continue;
-    const Index begin = eta_start_[uk];
-    const Index end = eta_start_[uk + 1];
-    for (Index t = begin; t < end; ++t) {
-      const auto ut = static_cast<std::size_t>(t);
-      b[static_cast<std::size_t>(eta_rows_[ut])] -= eta_values_[ut] * scaled;
-    }
-  }
+  apply_etas(b);
 }
 
 void SparseLu::solve_transpose(double* b) const {

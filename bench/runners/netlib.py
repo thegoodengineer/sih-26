@@ -93,6 +93,7 @@ CSV_COLUMNS = [
     "git_commit",
     "machine",
     "timestamp_utc",
+    "solver_options",
 ]
 
 
@@ -111,13 +112,24 @@ def as_number(value) -> float | None:
 
 
 def git_commit() -> str:
+    """Short commit hash, with "-dirty" appended when tracked files other than the tier
+    manifests are modified. The manifests (data/netlib/reference.json and
+    data/mittelmann/reference.json) are rewritten by the fetch scripts as part of the
+    runner's own workflow and say nothing about what was measured; untracked files are
+    ignored for the same reason (fetched instances are untracked by design)."""
     try:
         result = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=REPO_ROOT,
                                 capture_output=True, text=True, check=False)
-        return result.stdout.strip() or "unknown"
+        commit = result.stdout.strip() or "unknown"
+        status = subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=no", "--",
+             ".", ":!data/netlib/reference.json", ":!data/mittelmann/reference.json"],
+            cwd=REPO_ROOT, capture_output=True, text=True, check=False)
+        if status.stdout.strip():
+            commit += "-dirty"
+        return commit
     except OSError:
         return "unknown"
-
 
 def machine_tag() -> str:
     return f"{platform.system()}-{platform.machine()}"
@@ -140,7 +152,8 @@ def default_binary() -> Path:
     raise SystemExit("no solver binary found; build first, or pass --binary")
 
 
-def run_one(binary: Path, mps: Path, time_limit: float, verify: bool) -> dict:
+def run_one(binary: Path, mps: Path, time_limit: float, verify: bool,
+            solver_options: list[str] | None = None) -> dict:
     """Solve one instance, then verify the solution independently."""
     with tempfile.TemporaryDirectory() as tmp:
         stats_path = Path(tmp) / "stats.json"
@@ -152,6 +165,8 @@ def run_one(binary: Path, mps: Path, time_limit: float, verify: bool) -> dict:
             "--time-limit", str(time_limit),
             "--option", "log_to_console=false",
         ]
+        for option in solver_options or []:
+            command += ["--option", option]
         started = time.perf_counter()
         completed = subprocess.run(command, capture_output=True, text=True)
         wall = time.perf_counter() - started
@@ -211,6 +226,10 @@ def main() -> int:
                         help="fail ONLY when the independent verifier rejects a solution, "
                              "not when an instance merely fails to reach the published "
                              "optimum. This is the gate for tiers with known failures.")
+    parser.add_argument("--solver-option", action="append", default=[], metavar="KEY=VALUE",
+                        help="passed to the solver as --option KEY=VALUE; repeatable. Recorded "
+                             "in the CSV so a run with a non-default option is distinguishable "
+                             "from the default at the same commit (#66, #67 re-measurements)")
     parser.add_argument("--out", type=Path, default=None,
                         help="destination CSV; relative paths are resolved "
                              "against the repository root")
@@ -220,7 +239,16 @@ def main() -> int:
     reference_path = DATA_DIR / "reference.json"
     if not reference_path.exists():
         raise SystemExit("no reference data; run bench/runners/fetch_data.py first")
-    reference = json.loads(reference_path.read_text())["instances"]
+    # READ ONCE. The tier tag used in the output filename used to be read from this file
+    # again at the END of the run, hundreds of solves later, and anything that changed the
+    # file in between silently mislabelled the result. That is not hypothetical: a stray
+    # `git checkout -- data/netlib/reference.json` during a run produced an 89-instance CSV
+    # named netlib-small-*.csv, and make_benchmarks_doc.py selects CSVs BY THAT NAME - so
+    # docs/BENCHMARKS.md would have reported a full-set figure as the small tier's, in a
+    # document whose whole purpose is that it cannot drift from the evidence.
+    reference_blob = json.loads(reference_path.read_text())
+    reference = reference_blob["instances"]
+    tier = reference_blob.get("instance_set", "")
 
     names = sorted(args.instances or reference)
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -228,8 +256,10 @@ def main() -> int:
     timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
 
     rows: list[dict] = []
+    solver_options = " ".join(args.solver_option)
     print(f"solver   {binary}")
-    print(f"commit   {commit}   machine {machine}")
+    print(f"commit   {commit}   machine {machine}"
+          + (f"   options {solver_options}" if solver_options else ""))
     print()
     print(f"{'instance':<11}{'status':<9}{'our objective':>22}{'published':>22}"
           f"{'rel err':>10}{'iters':>7}{'time':>8}  verified  result")
@@ -243,7 +273,7 @@ def main() -> int:
             continue
 
         published = entry["published_optimal"]
-        blob = run_one(binary, mps, args.time_limit, not args.no_verify)
+        blob = run_one(binary, mps, args.time_limit, not args.no_verify, args.solver_option)
         status = blob["status"]
         ours = blob.get("objective")
         verified = blob.get("verified")
@@ -304,6 +334,7 @@ def main() -> int:
             "iterations": blob.get("iterations", ""),
             "algorithm": blob.get("algorithm", ""),
             "git_commit": commit,
+            "solver_options": solver_options,
             "machine": machine,
             "timestamp_utc": timestamp,
         })
@@ -348,7 +379,6 @@ def main() -> int:
     # Tier goes in the FILENAME. Both tiers at the same commit previously produced the same
     # path, so running medium after small silently overwrote it and docs/BENCHMARKS.md could
     # only ever describe whichever ran last.
-    tier = json.loads(reference_path.read_text()).get("instance_set", "")
     tier_tag = f"{tier}-" if tier and tier != "explicit" else ""
     out_path = args.out or (RESULTS_DIR / f"netlib-{tier_tag}{commit}.csv")
     # Resolve against the repository root BEFORE anything else touches it. Two separate
@@ -429,13 +459,35 @@ def main() -> int:
     # instances none of which trigger those reductions.
     if args.require_verified:
         rejected = [row["instance"] for row in rows if row["independently_verified"] == 0]
-        if rejected:
-            print(f"REJECTED BY THE VERIFIER: {len(rejected)} instance(s): "
-                  f"{', '.join(rejected)}")
-            print("An answer the verifier rejects is internally inconsistent, which is a bug "
-                  "whatever the objective says.")
+
+        # A DOWNGRADED OPTIMALITY CLAIM COUNTS AS A REJECTION TOO (#157).
+        #
+        # The verifier only checks the dual conditions when the solver claims optimality,
+        # and that is right: kFeasible is a solver declining to make the claim. But there is
+        # a second way to arrive at kFeasible - the engine claimed optimal and our own status
+        # check in solve.cpp caught the duals violating tolerance and overrode it. That is
+        # not declining a claim; it is making one and being caught. And it was invisible
+        # here: the status is no longer "optimal", so the verifier skipped the duals, so
+        # nothing was rejected, and recipe dropped from a pass to a silent non-pass on the
+        # #149 merge with the gate green. The stricter our own check, the less this gate
+        # saw. Every override writes a message beginning with the same words, so it is
+        # matched on those - a string this project owns, not a heuristic.
+        self_rejected = [row["instance"] for row in rows
+                         if str(row.get("message", "")).startswith("engine reported optimal but")
+                         and row["instance"] not in rejected]
+
+        if rejected or self_rejected:
+            if rejected:
+                print(f"REJECTED BY THE VERIFIER: {len(rejected)} instance(s): "
+                      f"{', '.join(rejected)}")
+            if self_rejected:
+                print(f"OPTIMALITY CLAIM REJECTED BY OUR OWN CHECK: {len(self_rejected)} "
+                      f"instance(s): {', '.join(self_rejected)}")
+            print("An answer that fails an independent check - or that claimed optimality "
+                  "and failed our own - is internally inconsistent, which is a bug whatever "
+                  "the objective says.")
             return 1
-        print(f"no verifier rejections across {total} instance(s); "
+        print(f"no rejections across {total} instance(s); "
               f"{passes} also matched the published optimum")
         return 0
 

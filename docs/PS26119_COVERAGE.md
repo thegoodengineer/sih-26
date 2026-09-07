@@ -5,13 +5,13 @@ One place to see what PS26119 asks for against what exists on `main`, cross-chec
 tracker previously kept only in issue #54's body — a repo file is diffable and reviewable the
 way an issue body is not, and every status here was checked against a specific commit.
 
-**Refreshed 2026-08-31 at `ca6fde9`.**
+**Refreshed 2026-09-07 at `f0a97f6`; every number cites the CSV it comes from.**
 
 ## Problem classes
 
 | requirement | status | evidence / issue |
 |---|---|---|
-| Linear Programming | **done** | revised primal simplex; Netlib full set 71/89, medium 43/50, small 9/9 (#34) — the full set is the headline per #142, the narrower tiers being row-capped and so the easier half |
+| Linear Programming | **done** | revised primal simplex; Netlib full set 79/89, medium 48/50, small 9/9 (`bench/results/netlib-{full,medium,small}-adcee1b.csv`; #34). Cross-checked against HiGHS (#154): on every instance where the solver produces a final answer, that answer agrees with HiGHS to 3.1e-10 or better; 8 of the 18 failures are cases where the published Netlib table is the outlier, not our answer — the full set is the headline per #142, the narrower tiers being row-capped and so the easier half |
 | Mixed-Integer LP | **done** | branch & bound; corroborated by exhaustive oracle in the demo |
 | Quadratic Programming | **done** | #55 — Condat-Vu primal-dual engine, `src/qp/`. Convexity decided by LDL^T on `sense * Q` before any arithmetic; non-convex is refused with a certificate, never solved to a local point. Readable from a QPS `QUADOBJ` file (#112) and independently verified. |
 | Mixed-Integer QP | **done** | #139 — branch and bound over convex QP node relaxations, joining the two existing engines. `src/core/solve.cpp` dispatches a real `ProblemClass::kMiqp` case; a non-convex Hessian is still refused before any arithmetic, exactly as plain QP does. `tests/unit/test_miqp.cpp` covers it. (Superseded: this used to return `not_solved`; #142 corrected the demo and docs to stop saying so.) |
@@ -22,21 +22,21 @@ way an issue body is not, and every status here was checked against a specific c
 | requirement | status | evidence / issue |
 |---|---|---|
 | Revised simplex | **done** | `src/simplex/primal_simplex.cpp`, bounded-variable, composite phase 1, no big-M |
-| Interior-point methods | **not started** | #56 |
+| Interior-point methods | **done, opt-in** | #56 via #169: Mehrotra predictor-corrector on the bounded form, normal equations through a from-scratch sparse LDLᵀ (`src/ipm/ipm.cpp`, `src/la/ldl.cpp`), `--option algorithm=ipm`. Produces no basis, so it is not the node engine and not the default; on the full Netlib set it verified 47/89 (`bench/results/netlib-full-59ac6e3-ipm.csv`, 52 optimal, two rejected by the verifier in original units after postsolve: `pilot4`, `scagr25`), against 79/89 for the dual simplex at the same commit. |
 | Branch-and-bound | **done** | `src/mip/branch_and_bound.cpp`, domain-change stacks, no per-node copy |
 | Branch-and-cut / cutting planes | **not started** | #23 — the direct cause of the weak MIPLIB proof rate below |
 | Presolve | **partial** | #43 landed six reductions (empty row, redundant row, fixed column, empty column, singleton row, forcing row), on by default, postsolve re-measured against the original model. Free-column-singleton and doubleton-equation elimination (#92) — the two reductions #43 explicitly deferred, and where most of the remaining reduction on `sc105`/`afiro`-shaped models lives — are still open; correctly reporting this as partial rather than done matters because a wrong dual from a bad postsolve is exactly the failure class this project is built to avoid. |
 | Heuristics | **done** | #25 — diving to an incumbent, then best-bound |
-| Advanced node selection | partial | depth-first while diving, best-bound after; no pseudocost or reliability branching (#69) |
+| Advanced node selection | **done** | #69 via #166: reliability branching - pseudocosts, strong branching on the ten best candidates until each has eight observations, product score - on top of the dive-then-best-bound node order; every node LP is a warm start of the bounded dual simplex (#65 via #165). |
 
 ## Implementation requirements
 
 | requirement | status | evidence / issue |
 |---|---|---|
 | Sparse matrix techniques | **done** | CSC/CSR, sparse Markowitz LU with threshold stability |
-| Efficient numerical linear algebra | **done** | #49 scaling (Ruiz + Pock-Chambolle, default on), #50 basis update (product-form, with an FTRAN-residual accuracy check that forces refactorization). #144 (open, CI green) fixes `eliminate()` reporting the wrong singular column when an earlier column is merely unpivotable within the search budget — a prerequisite for basis repair, not the repair itself. |
-| Pricing | **partial** | Dantzig is the default; Devex (#66) landed in #126 and is selectable via `--option pricing=devex`, but stays opt-in — measured on the Netlib medium tier it turns `grow22` from `optimal` into a singular basis for no reduction in the singular-basis count elsewhere, so shipping it as the default would trade an iteration-count headline for a wrong answer. The Harris two-pass ratio test (#67) landed in #137 and is selectable via `--option ratio_test=harris`; it was built specifically to test whether it would fix that interaction, and measured, it does not — it trades `grow22` for no reduction in singular-basis failures, so it too stays opt-in. |
-| Multi-core parallelization | **not started** | #57 |
+| Efficient numerical linear algebra | **done** | #49 scaling (Ruiz + Pock-Chambolle, default on), #50 basis update (product-form, with an FTRAN-residual accuracy check that forces refactorization). #144 fixed `eliminate()` reporting the wrong singular column when an earlier column is merely unpivotable within the search budget, #147 repairs the genuine rank defects. #68 via #169: hyper-sparse FTRAN back-substitution through U stored by column, with the gather form kept as the tested reference (`tests/unit/test_sparse_lu.cpp`). #72 via #169: iterative refinement of the final basis, primal and dual, with a compensated residual (`refinement_steps`, `residual_before_refinement`, `residual_after_refinement` on the `Solution`). #169 also adds a sparse LDLᵀ (`src/la/ldl.cpp`: minimum degree, etree, up-looking numeric, regularized pivot floor) for the interior-point method. |
+| Pricing | **done** | Devex (#66) is the default. It landed in #126 as opt-in because it turned `grow22` and `scsd8` into singular bases; that failure class was removed by #144 and #147, and re-measured on the Netlib medium tier devex solves the same 49 instances in a third fewer iterations (34580 vs 51968) and a third less time, with no status change on any instance. Dantzig remains selectable via `--option pricing=dantzig` so the comparison can be regenerated. The Harris two-pass ratio test (#67) is selectable via `--option ratio_test=harris` and stays opt-in: re-measured alongside, it changes no status and costs time under Dantzig (274.8 s vs 191.0 s) while doing nothing for devex. |
+| Multi-core parallelization | **done, honestly small** | #57 via #169: OpenMP over the column loops that dominate an iteration (pricing, pivot row), deterministic by construction - results are bit-identical at `threads=1` and `threads=8` on the seven of the eight largest Netlib instances that finish (`bench/results/netlib-0cd08cf-threads1.csv` / `-threads8.csv`); the eighth, `dfl001`, hits the time limit in both and got FEWER iterations with eight threads (31,256 against 32,739) - measured with NO speedup at Netlib scale, where an iteration is too short to amortize a fork. Off unless `--option threads=N`; the build flag is `SANKHYA_WITH_OPENMP`. |
 | GPU acceleration | **not started** | #16-#19. The engine it needs — restarted PDHG — exists, is verified, and solves the 5000x5000 instance in the demo on CPU. `--gpu` warns and falls back. |
 | **Not built on any existing solver** | **done** | `docs/PROVENANCE.md`, CI-enforced, live link list in demo section 1 |
 
@@ -59,7 +59,7 @@ way an issue body is not, and every status here was checked against a specific c
 | Highly degenerate models | **done** | exact rank 6 of 7, computed over the rationals by the independent checker |
 | Ill-conditioned matrices | **done** | 10^22 entry spread, condition number 2.14e+30, objective provably unmoved |
 | Weak LP relaxations | **done** | 33.77% integrality gap closed |
-| Difficult MILP formulations | **partial** | MIPLIB runs (below), but 5 of 30 proved is the honest reading |
+| Difficult MILP formulations | **partial** | MIPLIB runs (below), but 6 of 30 proved is the honest reading |
 | **Thousands to millions of variables** | **partial — still the biggest single gap** | one generated 5000x5000 LP against an optimum exact by construction. A demonstration, not a benchmark: one instance, generated rather than industrial, nowhere near the "millions" end. |
 
 ## Expected solution
@@ -67,10 +67,10 @@ way an issue body is not, and every status here was checked against a specific c
 | requirement | status | note |
 |---|---|---|
 | Basic API **or** CLI | **done** | CLI satisfies the PS wording; C API (#58) and Python bindings (#59) both merged (#128, #129) on top of it |
-| Netlib benchmark | **done** | small 9/9 live in the demo, medium 43/50 (#34, last measured at `a90db47` / re-run pending in the PR this tracker update accompanies). Six remaining failures: singular bases (`d6cube`, `grow15`, `pilot4`), accuracy short of the 1e-6 bar (`scrs8`, `grow7`), and dual feasibility (`etamacro`). `e226` differs from the published table only by an objective-row constant convention and verifies as optimal (#134). |
-| MIPLIB benchmark | **done, weakly** | #24 — 30 instances: 5 optimal, 21 feasible, 4 node limit. The proof rate is what #23 and #69 exist to fix. |
-| Mittelmann benchmark | **not started** | #60 |
-| Compared against an established solver | **done** | HiGHS as a separate process, objectives agree 9/9. On speed: single-digit-millisecond instances put both solvers' timing envelopes on top of each other: the median ratio moved between 0.72x and 1.60x on an unchanged binary at every repeat count tried (#120), so "indistinguishable" is the honest reading, not a specific multiplier. The reproducible comparison is iterations: 2.16x behind on the small set (#66). |
+| Netlib benchmark | **done** | measured on `main` at `adcee1b`: full set **79/89**, medium **48/50**, small **9/9**, every pass also verified by the independent checker (`bench/results/netlib-{full,medium,small}-adcee1b.csv`). The 10 full-set non-passes by reason: 7 where Netlib's published value is the outlier and our answer agrees with HiGHS (`80bau3b`, `e226` by its objective constant, `ganges`, `greenbea`, `greenbeb`, `nesm`, `scrs8`); 1 time limit at 120 s (`dfl001`); `pilot`, whose answer agrees with HiGHS but which our own dual-feasibility check downgrades to feasible; `maros-r7`, where the solver declines to answer rather than claim. The committed run was made on AC after hours of sustained load, 1.48x slower on identical iteration counts than the cool-machine run of the same source (`bench/results/netlib-full-59ac6e3.csv`, also 79/89); a battery run in between scored 77/89 because `fit2p` and `pilot87` crossed the 120 s limit. Answers and verdicts are identical across all three; only the clock moves. |
+| MIPLIB benchmark | **done, weakly** | #24 — 30 instances at 60 s on `adcee1b`: 13 reach the published optimum, 6 prove it (6 optimal, 21 feasible, 3 node limit; `bench/results/miplib-adcee1b.csv`, on AC). Reliability branching (#69) moved the A/B at `63ec8de` by one instance each way (14 matched / 7 proved against 13 / 6 for most-fractional branching, `bench/results/miplib-{reliability,most-fractional}-63ec8de.csv`); cutting planes (#23) are what the proof rate waits on. |
+| Mittelmann benchmark | **done, and it fails** | #60 via #169: fetch with recorded provenance (`bench/runners/fetch_mittelmann.py`, Netlib-packed archives decoded with `emps`) and a runner that names every instance's outcome. On the eight smallest archives at 300 s on `main` (`bench/results/mittelmann-592aea3.csv`): **0 of 8** reach `optimal`; seven rows are named `time_limit`s and `qap15` ends in a singular basis at iteration 13,954 (#174) (`docs/BENCHMARKS.md` section 1d). HiGHS finishes two of the eight in the same limit on this machine state (four on the cooler run, `mittelmann-ca64dd5.csv`). This is where the solver stops today, stated rather than omitted. |
+| Compared against an established solver | **done** | HiGHS as a separate process, objectives agree **50/50** on the medium tier (`bench/results/compare-highs-medium-adcee1b.csv`; median of the per-instance solve-time ratios 1.38x with 34 of 50 timing envelopes overlapping) and every full-set non-pass cross-checked by name (`bench/results/cross-check-highs-adcee1b.csv`). On speed: single-digit-millisecond instances put both solvers' timing envelopes on top of each other: the median ratio moved between 0.72x and 1.60x on an unchanged binary at every repeat count tried (measured in #120, recorded in `bench/runners/compare.py`'s own note, not re-run here), so "indistinguishable" is the honest reading, not a specific multiplier. The reproducible comparison is iterations: 2.16x behind on the small set (#66). |
 | Robustness demonstration | **done** | `demo/run_sih_demo.sh` section 4, all three hazards the PS names |
 | Transparent, extensible, sovereign foundation | **done** | provenance discipline, citations in code, exact oracles, an independent verifier sharing no code with the solver |
 
@@ -85,7 +85,7 @@ way an issue body is not, and every status here was checked against a specific c
 
 ## Rough tally
 
-**30 checkable requirements: 22 done, 5 partial, 3 not started** — MIQP moved from partial to
+**30 checkable requirements: 24 done, 4 partial, 2 not started** — MIQP moved from partial to
 done since the last refresh (#139, #142); presolve moved from done to partial, correcting an
 overstatement (doubleton and free-column-singleton, #92, are not merged).
 
@@ -98,8 +98,8 @@ What the count hides, same as before:
   engine it needs is written and demonstrated at 5000x5000; the remaining work is the CUDA
   backend, not the algorithm, and nothing here measures or claims a speed-up.
 - The **scale claim is one instance**, not a benchmark (#34).
-- Where this project is behind, it can say by how much and why: Dantzig pricing costs 2.16x
-  HiGHS's iterations (#66), and the two most direct candidate fixes (Devex, Harris) are both
-  built, measured, and both currently decline to become the default because the measurement
-  says they cost a correct answer somewhere on the medium tier. That is a stronger position
-  than a wall-clock number would be.
+- Where this project was behind, it can say by how much and why: Dantzig pricing cost 2.16x
+  HiGHS's iterations (#66). Devex was built, held back while the measurement said it cost a
+  correct answer on the medium tier, and made the default only once the basis-conditioning
+  fixes (#144, #147) removed that failure and the measurement was repeated. That is a
+  stronger position than a wall-clock number would be.

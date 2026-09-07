@@ -451,10 +451,16 @@ MIPLIB_SUMMARY="$("$PYTHON" bench/runners/latest_result.py "miplib-*.csv" --stat
 # headline is the kind of thing this section exists to not do.
 FULL_SUMMARY="$("$PYTHON" bench/runners/latest_result.py "netlib-full-*.csv" --summary)"
 
+# And the full tier's failures, BY NAME AND REASON, from the same CSV. This paragraph was
+# hand-written ("15 numerical_error, 5 wrong objective, 3 time limit, 1 feasible only") and
+# described a run three solver generations old by the time anyone reread it. Same reasoning
+# as FULL_SUMMARY: read, not typed.
+FULL_FAILURES="$("$PYTHON" bench/runners/latest_result.py "netlib-full-*.csv" --failures)"
+
 # The instance count in section 6 is READ, not typed. It said "eight" until someone
 # fetched a ninth instance, at which point the closing paragraph contradicted the table
 # printed directly above it. Same reasoning as MEDIUM_SUMMARY.
-NETLIB_COUNT="$("$PYTHON" -c "import json,pathlib;print(len(json.loads(pathlib.Path('data/netlib/reference.json').read_text())['instances']))" 2>/dev/null || echo "the committed")"
+NETLIB_COUNT="$("$PYTHON" -c "import csv,sys;print(sum(1 for _ in csv.DictReader(open(sys.argv[1], newline=''))))" "$WORK/netlib.csv" 2>/dev/null || echo "the committed")"
 
 rule "6. What PS26119 asks for that we do NOT yet have"
 # THE MEDIUM-TIER FIGURE BELOW IS READ FROM THE COMMITTED CSV, not typed here. The demo does
@@ -466,7 +472,7 @@ rule "6. What PS26119 asks for that we do NOT yet have"
 # ===========================================================================================
 # The `g` flags matter: @NCOUNT@ appears twice on one line ("not the 9/9 above"), and
 # without them sed substitutes only the first occurrence per line.
-cat <<'GAPS' | sed -e "s|@FULL@|${FULL_SUMMARY}|g" -e "s|@MEDIUM@|${MEDIUM_SUMMARY}|g" -e "s|@NCOUNT@|${NETLIB_COUNT}|g" -e "s|@MIPLIB@|${MIPLIB_SUMMARY}|g"
+cat <<'GAPS' | sed -e "s|@FULL@|${FULL_SUMMARY}|g" -e "s|@MEDIUM@|${MEDIUM_SUMMARY}|g" -e "s|@NCOUNT@|${NETLIB_COUNT}|g" -e "s|@MIPLIB@|${MIPLIB_SUMMARY}|g" -e "s|@FAILURES@|${FULL_FAILURES}|g"
     Stating these is the point. A solver that is vague about its limits is not one an
     industrial user can plan around.
 
@@ -486,10 +492,16 @@ cat <<'GAPS' | sed -e "s|@FULL@|${FULL_SUMMARY}|g" -e "s|@MEDIUM@|${MEDIUM_SUMMA
                         of sense * Q by LDL^T before any arithmetic starts, and returns a
                         negative pivot as a certificate. A local optimum reported as a global
                         one is the failure mode we will not ship.
-    Interior point      Not implemented. The continuous engines today are revised simplex
-                        (exact, gives a basis) and restarted PDHG (first-order, CPU).
-    Cutting planes      Branch and bound is plain: no Gomory, MIR or cover cuts yet, no
-                        pseudocost branching. Tracked as issue #23.
+    Interior point      Implemented and OPT-IN (--option algorithm=ipm, issue #56): Mehrotra
+                        predictor-corrector over a from-scratch sparse LDL^T. It produces no
+                        basis, so it cannot warm-start branch and bound and cannot certify
+                        infeasibility, and on the full Netlib set it verifies fewer instances
+                        than the dual simplex. The default continuous engine stays the
+                        simplex (exact, gives a basis); restarted PDHG is the first-order one.
+    Cutting planes      Branch and bound has reliability branching - pseudocosts, strong
+                        branching until they are reliable (#69) - and warm-starts every node
+                        LP in the dual simplex (#65), but no Gomory, MIR or cover cuts yet.
+                        Tracked as issue #23.
     GPU acceleration    NOT WRITTEN. The first-order method it needs exists and runs on CPU;
                         the CUDA backend is issues #16-#19. --gpu today prints a warning and
                         falls back to CPU. We are not claiming a speed-up we have not measured.
@@ -515,22 +527,23 @@ cat <<'GAPS' | sed -e "s|@FULL@|${FULL_SUMMARY}|g" -e "s|@MEDIUM@|${MEDIUM_SUMMA
                         construction, and quoting it would be choosing the denominator that
                         flatters us.
 
-                        What the other 24 are is worth stating, because they are not scattered
-                        breakage - they are one problem and two small ones:
+                        What the rest are is worth stating by name, read from the same CSV:
 
-                            15  numerical_error   the basis factorization fails on the
-                                                  ill-conditioned instances (pilot, greenbea,
-                                                  dfl001 and their relatives)
-                             5  wrong objective   converges, disagrees with the published
-                                                  optimum past 1e-6
-                             3  time limit        no answer inside 120s
-                             1  feasible only
+                            @FAILURES@
 
-                        On size, the largest we solve is fit2d at 25 x 10500 with 129018
-                        nonzeros in 9.0s, and degen3 at 1503 x 1818 takes 123.6s - which is
-                        the honest shape of it: we are correct more often than we are fast,
-                        and both curves bend well before "millions of variables". That is
-                        issue #34. Reproduce with:
+                        "published value differs" is, on this set, mostly Netlib's readme
+                        being older than the instance files: on every such instance our
+                        objective agrees with HiGHS (bench/runners/cross_check_highs.py), and
+                        HiGHS disagrees with the readme by the same amount.
+
+                        On size, the largest Netlib instance we solve is fit2d at 25 x
+                        10500 with 129018 nonzeros in 0.4s; the slowest we solve is fit2p
+                        at 3000 x 13525 in 102.7s, and dfl001 hits the 120s
+                        limit (bench/results/netlib-full-adcee1b.csv). On Mittelmann's eight
+                        smallest LPs, 6330 to 376500 rows, the result is 0 of 8 inside 300s
+                        (bench/runners/mittelmann.py) - which is the honest shape of it:
+                        correct wherever we finish, and both curves bend well before
+                        "millions of variables". That is issue #34. Reproduce with:
                             python bench/runners/fetch_data.py --set full
                             python bench/runners/netlib.py --time-limit 120
     MIPLIB              PS26119 names MIPLIB before Netlib, and this demo does not run it.
@@ -538,10 +551,14 @@ cat <<'GAPS' | sed -e "s|@FULL@|${FULL_SUMMARY}|g" -e "s|@MEDIUM@|${MEDIUM_SUMMA
                             @MIPLIB@
                         They are the weakest numbers in the project: branch and bound reaches
                         a feasible incumbent on most of the set but PROVES optimality on few,
-                        because there are no cutting planes (#23) and no pseudocost branching
-                        (#69) to close the bound. Stated here rather than left out - a reader
+                        because there are no cutting planes (#23) to close the bound;
+                        reliability branching (#69) landed and did not change the proof rate. Stated here rather than left out - a reader
                         who opens bench/results/ finds it either way, and #54 is the tracker.
-    Parallelism         Single-threaded today.
+    Parallelism         Single-threaded by default. --option threads=N runs an iteration's
+                        column loops under OpenMP, deterministically (bit-identical results at
+                        1 and 8 threads), and at Netlib scale it is measured to buy nothing:
+                        an iteration is too short to amortize the fork (#57). A switch that
+                        preserves correctness, not a speed claim.
 
     On speed against HiGHS, section 5 above prints the measured ratio for this run rather
     than repeating a number here that would go stale - and it is a narrow comparison either

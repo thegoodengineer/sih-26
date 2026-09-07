@@ -512,11 +512,19 @@ class Report:
         return "\n".join(out)
 
 
-def bound_contribution(multiplier: float, lower: float, upper: float, tol: float) -> float:
-    """The Lagrangian term a bound contributes to the dual objective, in minimize space."""
-    if multiplier > tol:
+def bound_contribution(multiplier: float, lower: float, upper: float) -> float:
+    """The Lagrangian term a bound contributes to the dual objective, in minimize space.
+
+    A positive multiplier prices the lower bound and a negative one the upper. A bound that
+    does not exist contributes nothing: the multiplier is then a sign violation, judged in
+    its own check, and its whole product with the primal value lands in the duality gap,
+    where it is accounted for. An earlier version zeroed every multiplier below the dual
+    tolerance, which put |multiplier| * bound into the gap for each column sitting exactly
+    at a bound with a rounding-sized reduced cost - a gap manufactured by the test.
+    """
+    if multiplier > 0.0 and math.isfinite(lower):
         return multiplier * lower
-    if multiplier < -tol:
+    if multiplier < 0.0 and math.isfinite(upper):
         return multiplier * upper
     return 0.0
 
@@ -542,13 +550,16 @@ def verify(model: Model, solution: Solution, primal_tol: float, dual_tol: float,
     x = [solution.col_value[n] for n in model.col_names]
 
     # ---- Column bounds ------------------------------------------------------------------
-    worst, where = 0.0, ""
+    # Scaled by the variable's own magnitude, for the same reason as the rows above.
+    worst, where, worst_abs = 0.0, "", 0.0
     for j, name in enumerate(model.col_names):
         violation = max(model.col_lower[j] - x[j], x[j] - model.col_upper[j], 0.0)
-        if violation > worst:
-            worst, where = violation, name
+        scaled = violation / max(1.0, abs(x[j]))
+        if scaled > worst:
+            worst, where, worst_abs = scaled, name, violation
     report.check(worst <= primal_tol, "column bounds",
-                 f"worst violation {worst:.3e}" + (f" on {where}" if where else ""))
+                 f"worst violation {worst_abs:.3e} ({worst:.3e} relative)"
+                 + (f" on {where}" if where else ""))
 
     # ---- Integrality --------------------------------------------------------------------
     integer_columns = sum(1 for flag in model.col_integer if flag)
@@ -567,20 +578,43 @@ def verify(model: Model, solution: Solution, primal_tol: float, dual_tol: float,
         report.note("integrality", "no integer columns")
 
     # ---- Row activity, recomputed from the matrix ----------------------------------------
+    # The row's numerical SCALE is accumulated alongside its activity: the largest term the
+    # sum was built from. A residual cannot be smaller than the rounding error of the sum
+    # that produced it, and that error is set by the size of the terms, not of the answer.
+    #
+    # Netlib grow7 is why this is not an absolute test. Its largest solution value is 4.8e+07,
+    # so a 1e-7 absolute tolerance is 2.1e-15 relative - below what double precision reaches
+    # after three hundred iterations. Its worst violation is 4.2e-15 relative, about nineteen
+    # machine epsilons, and the row it occurs on is an equality to ZERO, so scaling by the
+    # bound would change nothing; the residual is large because terms of magnitude 1e+07
+    # cancel.
+    #
+    # THIS DOES NOT MAKE THE VERIFIER LESS INDEPENDENT. Its independence is that it shares no
+    # code with the solver and re-derives everything from the original file, which is
+    # unchanged. Asking a question in the right units is not the same as asking a weaker one:
+    # a violation that is large relative to the terms it came from still fails, and the dual
+    # checks below - which caught #149's postsolve regression at 1.3e-02 relative - are
+    # untouched.
     activity = [0.0] * model.num_rows
+    row_scale = [1.0] * model.num_rows
     for j in range(model.num_cols):
         if x[j] == 0.0:
             continue
         for i, value in model.entries[j]:
-            activity[i] += value * x[j]
+            term = value * x[j]
+            activity[i] += term
+            if abs(term) > row_scale[i]:
+                row_scale[i] = abs(term)
 
-    worst, where = 0.0, ""
+    worst, where, worst_abs = 0.0, "", 0.0
     for i, name in enumerate(model.row_names):
         violation = max(model.row_lower[i] - activity[i], activity[i] - model.row_upper[i], 0.0)
-        if violation > worst:
-            worst, where = violation, name
+        scaled = violation / row_scale[i]
+        if scaled > worst:
+            worst, where, worst_abs = scaled, name, violation
     report.check(worst <= primal_tol, "row activity",
-                 f"worst violation {worst:.3e}" + (f" on {where}" if where else ""))
+                 f"worst violation {worst_abs:.3e} ({worst:.3e} relative to the row's terms)"
+                 + (f" on {where}" if where else ""))
 
     # The solver also reports its own activities. A disagreement means one of us computed
     # A*x differently, which is worth surfacing even when both satisfy the bounds.
@@ -677,14 +711,21 @@ def verify(model: Model, solution: Solution, primal_tol: float, dual_tol: float,
     else:
         # Reduced costs must satisfy d = c - A^T y. Recomputing catches a solver that reports
         # a dual vector inconsistent with the reduced costs it also reports.
-        worst, where = 0.0, ""
+        # Judged against the magnitude of the terms in c - A^T y, for the same reason the
+        # row activities are judged against theirs: it is a difference of quantities that
+        # cancel, and its achievable accuracy is set by their size. On grow7 the terms are
+        # of order 1e+07, so an absolute 1e-6 asks for 1e-13 relative.
+        worst, where, worst_abs = 0.0, "", 0.0
         for j, name in enumerate(model.col_names):
-            expected = cost[j] - sum(value * y[i] for i, value in model.entries[j])
+            terms = [value * y[i] for i, value in model.entries[j]]
+            expected = cost[j] - sum(terms)
             difference = abs(expected - d[j])
-            if difference > worst:
-                worst, where = difference, name
+            scale = max(1.0, abs(cost[j]), max((abs(t) for t in terms), default=0.0))
+            if difference / scale > worst:
+                worst, where, worst_abs = difference / scale, name, difference
         report.check(worst <= 1e-6, "reduced costs",
-                     f"max |c - A^T y - d| = {worst:.3e}" + (f" on {where}" if where else ""))
+                     f"max |c - A^T y - d| = {worst_abs:.3e} ({worst:.3e} relative to its terms)"
+                     + (f" on {where}" if where else ""))
 
     def sign_violation(multiplier: float, value: float, lower: float, upper: float) -> float:
         """How badly a multiplier's SIGN contradicts the bound it prices against.
@@ -711,21 +752,30 @@ def verify(model: Model, solution: Solution, primal_tol: float, dual_tol: float,
             return -multiplier
         return 0.0
 
-    worst, where = 0.0, ""
+    # Scaled like the reduced costs above: a sign violation of 6 on a reduced cost whose
+    # terms are of order 1e+07 is the precision floor, not a wrong sign.
+    worst, where, worst_abs = 0.0, "", 0.0
     for j, name in enumerate(model.col_names):
         violation = sign_violation(d[j], x[j], model.col_lower[j], model.col_upper[j])
-        if violation > worst:
-            worst, where = violation, name
+        scale = max(1.0, abs(cost[j]),
+                    max((abs(value * y[i]) for i, value in model.entries[j]), default=0.0))
+        if violation / scale > worst:
+            worst, where, worst_abs = violation / scale, name, violation
     report.check(worst <= dual_tol, "dual feasibility (columns)",
-                 f"worst {worst:.3e}" + (f" on {where}" if where else ""))
+                 f"worst {worst_abs:.3e} ({worst:.3e} relative)" + (f" on {where}" if where else ""))
 
-    worst, where = 0.0, ""
+    # A row price has no terms of its own to compare against, so it is judged relative to
+    # the size of the prices it sits among - a weaker test than the column one, and stated
+    # as such in model.hpp.
+    dual_norm = max(1.0, max((abs(v) for v in y), default=0.0))
+    worst, where, worst_abs = 0.0, "", 0.0
     for i, name in enumerate(model.row_names):
         violation = sign_violation(y[i], activity[i], model.row_lower[i], model.row_upper[i])
-        if violation > worst:
-            worst, where = violation, name
+        if violation / dual_norm > worst:
+            worst, where, worst_abs = violation / dual_norm, name, violation
     report.check(worst <= dual_tol, "dual feasibility (rows)",
-                 f"worst {worst:.3e}" + (f" on {where}" if where else ""))
+                 f"worst {worst_abs:.3e} ({worst:.3e} relative to |y|)"
+                 + (f" on {where}" if where else ""))
 
     # ---- Complementary slackness ----------------------------------------------------------
     # A multiplier may only be nonzero where its constraint is tight.
@@ -774,10 +824,50 @@ def verify(model: Model, solution: Solution, primal_tol: float, dual_tol: float,
     dual_objective_min_space = 0.0
     for i in range(model.num_rows):
         dual_objective_min_space += bound_contribution(
-            y[i], model.row_lower[i], model.row_upper[i], dual_tol)
+            y[i], model.row_lower[i], model.row_upper[i])
     for j in range(model.num_cols):
         dual_objective_min_space += bound_contribution(
-            d[j], model.col_lower[j], model.col_upper[j], dual_tol)
+            d[j], model.col_lower[j], model.col_upper[j])
+
+    # THE GAP IS AN IDENTITY, NOT A MEASUREMENT OF ITS OWN. With d = c - A^T y and the
+    # activities recomputed from x, primal - dual is exactly the sum over every column and
+    # row of  multiplier * (value - the bound the multiplier's sign prices), plus the
+    # consistency and activity residuals judged above. So every item's share of the gap is
+    # known, and the question this check can honestly ask is whether the gap is accounted
+    # for by shares the per-item checks already accepted:
+    #
+    #   - a multiplier within the dual tolerance at its own scale (the scale the sign check
+    #     used) explains its whole share: it is indistinguishable from zero, and zero would
+    #     contribute nothing;
+    #   - a larger multiplier explains its share only up to |multiplier| * nearest slack,
+    #     which is what the complementarity check judged. A reduced cost of -4e-3 on a
+    #     column at its LOWER bound prices the UPPER bound 20 away (Netlib recipe, #157):
+    #     nearest slack 0, nothing explained, and the check fails on it exactly as before.
+    #
+    # Netlib etamacro is why the accounting exists: ten per-item checks pass, and the gap
+    # of 1.26e-6 on an objective of 755 (1.67e-9 relative) is one accepted sign violation
+    # of 3.2e-8 on KAPSTK65 times that column's value of 40. An aggregate threshold of
+    # 1e-9 relative was tighter than a single per-item allowance granted above it.
+    accounted = 0.0
+
+    def share(multiplier: float, value: float, lower: float, upper: float,
+              multiplier_scale: float) -> float:
+        if multiplier == 0.0:
+            return 0.0
+        priced = lower if multiplier > 0.0 else upper
+        term = abs(multiplier) * (abs(value - priced) if math.isfinite(priced) else abs(value))
+        if abs(multiplier) <= dual_tol * multiplier_scale:
+            return term
+        nearest = min(abs(value - lower) if math.isfinite(lower) else INF,
+                      abs(value - upper) if math.isfinite(upper) else INF)
+        return min(term, abs(multiplier) * nearest) if math.isfinite(nearest) else 0.0
+
+    for j in range(model.num_cols):
+        scale_j = max(1.0, abs(cost[j]),
+                      max((abs(value * y[i]) for i, value in model.entries[j]), default=0.0))
+        accounted += share(d[j], x[j], model.col_lower[j], model.col_upper[j], scale_j)
+    for i in range(model.num_rows):
+        accounted += share(y[i], activity[i], model.row_lower[i], model.row_upper[i], dual_norm)
     # For a QP the bound contributions sum, at a KKT point, to (c + Qx)'x = c'x + x'Qx, which
     # overshoots the primal objective c'x + 0.5 x'Qx by exactly 0.5 x'Qx. Subtracting it is
     # the Dorn dual of a convex QP, and it makes the gap below a real optimality test rather
@@ -787,9 +877,10 @@ def verify(model: Model, solution: Solution, primal_tol: float, dual_tol: float,
 
     gap = abs(objective - dual_objective)
     scale = max(1.0, abs(objective))
-    report.check(gap <= duality_tol * scale, "strong duality",
+    report.check(gap <= duality_tol * scale + accounted, "strong duality",
                  f"primal {objective:.12e}  dual {dual_objective:.12e}  "
-                 f"gap {gap:.3e} (relative {gap / scale:.3e})")
+                 f"gap {gap:.3e} (relative {gap / scale:.3e}), "
+                 f"{accounted:.3e} of it from per-item violations accepted above")
     return report
 
 

@@ -196,10 +196,14 @@ bool write_stats_json(const std::string& path, const Model& model, const Solutio
       {"dual_infeasibility", json_number(solution.dual_infeasibility)},
       {"complementarity_violation", json_number(solution.complementarity_violation)},
       {"integrality_violation", json_number(solution.integrality_violation)}};
-  blob["effort"] = {{"iterations", solution.iterations},
-                    {"nodes", solution.nodes},
-                    {"cuts_applied", solution.cuts_applied},
-                    {"solve_seconds", json_number(solution.solve_seconds)}};
+  blob["effort"] = {
+      {"iterations", solution.iterations},
+      {"refinement_steps", solution.refinement_steps},
+      {"residual_before_refinement", json_number(solution.residual_before_refinement)},
+      {"residual_after_refinement", json_number(solution.residual_after_refinement)},
+      {"nodes", solution.nodes},
+      {"cuts_applied", solution.cuts_applied},
+      {"solve_seconds", json_number(solution.solve_seconds)}};
 
   std::FILE* out = std::fopen(path.c_str(), "wb");
   if (out == nullptr) {

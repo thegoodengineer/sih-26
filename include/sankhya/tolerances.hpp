@@ -46,6 +46,24 @@ inline constexpr int kDivingMaxDepth = 50;
 /// a new column.
 inline constexpr int kDivingMaxLpResolves = 50;
 
+/// Reliability branching (#69; Achterberg, Koch & Martin, "Branching rules revisited",
+/// Operations Research Letters 33 (2005), 42-54). A column's pseudocost in a direction is
+/// trusted once it has been observed this many times; until then the column is a
+/// candidate for strong branching, which measures the two children directly.
+/// eta_rel = 8 is the paper's recommendation, and the value SCIP ships.
+inline constexpr int kPseudocostReliability = 8;
+
+/// Strong branching evaluates at most this many unreliable candidates per node, the most
+/// fractional first. Each costs two warm-started dual simplex solves; the paper's
+/// "lookahead" bound of 8 stops after that many candidates fail to improve the best score,
+/// which this simpler cap approximates.
+inline constexpr int kStrongBranchingCandidates = 10;
+
+/// Iteration cap for one strong-branching child LP. A dual simplex stopped at this cap
+/// still reports a valid bound (its objective is dual feasible throughout), so a capped
+/// probe measures a lower estimate of the gain rather than nothing.
+inline constexpr int kStrongBranchingIterations = 50;
+
 /// LP optimality check used by the independent verifier: primal objective must equal dual
 /// objective to this relative accuracy. Tighter than feasibility on purpose - a converged
 /// simplex basis should reproduce strong duality far better than it satisfies bounds.
