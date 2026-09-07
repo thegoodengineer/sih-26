@@ -49,6 +49,29 @@ Planned, not yet present:
 
 ---
 
+## 2b. Toolchains this has been built and tested with
+
+PS26119 asks for a foundation someone else can pick up, and "it builds here" is not that.
+These are the toolchains the evidence in `docs/BENCHMARKS.md` was actually produced with, and
+the ones CI exercises on every push. `scripts/preflight.sh` reports what it finds on the
+machine it runs on, and `scripts/configure.sh` chooses among them rather than trusting the
+order of `PATH`.
+
+| Where | Compiler | Build system | Python | What it is the authority on |
+|---|---|---|---|---|
+| CI, `ubuntu-latest` | the runner's default GCC | CMake >= 3.20, Ninja | 3.x as shipped | `-Wall -Wextra -Werror` cleanliness, the ASan/UBSan run, and the Netlib gates. A portability claim rests on the Linux build. |
+| Development, Windows 11 | GCC 16.1.0, MSYS2 UCRT64 (`C:\msys64\ucrt64\bin\g++.exe`) | CMake 4.3.3, Ninja 1.13.2 | 3.11.9 | Every benchmark CSV in `bench/results/` whose `machine` column reads `Windows-AMD64`. |
+| Development, Windows 11 (fallback) | GCC 13.2.0, Strawberry Perl MinGW-W64 | as shipped | 3.x | A second Windows compiler the configure script accepts; no committed CSV comes from it. |
+
+**One toolchain must never be selected**: a MinGW 6.3.0 that predates C++20 and sits on
+`PATH` on at least one development box. `scripts/configure.sh` rejects any `g++` reporting a
+major version below 10, which is why it exists rather than the build simply calling `cmake`.
+
+Third-party sources are pinned by tag in `CMakeLists.txt`, and `docs/sbom.spdx.json` - the
+SPDX 2.3 bill of materials - is generated from those pins by `tools/make_sbom.py`. CI runs
+`tools/make_sbom.py --check`, so a dependency added to the build without an entry in the
+table above turns the tree red instead of passing quietly.
+
 ## 3. Algorithm citation table
 
 Every algorithm we implement is cited at its implementation site as well as here. The

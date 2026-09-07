@@ -1,0 +1,178 @@
+{
+  "SPDXID": "SPDXRef-DOCUMENT",
+  "creationInfo": {
+    "comment": "Generated from the FetchContent_Declare blocks of CMakeLists.txt and the dependency table of docs/PROVENANCE.md. Not a binary scan: it states what the build declares, which is the thing a reader can check against the source. `ldd` output for the built binary is printed by the provenance job of .github/workflows/ci.yml and is the complementary check.",
+    "created": "2026-09-07T13:25:49Z",
+    "creators": [
+      "Tool: tools/make_sbom.py",
+      "Organization: SANKHYA (SIH 2026 PS26119)"
+    ]
+  },
+  "dataLicense": "CC0-1.0",
+  "documentNamespace": "https://github.com/thegoodengineer/sih-26/spdx/sankhya-0.1.0",
+  "name": "sankhya-0.1.0",
+  "packages": [
+    {
+      "SPDXID": "SPDXRef-Package-sankhya",
+      "copyrightText": "NOASSERTION",
+      "description": "A mathematical optimization solver core (LP, MILP, convex QP, MIQP) written from mathematical foundations in C++20.",
+      "downloadLocation": "https://github.com/thegoodengineer/sih-26",
+      "filesAnalyzed": false,
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "name": "sankhya",
+      "supplier": "Organization: SANKHYA (SIH 2026 PS26119)",
+      "versionInfo": "0.1.0"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-fmt",
+      "comment": "linked: yes, static; pinned in CMakeLists.txt at 10.2.1",
+      "copyrightText": "NOASSERTION",
+      "description": "String formatting. Produces text from values.",
+      "downloadLocation": "https://github.com/fmtlib/fmt.git",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:github/fmtlib/fmt@10.2.1",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "name": "fmt",
+      "supplier": "NOASSERTION",
+      "versionInfo": "10.2.1"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-CLI11",
+      "comment": "linked: header-only; pinned in CMakeLists.txt at v2.4.2",
+      "copyrightText": "NOASSERTION",
+      "description": "Command-line argument parsing.",
+      "downloadLocation": "https://github.com/CLIUtils/CLI11.git",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:github/CLIUtils/CLI11@v2.4.2",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "licenseConcluded": "BSD-3-Clause",
+      "licenseDeclared": "BSD-3-Clause",
+      "name": "CLI11",
+      "supplier": "NOASSERTION",
+      "versionInfo": "2.4.2"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-nlohmann-json",
+      "comment": "linked: header-only; pinned in CMakeLists.txt at v3.11.3",
+      "copyrightText": "NOASSERTION",
+      "description": "JSON serialisation for the `--stats` result blob.",
+      "downloadLocation": "https://github.com/nlohmann/json.git",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:github/nlohmann/json@v3.11.3",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "name": "nlohmann/json",
+      "supplier": "NOASSERTION",
+      "versionInfo": "3.11.3"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-zlib",
+      "comment": "linked: yes, static; pinned in CMakeLists.txt at v1.3.1",
+      "copyrightText": "NOASSERTION",
+      "description": "DEFLATE decompression, for `.mps.gz` inputs (Phase 2).",
+      "downloadLocation": "https://github.com/madler/zlib.git",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:github/madler/zlib@v1.3.1",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "licenseConcluded": "zlib",
+      "licenseDeclared": "zlib",
+      "name": "zlib",
+      "supplier": "NOASSERTION",
+      "versionInfo": "1.3.1"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-GoogleTest",
+      "comment": "linked: test binary only; pinned in CMakeLists.txt at v1.14.0",
+      "copyrightText": "NOASSERTION",
+      "description": "Unit test framework. Never linked into `sankhya_core`.",
+      "downloadLocation": "https://github.com/google/googletest.git",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:github/google/googletest@v1.14.0",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "licenseConcluded": "BSD-3-Clause",
+      "licenseDeclared": "BSD-3-Clause",
+      "name": "GoogleTest",
+      "supplier": "NOASSERTION",
+      "versionInfo": "1.14.0"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-OpenMP-runtime",
+      "comment": "optional, linked only when SANKHYA_WITH_OPENMP finds it",
+      "copyrightText": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "GPL-3.0 WITH GCC-exception-3.1 OR Apache-2.0 WITH LLVM-exception",
+      "licenseDeclared": "GPL-3.0 WITH GCC-exception-3.1 OR Apache-2.0 WITH LLVM-exception",
+      "name": "OpenMP runtime",
+      "supplier": "NOASSERTION",
+      "versionInfo": "as shipped by the compiler"
+    }
+  ],
+  "relationships": [
+    {
+      "relatedSpdxElement": "SPDXRef-Package-sankhya",
+      "relationshipType": "DESCRIBES",
+      "spdxElementId": "SPDXRef-DOCUMENT"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-fmt",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-Package-sankhya"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-CLI11",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-Package-sankhya"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-nlohmann-json",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-Package-sankhya"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-zlib",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-Package-sankhya"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-GoogleTest",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-Package-sankhya"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-OpenMP-runtime",
+      "relationshipType": "OPTIONAL_DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-sankhya"
+    }
+  ],
+  "spdxVersion": "SPDX-2.3"
+}

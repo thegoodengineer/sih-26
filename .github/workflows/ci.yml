@@ -392,7 +392,16 @@ jobs:
           fi
           echo "OK: no solver library is linked"
 
-      - name: Generate SPDX SBOM
+      # The SBOM is COMMITTED, not only produced here. A bill of materials that exists solely
+      # as a workflow artifact answers "what was in that CI run", which is not the question a
+      # judge with a clone in front of them is asking. tools/make_sbom.py reads the pinned
+      # FetchContent tags out of CMakeLists.txt and the licences out of the dependency table
+      # in docs/PROVENANCE.md, so a dependency added to the build without being documented
+      # fails here rather than passing silently.
+      - name: SBOM is up to date with the build file
+        run: python3 tools/make_sbom.py --check
+
+      - name: Generate SPDX SBOM from a scan, as a cross-check
         uses: anchore/sbom-action@v0
         with:
           path: .
