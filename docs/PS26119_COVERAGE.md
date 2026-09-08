@@ -22,6 +22,7 @@ way an issue body is not, and every status here was checked against a specific c
 | requirement | status | evidence / issue |
 |---|---|---|
 | Revised simplex | **done** | `src/simplex/primal_simplex.cpp`, bounded-variable, composite phase 1, no big-M |
+| First-order methods (PDHG) | **done** | `src/pdhg/`, restarted PDHG on the CPU, opt-in as `--option algorithm=pdhg`. On the nine committed instances **8 of 9** reach `optimal` at both 1e-4 and 1e-8 with restarts on, 7 of 9 with restarts off (`bench/results/pdhg-fix-367e0a2.csv`, `docs/BENCHMARKS.md` section 1e). That was 3 of 9 before #179 fixed two things the CUDA branch had quietly fixed and described as preservation: the step size collapsed to its floor on iteration zero, and the loop stopped on a point the report then had to downgrade. A loose tolerance request is now ignored rather than honoured, which is #180. |
 | Interior-point methods | **done, opt-in** | #56 via #169: Mehrotra predictor-corrector on the bounded form, normal equations through a from-scratch sparse LDLᵀ (`src/ipm/ipm.cpp`, `src/la/ldl.cpp`), `--option algorithm=ipm`. Produces no basis, so it is not the node engine and not the default; on the full Netlib set it verified 47/89 (`bench/results/netlib-full-59ac6e3-ipm.csv`, 52 optimal, two rejected by the verifier in original units after postsolve: `pilot4`, `scagr25`), against 79/89 for the dual simplex at the same commit. |
 | Branch-and-bound | **done** | `src/mip/branch_and_bound.cpp`, domain-change stacks, no per-node copy |
 | Branch-and-cut / cutting planes | **not started** | #23 — the direct cause of the weak MIPLIB proof rate below |
@@ -85,7 +86,7 @@ way an issue body is not, and every status here was checked against a specific c
 
 ## Rough tally
 
-**30 checkable requirements: 24 done, 4 partial, 2 not started** — MIQP moved from partial to
+**31 checkable requirements: 25 done, 4 partial, 2 not started** — MIQP moved from partial to
 done since the last refresh (#139, #142); presolve moved from done to partial, correcting an
 overstatement (doubleton and free-column-singleton, #92, are not merged).
 

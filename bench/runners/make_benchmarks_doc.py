@@ -490,6 +490,119 @@ def mittelmann_section(path: Path | None) -> str:
     return chr(10).join(out)
 
 
+def pdhg_section(path: Path | None) -> str:
+    """The first-order engine, at two tolerances, with restarts on and off (#28, #179).
+
+    PDHG is not the default engine and this section is not a pass rate: the point of a
+    first-order method is what it costs to reach a given accuracy, so the same instances are
+    run at 1e-4 and at 1e-8 and reported separately. A single blended number would hide the
+    only thing worth knowing about it.
+    """
+    if path is None:
+        return chr(10).join([
+            "Not yet run at this commit. Reproduce with:",
+            "",
+            "```",
+            "python bench/runners/pdhg_report.py --time-limit 60 --instances \\",
+            "    adlittle afiro blend israel sc105 sc50a sc50b share2b stocfor1",
+            "```",
+            "",
+        ])
+    rows = read_csv(path)
+    if not rows:
+        return "No PDHG results recorded yet." + chr(10)
+
+    commit = rows[0].get("git_commit", "unknown")
+    machine = rows[0].get("machine", "unknown")
+    simplex = {r["instance"]: r for r in rows if r.get("algorithm") == "simplex"}
+    names = sorted(simplex)
+
+    def cell(instance: str, tolerance: str, restarts: str, field: str) -> str:
+        for r in rows:
+            if (r.get("algorithm") == "pdhg" and r["instance"] == instance
+                    and r.get("tolerance") == tolerance and r.get("restarts_enabled") == restarts):
+                return r.get(field, "")
+        return ""
+
+    def tally(tolerance: str, restarts: str) -> tuple[int, int]:
+        # BY INSTANCE, not by row. pdhg_report.py runs the tightest tolerance with restarts on
+        # twice - once in its tolerance sweep and once as the baseline of its restart
+        # comparison - so counting rows reports 18 of 18 for nine instances.
+        seen: dict[str, str] = {}
+        for r in rows:
+            if (r.get("algorithm") == "pdhg" and r.get("tolerance") == tolerance
+                    and r.get("restarts_enabled") == restarts):
+                seen[r["instance"]] = r["status"]
+        return sum(status == "optimal" for status in seen.values()), len(seen)
+
+    loose = next((r["tolerance"] for r in rows
+                  if r.get("algorithm") == "pdhg" and r.get("tolerance") not in ("", None)), "")
+    tolerances = sorted({r["tolerance"] for r in rows
+                         if r.get("algorithm") == "pdhg" and r.get("tolerance")},
+                        key=lambda t: -float(t))
+    out = [
+        f"Source CSV: `bench/results/{path.name}`  ",
+        f"Commit `{commit}` · machine `{machine}` · {len(names)} instances, "
+        f"the ones committed to the repository",
+        "",
+    ]
+    for tolerance in tolerances:
+        on_opt, on_n = tally(tolerance, "1")
+        off_opt, off_n = tally(tolerance, "0")
+        parts = [f"**{on_opt} of {on_n}** reach `optimal` at a requested {tolerance} with "
+                 f"restarts on"]
+        if off_n:
+            parts.append(f"**{off_opt} of {off_n}** with restarts off")
+        out.append("- " + ", ".join(parts) + ".")
+    out += [
+        "",
+        "`optimal` here means what it means everywhere else in this document: the point also "
+        "survives the project's absolute tolerances, not merely the relative ones the "
+        "first-order loop converges on. That distinction is the whole of #179 - the loop used "
+        "to stop on the relative measure and the report then downgraded the point it stopped "
+        "on, so the engine gave up early and handed back the weaker answer.",
+        "",
+        "**Read the two tolerance columns together, because they are the same run.** Since "
+        "#179 the loop stops only where the absolute standard is met, so a request looser "
+        "than that standard no longer stops the solve any earlier - ask for 1e-4 and you get "
+        "the 1e-8 point, at the 1e-8 cost. That is the honest reading of the identical "
+        "columns below, and it is a real trade: the old behaviour honoured a loose request "
+        "and returned a point it then had to label `feasible`. Tracked as #180.",
+        "",
+        "| instance | simplex | " + " | ".join(
+            f"PDHG {t}: objective / iterations" for t in tolerances) + " |",
+        "|---|---:|" + "---:|" * len(tolerances),
+    ]
+    for name in names:
+        row = [f"`{name}`", f"{as_float(simplex[name], 'objective') or float('nan'):.10g}"]
+        for tolerance in tolerances:
+            objective = cell(name, tolerance, "1", "objective")
+            iterations = cell(name, tolerance, "1", "iterations")
+            status = cell(name, tolerance, "1", "status")
+            mark = "" if status == "optimal" else f" ({status})"
+            value = "-" if not objective else f"{float(objective):.10g}"
+            row.append(f"{value} / {iterations}{mark}")
+        out.append("| " + " | ".join(row) + " |")
+
+    # Restarts, the claim #28 asks to be measured rather than asserted.
+    tightest = tolerances[-1] if tolerances else ""
+    if tightest:
+        out += ["", f"**Restarts, measured at {tightest}.** The claim that restarting the "
+                    f"averaging helps is checked rather than repeated:", "",
+                "| instance | restarts on | restarts off | ratio |", "|---|---:|---:|---:|"]
+        for name in names:
+            on = cell(name, tightest, "1", "iterations")
+            off = cell(name, tightest, "0", "iterations")
+            if not on or not off:
+                continue
+            ratio = "-" if float(on) == 0 else f"{float(off) / float(on):.2f}x"
+            out.append(f"| `{name}` | {on} | {off} | {ratio} |")
+        out.append("")
+        out.append("A ratio above 1 means restarts saved iterations on that instance.")
+    out.append("")
+    return chr(10).join(out)
+
+
 def milp_section(path: Path | None) -> str:
     """MIPLIB, where TWO questions have to be answered separately.
 
@@ -651,6 +764,7 @@ def main() -> int:
     medium_csv = newest("netlib-medium-*.csv")
     full_csv = newest("netlib-full-*.csv")
     milp_csv = newest("miplib-*.csv")
+    pdhg_csv = newest("pdhg-*.csv")
     mittelmann_csv = newest("mittelmann-*.csv")
     compare_small_csv = newest("compare-highs-small-*.csv")
     compare_medium_csv = newest("compare-highs-medium-*.csv")
@@ -719,6 +833,15 @@ Mittelmann's LP test set (`bench/runners/fetch_mittelmann.py`, provenance in
 `data/mittelmann/reference.json`).
 
 {mittelmann_section(mittelmann_csv)}
+### 1e. The first-order engine — PDHG
+
+The simplex is not the only continuous engine. Restarted PDHG (`--option algorithm=pdhg`) is
+a first-order method: no basis, no factorization, and a cost that depends enormously on the
+accuracy asked of it - which is why this section reports two tolerances separately rather
+than one blended number. It is also the engine the GPU work targets, so its CPU behaviour is
+the baseline every GPU claim will be measured against.
+
+{pdhg_section(pdhg_csv)}
 ---
 
 ## 2. MIPLIB — the mixed-integer side
