@@ -96,11 +96,21 @@ def main() -> int:
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--binary", type=Path, default=None)
     parser.add_argument("--time-limit", type=float, default=60.0)
+    parser.add_argument("--instances", nargs="*", metavar="NAME",
+                        help="run only these instances. Without it every instance in "
+                             "data/netlib/reference.json is run, which is the whole tier the "
+                             "last fetch left there - 89 instances at four settings each, "
+                             "hours of solving for a report whose point is the committed nine.")
+    parser.add_argument("--out", type=Path, default=None,
+                        help="write the CSV here instead of bench/results/pdhg-<commit>.csv")
     args = parser.parse_args()
 
     binary = args.binary or default_binary()
     reference = json.loads((DATA_DIR / "reference.json").read_text())["instances"]
-    names = sorted(reference)
+    names = sorted(args.instances) if args.instances else sorted(reference)
+    unknown = [n for n in names if n not in reference]
+    if unknown:
+        raise SystemExit("not in data/netlib/reference.json: " + ", ".join(unknown))
     commit = git_commit()
     machine = f"{platform.system()}-{platform.machine()}"
     timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
@@ -184,7 +194,7 @@ def main() -> int:
         print(f"{name:<11}{on_iters:>14}{off_iters:>15}{speedup:>9.2f}x  {off['status']}")
 
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-    out = RESULTS_DIR / f"pdhg-{commit}.csv"
+    out = args.out or (RESULTS_DIR / f"pdhg-{commit}.csv")
     with out.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=CSV_COLUMNS)
         writer.writeheader()
