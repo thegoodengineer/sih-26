@@ -453,7 +453,22 @@ Solution solve_pdhg(const Model& model, const Options& options, Logger& logger) 
     const bool no_information = interaction <= 0.0;
     const double limit =
         no_information ? std::numeric_limits<double>::infinity() : movement / interaction;
-    const double exponent = static_cast<double>(iteration + 1);
+    // AND THE FIRST ITERATION IS A SECOND ROUTE TO THE SAME COLLAPSE. The exponent below is
+    // the iteration number, and at iteration 0 it is 1 - which makes shrink exactly
+    // 1 - pow(1, -0.3) = 0. The proposal is then min(0 * limit, grow * eta) = 0, and the
+    // clamp a few lines down pulls eta from 1/||A||_2 all the way to its 1e-12 floor on the
+    // very first admissible step. Nothing about that is a numerical accident: it is what the
+    // formula says when the exponent is 1, every time, on every model.
+    //
+    // Recovery is possible but ruinous: eta can only climb by the `grow` factor, at most
+    // 1.66x per iteration, so it takes tens of iterations to get back to where it started -
+    // and `iteration` is never reset by a restart (only `last_restart` moves), so this is a
+    // one-time collapse at the start of every PDHG solve rather than a repeating one.
+    //
+    // The floor of 2 is the smallest exponent for which shrink is positive. Measured on the
+    // nine committed Netlib instances, five of them go from `feasible` to `optimal` with this
+    // one character changed (bench/results/pdhg-*.csv, and the table in the commit message).
+    const double exponent = static_cast<double>(std::max<Count>(2, iteration + 1));
     const double shrink = 1.0 - std::pow(exponent, -0.3);
     const double grow = 1.0 + std::pow(exponent, -0.6);
     const double proposed = std::min(shrink * limit, grow * eta);
@@ -544,7 +559,14 @@ Solution solve_pdhg(const Model& model, const Options& options, Logger& logger) 
     logger.iteration(iteration, sense * better.primal_objective + model.objective_offset,
                      better.primal, better.dual, timer.elapsed_seconds());
 
-    if (better.meets_request(tolerance)) {
+    // THE STOPPING TEST AND THE REPORTING TEST ARE NOW THE SAME TEST, deliberately. Below,
+    // at the report, `verifiable` is `converged && final_residuals.meets_project_standard()`:
+    // a point that satisfies the requested tolerance but not the project's absolute standard
+    // is downgraded to `feasible` after the loop has already stopped on it. Stopping on that
+    // point wastes the iterations that would have reached the standard, and hands back the
+    // weaker answer while the solver was still converging. Asking for both here means the
+    // loop stops only where it can report what it stopped for.
+    if (better.meets_request(tolerance) && better.meets_project_standard()) {
       // Report the point that PASSED, not whichever earlier iterate happened to have the
       // smallest relative residual. best_x tracks worst(), which is a relative measure, so
       // an earlier iterate can hold that title while being less feasible in absolute terms -

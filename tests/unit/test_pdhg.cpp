@@ -226,6 +226,46 @@ TEST(Pdhg, OptimalIsNeverClaimedOnAPointThatWouldFailVerification) {
   }
 }
 
+// =========================================================================================
+// The two changes extracted from the CUDA branch, each pinned by the behaviour it fixes
+// =========================================================================================
+
+TEST(Pdhg, TheStepSizeSurvivesItsOwnFirstIteration) {
+  // The adaptive rule sets shrink = 1 - pow(iteration + 1, -0.3), so at iteration 0 the
+  // exponent is 1 and shrink is exactly zero: the proposal min(0 * limit, grow * eta) is
+  // zero, and eta is clamped from 1/||A||_2 down to its 1e-12 floor on the first admissible
+  // step. Recovery is capped at the grow factor, so the solve spends tens of iterations
+  // climbing back to the step size it started with.
+  //
+  // A ceiling on iterations is the way to test that without asserting a particular step size:
+  // the collapse costs iterations and nothing else observable. 500 is far above what this
+  // two-variable model needs after the fix and far below the several thousand the collapse
+  // costs; it is a guard against the bug returning, not a performance target.
+  const Model model = make_lp({{1.0, 1.0}}, {2.0}, {kInfinity}, {1.0, 1.0});
+  const Solution s = solve(model, pdhg_options(1e-8));
+  ASSERT_EQ(s.status, SolveStatus::kOptimal) << s.message;
+  EXPECT_LT(s.iterations, 500) << "the first-iteration step-size collapse is back";
+}
+
+TEST(Pdhg, StopsOnlyOnAPointThatMeetsTheProjectStandard) {
+  // The loop's stopping test and the report's verdict used to be different tests: the loop
+  // stopped when the RELATIVE residuals met the requested tolerance, and the report then
+  // downgraded that point to `feasible` when its ABSOLUTE residuals did not meet the
+  // project's standard. So the solver stopped early and handed back the weaker answer while
+  // it was still converging.
+  //
+  // The model is the one OptimalIsNeverClaimedOnAPointThatWouldFailVerification uses, whose
+  // right-hand side of 1e5 makes the two measures diverge by five orders of magnitude - it is
+  // exactly the case that used to stop at `feasible`.
+  const Model model = make_lp({{1.0, 1.0}}, {1.0e5}, {kInfinity}, {1.0, 1.0});
+  const Solution s = solve(model, pdhg_options(1e-4));
+  EXPECT_NE(s.status, SolveStatus::kFeasible)
+      << "the loop stopped on a point it then had to downgrade: " << s.message;
+  if (s.status == SolveStatus::kOptimal) {
+    EXPECT_LE(s.primal_infeasibility, tol::kPrimalFeasibility);
+  }
+}
+
 TEST(Pdhg, AFeasibleStatusStillMeansTheePointIsActuallyFeasible) {
   // kFeasible is a weaker claim than kOptimal but it is still a claim: sankhya::Solution
   // documents it as "a feasible point exists and is reported". Stopping on a relative
@@ -340,21 +380,36 @@ TEST(SolveStatusGuard, PrimalFeasibleButDualInfeasibleIsFeasibleNotOptimal) {
   // The other half of the rule. The point satisfies every constraint, so it is usable and
   // kFeasible is honest - but the reduced costs do not support a claim of optimality, and
   // kOptimal is a claim of proof.
+  // THIS TEST USED TO MANUFACTURE ITS POINT BY ASKING PDHG FOR A LOOSE TOLERANCE (0.1) and
+  // taking what the loop stopped on. That route is gone: the loop now stops only on a point
+  // that also meets the project's absolute standard, so a converged PDHG solve no longer
+  // hands back a primal-feasible point with unusable duals. The rule under test is the status
+  // guard's, not PDHG's, so the point is now built directly - solve exactly, then invalidate
+  // the reduced costs - which tests the same rule without depending on an engine stopping
+  // somewhere it no longer stops.
   const Model model = make_blend_lp();
   Options options;
   options.set_bool("log_to_console", false);
-  options.set_string("algorithm", "pdhg");
-  options.set_double("pdhg_tolerance", 0.1);
+  options.set_string("algorithm", "simplex");
 
-  const Solution solution = solve(model, options);
+  Solution solution = solve(model, options);
+  ASSERT_EQ(solution.status, SolveStatus::kOptimal);
+  ASSERT_LE(solution.primal_infeasibility, options.get_double("primal_feasibility_tolerance"));
+
+  solution.col_dual.assign(static_cast<std::size_t>(model.num_cols()), 1.0);
+  solution.recompute_quality(model);
 
   ASSERT_LE(solution.primal_infeasibility, options.get_double("primal_feasibility_tolerance"))
-      << "expected a primal-feasible point at this tolerance";
+      << "expected a primal-feasible point";
   ASSERT_GT(solution.dual_infeasibility, options.get_double("dual_feasibility_tolerance"))
-      << "expected the duals to be short of tolerance at this setting";
+      << "expected the duals to be short of tolerance after invalidating the multipliers";
+
+  Logger silent(nullptr);
+  reconcile_status_with_measurement(&solution, options, silent, /*check_dual=*/true);
 
   EXPECT_EQ(solution.status, SolveStatus::kFeasible);
   EXPECT_TRUE(solution.has_primal_values());
+  EXPECT_NE(solution.message.find("dual feasibility"), std::string::npos) << solution.message;
 }
 
 TEST(SolveStatusGuard, AConvergedPdhgSolveStillReportsOptimal) {
