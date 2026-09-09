@@ -13,9 +13,13 @@
 # else's machine, on conference wifi. Pass --fetch-medium to additionally download and run
 # the 50-instance medium tier, which is where the honest pass rate lives.
 #
-# IT SAYS WHAT IT SKIPPED. A step that cannot run prints why and the pipeline continues; the
-# summary at the end lists every skip. A reproduction script that silently produces fewer
-# results than the README claims is worse than one that fails loudly.
+# IT SAYS WHAT IT SKIPPED, AND DOES NOT CONFUSE THAT WITH FINDING FAILURES. A step that
+# cannot run prints why and the pipeline continues; the summary lists every skip. A
+# reproduction script that silently produces fewer results than the README claims is worse
+# than one that fails loudly - and one that claims it produced fewer than it did is the same
+# failure wearing the other hat. bench/runners/netlib.py exits `0 if passes == total else 1`,
+# so on any tier with known failures a completely successful run exits non-zero. That is a
+# result, not a skip, and the summary keeps them apart.
 #
 # Usage: scripts/reproduce.sh [--fetch-medium] [--debug] [--build-dir DIR]
 #
@@ -53,11 +57,37 @@ while [ $# -gt 0 ]; do
 done
 
 SKIPPED=()
+INCOMPLETE=()
 STEP=0
 
 rule() { STEP=$((STEP + 1)); printf '\n\033[1m[%d] %s\033[0m\n%s\n' "$STEP" "$1" \
          "$(printf '%.0s-' $(seq 1 78))"; }
 skip() { printf '\n  \033[33mSKIPPED: %s\033[0m\n  %s\n' "$1" "$2"; SKIPPED+=("$1"); }
+# The step RAN and produced results; it exited non-zero because what it measured has known
+# failures, and its own output above names them.
+ran_with_failures() {
+  printf '\n  \033[33m%s: ran, and reported failures\033[0m\n  %s\n' "$1" "$2"
+  INCOMPLETE+=("$1")
+}
+# Run a benchmark step. A non-zero exit that WROTE a results file is a result; a non-zero
+# exit that wrote nothing is a step that could not run. Which file gets written is the
+# runner's business - it names them by tier and commit - so this looks for any CSV newer
+# than a marker taken just before the run, rather than duplicating that naming here.
+run_benchmark() {
+  local label="$1"; shift
+  local marker; marker="$(mktemp)"
+  if "$@"; then rm -f "$marker"; return 0; fi
+  local produced
+  produced="$(find bench/results "${TMPDIR:-/tmp}" -maxdepth 1 -name '*.csv' -newer "$marker" \
+              -print -quit 2>/dev/null)"
+  rm -f "$marker"
+  if [ -n "$produced" ]; then
+    ran_with_failures "$label" "the runner exits non-zero when any instance fails; they are
+  named in its output above, and $produced was written"
+  else
+    skip "$label" "see the output above"
+  fi
+}
 
 START=$(date +%s)
 printf '\n\033[1mSANKHYA - reproducing every claim\033[0m\n'
@@ -146,8 +176,9 @@ if [ "$BUILD_TYPE" != "Release" ]; then
   NETLIB_OUT=(--out "${TMPDIR:-/tmp}/netlib-$BUILD_TYPE-scratch.csv")
   printf '(%s build: results go to a scratch file, not bench/results/)\n\n' "$BUILD_TYPE"
 fi
-"$PYTHON" bench/runners/netlib.py --binary "$BIN" --time-limit 60 \
-  ${NETLIB_OUT[@]+"${NETLIB_OUT[@]}"} || skip "Netlib benchmark" "see the output above"
+run_benchmark "Netlib benchmark" \
+  "$PYTHON" bench/runners/netlib.py --binary "$BIN" --time-limit 60 \
+  ${NETLIB_OUT[@]+"${NETLIB_OUT[@]}"}
 
 # ---- 3b. Robustness: where the solver stops working (#71) ----------------------------------
 rule "Robustness sweep: each numerical hazard pushed until the answer or its certificate moves"
@@ -157,8 +188,9 @@ ROBUST_OUT=()
 if [ "$BUILD_TYPE" != "Release" ]; then
   ROBUST_OUT=(--out "${TMPDIR:-/tmp}/robustness-$BUILD_TYPE-scratch.csv")
 fi
-"$PYTHON" bench/runners/robustness.py --binary "$BIN" \
-  ${ROBUST_OUT[@]+"${ROBUST_OUT[@]}"} || skip "robustness sweep" "see the output above"
+run_benchmark "robustness sweep" \
+  "$PYTHON" bench/runners/robustness.py --binary "$BIN" \
+  ${ROBUST_OUT[@]+"${ROBUST_OUT[@]}"}
 
 # ---- 3c. MIPLIB, when asked ----------------------------------------------------------------
 if [ "$RUN_MIPLIB" = 1 ]; then
@@ -169,8 +201,9 @@ if [ "$RUN_MIPLIB" = 1 ]; then
   if [ "$BUILD_TYPE" != "Release" ]; then
     MIPLIB_OUT=(--out "${TMPDIR:-/tmp}/miplib-$BUILD_TYPE-scratch.csv")
   fi
-  "$PYTHON" bench/runners/miplib.py --binary "$BIN" --time-limit 60 \
-    ${MIPLIB_OUT[@]+"${MIPLIB_OUT[@]}"} || skip "MIPLIB benchmark" "see the output above"
+  run_benchmark "MIPLIB benchmark" \
+    "$PYTHON" bench/runners/miplib.py --binary "$BIN" --time-limit 60 \
+    ${MIPLIB_OUT[@]+"${MIPLIB_OUT[@]}"}
 fi
 
 # ---- 4. Comparison against an established solver -------------------------------------------
@@ -198,7 +231,9 @@ printf 'robustness hazards, and the list of what we do NOT have.\n'
 # demonstrate a DIFFERENT one - or, as happened here, find a stale build/ that Smart App
 # Control had blocked and skip the whole walkthrough for a reason unrelated to the run.
 SANKHYA_BIN="$(cd "$(dirname "$BIN")" && pwd)/$(basename "$BIN")" PYTHON="$PYTHON" \
-  bash demo/run_sih_demo.sh || skip "demo" "see the output above"
+  bash demo/run_sih_demo.sh || ran_with_failures "demo" "the walkthrough runs the same
+  benchmark runners, which exit non-zero when any instance fails; its own sections above say
+  which, and section 6 lists what the project does not have"
 
 # ---- 6. The document the numbers become -----------------------------------------------------
 # THE POINT OF THE WHOLE SCRIPT. Everything above wrote a CSV; docs/BENCHMARKS.md is generated
@@ -228,8 +263,15 @@ fi
 ELAPSED=$(( $(date +%s) - START ))
 printf '\n%s\n' "$(printf '%.0s=' $(seq 1 78))"
 printf '\033[1mReproduction complete in %dm %ds\033[0m\n' $((ELAPSED / 60)) $((ELAPSED % 60))
+if [ ${#INCOMPLETE[@]} -gt 0 ]; then
+  printf '\n%d step(s) ran and reported failures:\n' "${#INCOMPLETE[@]}"
+  for s in "${INCOMPLETE[@]}"; do printf '  - %s\n' "$s"; done
+  printf 'Those are RESULTS, not gaps: these runners exit non-zero when any instance fails,\n'
+  printf 'and every failing instance is named in the output above. A tier with known\n'
+  printf 'failures - the medium tier is 48 of 50 - exits non-zero on a perfect run.\n'
+fi
 if [ ${#SKIPPED[@]} -eq 0 ]; then
-  printf 'Nothing was skipped. Every claim above was regenerated on this machine.\n'
+  printf '\nNothing was skipped. Every claim above was regenerated on this machine.\n'
 else
   printf '\n\033[33m%d step(s) skipped:\033[0m\n' "${#SKIPPED[@]}"
   for s in "${SKIPPED[@]}"; do printf '  - %s\n' "$s"; done
