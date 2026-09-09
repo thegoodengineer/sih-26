@@ -180,10 +180,53 @@ def find_c_compiler() -> list[str] | None:
     return None
 
 
+def can_execute(binary: Path) -> bool:
+    """Whether this machine will actually RUN that binary.
+
+    Compiling successfully is not the same as being allowed to run the result. Windows Smart
+    App Control refuses to execute a binary it has no reputation for, and a decoder compiled
+    into a fresh temp directory on every fetch never earns any: the failure is
+    `OSError [WinError 4551] An Application Control policy has blocked this file`, raised at
+    the first instance, so nothing can be fetched at all. Run it once with no arguments - emps
+    exits after complaining about empty input - and find out before 89 downloads depend on it.
+    """
+    try:
+        subprocess.run([str(binary)], input=b"", capture_output=True, timeout=60)
+        return True
+    except OSError:
+        return False
+
+
 def build_emps(work_dir: Path) -> tuple[Path, str]:
-    """Download and compile Netlib's emps decoder. Returns (binary path, source sha256)."""
+    """Get a working Netlib emps decoder. Returns (binary path, source sha256).
+
+    Compiling is the normal path, but a compiled binary that the machine will not execute is
+    no use, so a decoder that already runs is preferred when one is available:
+
+      1. $SANKHYA_EMPS, if set and executable - the escape hatch for a locked-down machine.
+      2. The cached copy this function leaves in data/netlib/ after a successful build, which
+         has had a chance to earn the reputation a temp-directory binary never gets.
+      3. A fresh compile, which is then cached for next time.
+    """
     source_bytes = download(f"{NETLIB_BASE}/emps.c")
     digest = sha256(source_bytes)
+
+    supplied = os.environ.get("SANKHYA_EMPS")
+    if supplied:
+        candidate = Path(supplied)
+        if not candidate.exists():
+            raise SystemExit(f"SANKHYA_EMPS points at {candidate}, which does not exist")
+        if not can_execute(candidate):
+            raise SystemExit(f"SANKHYA_EMPS points at {candidate}, which this machine "
+                             f"refuses to execute")
+        print(f"  using the decoder named by SANKHYA_EMPS: {candidate}")
+        return candidate, digest
+
+    cached = DATA_DIR / ("emps.exe" if sys.platform == "win32" else "emps")
+    if cached.exists() and can_execute(cached):
+        print(f"  reusing the decoder at {cached}")
+        return cached, digest
+
     source = work_dir / "emps.c"
     source.write_bytes(source_bytes)
 
@@ -202,6 +245,26 @@ def build_emps(work_dir: Path) -> tuple[Path, str]:
     )
     if result.returncode != 0:
         raise SystemExit(f"failed to compile emps.c:\n{result.stderr}")
+
+    if not can_execute(binary):
+        raise SystemExit(
+            "emps.c compiled, but this machine refuses to run the result - on Windows that is "
+            "Smart App Control, which blocks binaries it has no reputation for "
+            "(OSError WinError 4551).\n"
+            "Point the fetcher at a decoder it will run instead:\n"
+            "    SANKHYA_EMPS=/path/to/emps python bench/runners/fetch_data.py --set full\n"
+            "A copy built earlier on this machine often works, because it has had time to "
+            "earn that reputation; data/mittelmann/emps.exe is one if a Mittelmann fetch has "
+            "run. Turning the policy off for the repository directory also works and is the "
+            "user's call, not this script's.")
+
+    # Cache it, so the next fetch reuses a binary the machine already knows rather than
+    # compiling a stranger into a temp directory again.
+    try:
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(binary, cached)
+    except OSError:
+        pass
     return binary, digest
 
 

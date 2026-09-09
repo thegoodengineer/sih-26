@@ -35,16 +35,17 @@ arithmetic starts, and a negative pivot is returned as the certificate. Reportin
 optimum as a global one is the single most damaging thing this dispatcher could do, so it
 does not — see the Evidence rules in [`CLAUDE.md`](CLAUDE.md).
 
-Benchmark results against Netlib, headline first: **79 of 89** on the full set — matched to
-the published optimum to a relative 1e-6 *and* passed independent verification — measured
-on `main` at `adcee1b` (`bench/results/netlib-full-adcee1b.csv`). The narrower tiers read
-higher (**48 of 50** on the medium tier, **9 of 9** on the small set the demo runs) because
-both are defined by a row cap, which makes them the easier half by construction; the full
-set is the number Phase 6's ">= 95% of Netlib" criterion is measured against, so it is the
-one quoted here. See [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md), generated from the CSVs in
-`bench/results/` so it cannot drift.
+Benchmark results against Netlib, headline first: **78 of 89** on the full set — matched
+to the published optimum to a relative 1e-6 *and* passed independent verification —
+measured on `main` at `53cbe16` (`bench/results/netlib-full-53cbe16.csv`). The narrower
+tiers read higher (**48 of 50** on the medium tier, **9 of 9** on the small set the demo
+runs) because both are defined by a row cap, which makes them the easier half by
+construction; the full set is the number Phase 6's ">= 95% of Netlib" criterion is
+measured against, so it is the one quoted here. See
+[`docs/BENCHMARKS.md`](docs/BENCHMARKS.md), generated from the CSVs in `bench/results/` so
+it cannot drift.
 
-The 10 failures are worth naming, and most of them are not wrong answers. Every one that
+The 11 non-passes are worth naming, and most of them are not wrong answers. Every one that
 produces an answer was cross-checked against **HiGHS**, a mature third-party solver run as a
 separate process, by `bench/runners/cross_check_highs.py`
 (`bench/results/cross-check-highs-adcee1b.csv`):
@@ -52,32 +53,27 @@ separate process, by `bench/runners/cross_check_highs.py`
 | what it is | count | instances |
 |---|---|---|
 | our answer verifies as optimal and agrees with HiGHS; Netlib's published table is the outlier (`e226` by its objective constant, the rest by up to 1.3e-03) | **7** | `80bau3b`, `e226`, `ganges`, `greenbea`, `greenbeb`, `nesm`, `scrs8` |
-| ran out of time at 120 s; the cross-check compares its last iterate anyway and, as an unfinished simplex run must, it differs from HiGHS (1.4e-02) | **1** | `dfl001` |
+| ran out of time at 120 s | **2** | `dfl001`, `pilot87` |
 | the answer agrees with HiGHS to 3.0e-07 and verifies; our own dual-feasibility check downgrades the status to `feasible`, and Netlib's table is off by 1.5e-04 | **1** | `pilot` |
 | the solver declined to answer: its phase-1 ratio test found no blocking variable and it reported a numerical error rather than a claim it could not stand behind | **1** | `maros-r7` |
 
 So: **on every Netlib instance where this solver produces a final answer, that answer
-agrees with HiGHS** - nine of the twelve rows in that CSV agree to 3.0e-07 or better; the
-three that differ are dfl001's and pilot87's unfinished iterates (the cross-check was made
-on the slow machine state described below, where pilot87 also ran out its limit) and
-maros-r7, which has no answer. What remains is speed on one instance, our own status
-reporting on one, and one instance without an answer.
+agrees with HiGHS** - nine of the twelve rows in that CSV agree to 3.0e-07 or better. The
+three that differ are `dfl001` and `pilot87`, whose rows there are unfinished iterates
+rather than answers, and `maros-r7`, which has none. What remains is speed on two
+instances, our own status reporting on one, and one instance without an answer.
 
-The machine's speed state is part of the evidence, so it is stated. The same solver source
-was run three times on the same laptop: at the tip of #169 on a cool machine
-(`bench/results/netlib-full-59ac6e3.csv`, 79 of 89), on `main` on battery (77 of 89,
-`bench/results/machine-state/netlib-full-adcee1b-battery.csv`, kept out of the results
-directory the documents read from), and on `main` on AC after six hours of continuous
-benchmarking (the committed CSV, 79 of 89). On the 87 instances whose iteration counts are
-identical between the two committed runs (all but dfl001 and fit2p), the committed run's
-solver time is 1.52x the cool machine's (163.7 s against 107.9 s), with Windows'
-performance counters reporting the CPU at 71-97% of its maximum frequency while it ran (an
-observation from the session, not a CSV column); the battery run was slower still. Answers
-and the verifier's verdicts do not move between the runs, and iteration counts move only
-where a time limit cut a run short (dfl001) or chose the route (fit2p, #172). What moves
-is which side of the 120 s limit `fit2p` (102.7 s here, 50 s cool, over the limit on
-battery) and `pilot87` (56.0 s here) land on, so the pass count on this laptop is 77 or 79
-depending on its temperature and power source, and the table above is the AC run.
+The machine's speed state is part of the evidence, so it is stated, and on this laptop it
+decides exactly one instance. `pilot87` needs **26,226 iterations** to reach its optimum -
+run it under `--option iteration_limit=27000` and it gets there every time, at objective
+301.710691459, with one basis repair - and whether those iterations fit inside the 120 s
+limit depends on how fast the machine is that minute. It fitted at `adcee1b` (55.9 s) and
+did not at `53cbe16` (the run above), which is the whole of the difference between 79 of
+89 and 78 of 89 on this hardware. Nothing else moves: 86 of the 89 rows are identical in
+status, iteration count and objective between the two runs, and the other two are
+`dfl001`, truncated wherever the clock leaves it, and `fit2p`, which takes the scaled or
+the unscaled route depending on the same clock (#172). The table above is the slower, more
+conservative run.
 
 This mattered because our own verifier could not settle it — it re-derives the answer from
 the same file we read, so agreeing with it shows only that our two readers agree, and both
@@ -95,14 +91,14 @@ issue #174), the first reappearance in the evidence and on the Mittelmann instan
 to Netlib's size. Since then the dual simplex became the automatic engine (#165),
 reliability branching landed (#166), presolve's postsolve runs its dual passes to a fixed
 point (#162), and the FTRAN went hyper-sparse (#169): between them the full set went from
-71 to 79 verified passes, and `degen3`, which took 123.6 s, takes 1.4 s
-(`bench/results/netlib-full-adcee1b.csv`).
+71 to 78 verified passes, and `degen3`, which took 123.6 s, takes 0.9 s
+(`bench/results/netlib-full-53cbe16.csv`).
 
 That is a better class of problem to have, and a different roadmap: speed on the three
 largest instances rather than robustness. Tracked in #34.
 
 MIPLIB 2017 is benchmarked too: **13 of 30** easy instances reach the published optimum,
-**6 of 30** also prove it (`bench/results/miplib-adcee1b.csv`, 60 s, the same AC run) —
+**6 of 30** also prove it (`bench/results/miplib-53cbe16.csv`, 60 s) —
 branch and bound now has reliability branching and warm-started node LPs, but no cutting
 planes (#23), so it finds good incumbents far more often than it closes the bound. For
 scale beyond what Netlib tests, `bench/runners/generate_large_lp.py` builds sparse LPs of
@@ -225,18 +221,21 @@ tracks every PS26119 requirement against what exists on `main`; section 6 of
 | not implemented | note |
 |---|---|
 | **GPU acceleration** | The first-order method it needs exists and runs on CPU - restarted PDHG, `--option algorithm=pdhg`, 8 of 9 committed instances to `optimal` at 1e-8 (`docs/BENCHMARKS.md` section 1e). The CUDA backend is unwritten (#16-#19); `--gpu` warns and falls back. No speed-up is claimed. |
-| **Scale** | The largest Netlib instance solved is `fit2d`, 25x10500 with 129018 nonzeros, in 0.4 s; the slowest solved is `fit2p`, 3000x13525, at 102.7 s; `dfl001` (6071x12230) hits the 120 s limit (`bench/results/netlib-full-adcee1b.csv`). On Mittelmann's eight smallest LPs, 6,330 to 376,500 rows, the result is 0 of 8 inside 300 s (`docs/BENCHMARKS.md` section 1d). A generated 5000x5000 instance is also demonstrated against an optimum known by construction. Nothing here supports the *"millions of variables"* end of the problem statement; the Mittelmann table is where that claim would have to start. |
+| **Scale** | The largest Netlib instance solved is `fit2d`, 25x10500 with 129018 nonzeros, in 0.3 s; the slowest solved is `fit2p`, 3000x13525, at 58.5 s; `dfl001` (6071x12230) and `pilot87` (2030x4883) hit the 120 s limit (`bench/results/netlib-full-53cbe16.csv`). On Mittelmann's eight smallest LPs, 6,330 to 376,500 rows, the result is 0 of 8 inside 300 s (`docs/BENCHMARKS.md` section 1d). A generated 5000x5000 instance is also demonstrated against an optimum known by construction. Nothing here supports the *"millions of variables"* end of the problem statement; the Mittelmann table is where that claim would have to start. |
 | **Interior point as a default** | An interior-point method exists (#56, `--option algorithm=ipm`, Mehrotra predictor-corrector over a from-scratch sparse LDL^T) and is opt-in: it produces no basis, so it cannot warm-start branch and bound and cannot certify infeasibility, and on the full Netlib set it verifies fewer instances than the dual simplex (`docs/PS26119_COVERAGE.md`). The default continuous engine is the simplex. |
 | **Cutting planes** | Branch and bound has reliability branching (pseudocosts with strong branching, #69) and warm-started dual node LPs (#65), but no Gomory, MIR or cover cuts (#23). This is why MIPLIB proves few optima. |
 | **Non-convex QP** | Refused deliberately, with an LDL^T certificate. A local optimum reported as a global one is not something this solver will do. |
 | **MIQP bound quality** | MIQP is implemented, but its node bound comes from a first-order method and is only accurate to the tolerance it converged to, so pruning is deliberately kept on the conservative side and costs nodes. With no cuts either, expect incumbents more often than proofs. |
 | **Parallelism** | Single-threaded by default. `--option threads=N` runs the column loops of an iteration under OpenMP, deterministically - results are bit-identical at 1 and 8 threads - and at Netlib scale it is measured to buy nothing, because an iteration is too short to amortize the fork (#57). It is a correctness-preserving switch, not a speed claim. |
 
-On speed against HiGHS: on the committed instances the two are **indistinguishable**, not
-faster. They solve in single-digit milliseconds and the timing envelopes overlap, so
-`bench/runners/compare.py` marks the rows it cannot separate and says so. The reproducible
-comparison is iteration count, where the gap narrowed by a third when devex pricing became
-the default (#66); HiGHS's devex still takes fewer.
+On speed against HiGHS: on the medium tier the objectives agree on all 50 instances, and
+the speed comparison is **indistinguishable rather than a result**. These models solve in
+single-digit milliseconds, 20 of the 50 timing envelopes overlap outright, and the median
+per-instance ratio came out 1.38x, 2.11x and 2.68x on three runs of the same binary on
+this machine within one day - while on the cleanest of those runs our total solve time was
+0.68x the earlier one's. A number that unstable is not a speed claim in either direction.
+The reproducible comparison is iteration count, where the gap narrowed by a third when
+devex pricing became the default (#66); HiGHS's devex still takes fewer.
 
 ## Licence
 
