@@ -301,10 +301,27 @@ const std::vector<OptionSpec>& Options::registry() {
     s.push_back({"pdhg_tolerance",
                  OptionType::Double,
                  tol::kPdhgLoose,
-                 "PDHG relative KKT termination tolerance.",
+                 "PDHG relative KKT termination tolerance. By default the loop also runs on "
+                 "until the point meets the project's ABSOLUTE tolerances, so a request looser "
+                 "than those changes nothing (#180); see pdhg_stop_at_request.",
                  1e-14,
                  1e-1,
                  {}});
+    s.push_back(
+        {"pdhg_stop_at_request",
+         OptionType::Bool,
+         false,
+         "Stop PDHG once pdhg_tolerance is met and the point is primal-feasible to the "
+         "project's absolute tolerance, without waiting for absolute dual feasibility, the "
+         "verified gap or complementarity. Absolute primal feasibility is kept because "
+         "`feasible` promises a feasible point, so on a model with large row bounds a loose "
+         "request may not stop the loop much earlier. The point is reported as `feasible` "
+         "unless it meets the full standard anyway; the switch cannot manufacture an "
+         "`optimal`. Opt-in, because the default has to be the answer that can be verified "
+         "(#180).",
+         0.0,
+         0.0,
+         {}});
 
     // ---- Reporting ---------------------------------------------------------------------
     s.push_back({"log_level",

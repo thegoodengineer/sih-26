@@ -567,7 +567,15 @@ def pdhg_section(path: Path | None) -> str:
         "than that standard no longer stops the solve any earlier - ask for 1e-4 and you get "
         "the 1e-8 point, at the 1e-8 cost. That is the honest reading of the identical "
         "columns below, and it is a real trade: the old behaviour honoured a loose request "
-        "and returned a point it then had to label `feasible`. Tracked as #180.",
+        "and returned a point it then had to label `feasible`. #180 made that the opt-in: "
+        "`--option pdhg_stop_at_request=true` waives the dual, gap and complementarity halves "
+        "of the standard - absolute primal feasibility is kept, so `feasible` still means a "
+        "feasible point - and reports the point as `feasible` unless it meets the full "
+        "standard anyway. Measured on these instances at 1e-4 it costs 0.85x the iterations "
+        "(`bench/results/pdhg-stop-at-request-f18d4b0.csv`) and turns `share2b` from an "
+        "iteration limit into a usable point at 807,760. The two tolerance columns stay "
+        "identical on `adlittle`, `israel` and `sc50b` even with the switch on, because on "
+        "those the kept primal clause is what binds.",
         "",
         "| instance | simplex | " + " | ".join(
             f"PDHG {t}: objective / iterations" for t in tolerances) + " |",

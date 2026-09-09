@@ -12,7 +12,9 @@
 // where a dense factorization cannot go, and on hardware this suite does not run on.
 
 #include <cmath>
+#include <filesystem>
 #include <fstream>
+#include <iostream>
 #include <random>
 #include <string>
 #include <vector>
@@ -20,6 +22,7 @@
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
 
+#include "sankhya/io.hpp"
 #include "sankhya/model.hpp"
 #include "sankhya/options.hpp"
 #include "sankhya/tolerances.hpp"
@@ -33,6 +36,15 @@
 
 namespace sankhya {
 namespace {
+
+/// The repository root, from this file's own location, so a test that reads a committed
+/// instance finds it whatever ctest's working directory is. gtest_discover_tests runs the
+/// binary from build/tests, where a path like data/netlib/adlittle.mps does not exist - and a
+/// test that answers that by skipping has been passing in CI without ever running.
+std::string repository_path(const char* relative) {
+  return (std::filesystem::path(__FILE__).parent_path().parent_path().parent_path() / relative)
+      .string();
+}
 
 Options pdhg_options(double tolerance) {
   Options options;
@@ -320,6 +332,50 @@ Model make_blend_lp() {
   model.matrix.finalize();
   EXPECT_EQ(model.validate(), "");
   return model;
+}
+
+TEST(Pdhg, StopAtRequestGivesTheCheapAnswerAndNeverCallsItOptimal) {
+  // #180: the default runs on to the project's absolute standard whatever the request, so a
+  // caller who wants the cheap approximate answer a first-order method exists to give has to
+  // say so. No hand-built model in this file separates the two measures - on every one the
+  // relative request and the absolute standard flip on the same 40-iteration check - so this
+  // uses a committed Netlib instance, the way test_ipm.cpp does: adlittle at a 1e-4 request
+  // meets it at 132,520 iterations and the standard at 192,080.
+  //
+  // Three things are pinned. The switch stops the loop earlier than the default on the same
+  // model. The point it stops on is reported `feasible`, never `optimal`, unless it happens
+  // to meet the standard anyway - the switch cannot manufacture a claim. And the honest run
+  // on the same instance does reach `optimal`, so the two are measuring the same thing.
+  Model model;
+  const std::string path = repository_path("data/netlib/adlittle.mps");
+  const io::ReadResult read = io::read_model(path, &model);
+  ASSERT_TRUE(read.ok) << path << ": " << read.error
+                       << " (the instance is committed; a test that skipped here would pass "
+                          "without running)";
+  // adlittle's honest run takes 192,080 iterations; the helper's 200,000 limit is 4% away,
+  // which is a margin a future change could cross without any error of its own.
+  Options honest_options = pdhg_options(1e-4);
+  honest_options.set_int("iteration_limit", 1000000);
+  const Solution honest = solve(model, honest_options);
+  Options cheap_options = pdhg_options(1e-4);
+  cheap_options.set_int("iteration_limit", 1000000);
+  cheap_options.set_bool("pdhg_stop_at_request", true);
+  const Solution cheap = solve(model, cheap_options);
+
+  ASSERT_EQ(honest.status, SolveStatus::kOptimal) << honest.message;
+  // On this instance the cheap point does NOT meet the full standard, so the switch must
+  // report it `feasible` - pinned exactly, not tolerated as either.
+  ASSERT_EQ(cheap.status, SolveStatus::kFeasible) << cheap.message;
+  EXPECT_LT(cheap.iterations, honest.iterations)
+      << "stopping on the request should cost fewer iterations than running to the standard";
+  // The point handed back is a real answer: primal-feasible to the absolute tolerance (the
+  // clause the switch keeps), and at the objective the honest run reached to within the
+  // requested relative accuracy.
+  EXPECT_LE(cheap.primal_infeasibility, tol::kPrimalFeasibility) << cheap.message;
+  EXPECT_NEAR(cheap.objective, honest.objective,
+              1e-3 * std::max(1.0, std::fabs(honest.objective)))
+      << cheap.message;
+  EXPECT_NE(cheap.message.find("pdhg_stop_at_request"), std::string::npos) << cheap.message;
 }
 
 TEST(SolveStatusGuard, AnInfeasiblePointIsNeverReportedAsOptimal) {

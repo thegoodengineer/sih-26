@@ -36,7 +36,7 @@ RESULTS_DIR = REPO_ROOT / "bench" / "results"
 CSV_COLUMNS = [
     "instance", "algorithm", "tolerance", "restarts_enabled", "status",
     "objective", "published_objective", "relative_error", "iterations", "seconds",
-    "reached_tolerance", "git_commit", "machine", "timestamp_utc",
+    "reached_tolerance", "git_commit", "machine", "timestamp_utc", "solver_options",
 ]
 
 
@@ -65,7 +65,7 @@ def default_binary() -> Path:
 
 
 def run(binary: Path, mps: Path, algorithm: str, tolerance: float | None,
-        restarts: bool, time_limit: float) -> dict:
+        restarts: bool, time_limit: float, extra_options: list[str] | None = None) -> dict:
     with tempfile.TemporaryDirectory() as tmp:
         stats = Path(tmp) / "s.json"
         command = [str(binary), "solve", str(mps), "--stats", str(stats),
@@ -76,6 +76,8 @@ def run(binary: Path, mps: Path, algorithm: str, tolerance: float | None,
             command += ["--option", f"pdhg_tolerance={tolerance:g}"]
         if not restarts:
             command += ["--option", "pdhg_restart=false"]
+        for option in extra_options or []:
+            command += ["--option", option]
         started = time.perf_counter()
         subprocess.run(command, capture_output=True, text=True)
         seconds = time.perf_counter() - started
@@ -101,6 +103,11 @@ def main() -> int:
                              "data/netlib/reference.json is run, which is the whole tier the "
                              "last fetch left there - 89 instances at four settings each, "
                              "hours of solving for a report whose point is the committed nine.")
+    parser.add_argument("--solver-option", action="append", default=[], metavar="KEY=VALUE",
+                        help="pass --option KEY=VALUE to every PDHG solve and record it in the "
+                             "CSV's solver_options column. A run made with one is a measurement "
+                             "OF that option, not the engine's evidence, and latest_result.py "
+                             "skips it for that reason.")
     parser.add_argument("--out", type=Path, default=None,
                         help="write the CSV here instead of bench/results/pdhg-<commit>.csv")
     args = parser.parse_args()
@@ -128,8 +135,13 @@ def main() -> int:
             "published_objective": repr(published),
             "relative_error": "" if error is None else repr(error),
             "iterations": result["iterations"], "seconds": round(result["seconds"], 6),
-            "reached_tolerance": int(result["status"] == "optimal"),
+            # `optimal` and `feasible` both mean the loop stopped because the requested
+            # relative tolerance was met; `feasible` is the point that met it without also
+            # meeting the project's absolute standard (see #179, #180). A limit means it
+            # was not met.
+            "reached_tolerance": int(result["status"] in ("optimal", "feasible")),
             "git_commit": commit, "machine": machine, "timestamp_utc": timestamp,
+            "solver_options": " ".join(args.solver_option),
         })
         return error
 
@@ -150,12 +162,12 @@ def main() -> int:
         simplex = run(binary, mps, "simplex", None, True, args.time_limit)
         simplex_error = record(name, "simplex", None, None, simplex, published)
 
-        loose = run(binary, mps, "pdhg", 1e-4, True, args.time_limit)
+        loose = run(binary, mps, "pdhg", 1e-4, True, args.time_limit, args.solver_option)
         loose_error = record(name, "pdhg", 1e-4, True, loose, published)
 
-        tight = run(binary, mps, "pdhg", 1e-8, True, args.time_limit)
+        tight = run(binary, mps, "pdhg", 1e-8, True, args.time_limit, args.solver_option)
         tight_error = record(name, "pdhg", 1e-8, True, tight, published)
-        if tight["status"] != "optimal":
+        if tight["status"] not in ("optimal", "feasible"):
             missed_tight.append(name)
 
         def fmt(value, width, digits):
@@ -166,7 +178,7 @@ def main() -> int:
               f"{str(loose['iterations']):>8}"
               f"{fmt(tight['objective'], 21, 12)}{fmt(tight_error, 10, 1)}"
               f"{str(tight['iterations']):>8}"
-              f"  {'yes' if tight['status'] == 'optimal' else 'NO'}")
+              f"  {'yes' if tight['status'] in ('optimal', 'feasible') else 'NO'}")
 
     print("-" * 124)
     if missed_tight:
@@ -184,8 +196,8 @@ def main() -> int:
         if not mps.exists():
             continue
         published = reference[name]["published_optimal"]
-        on = run(binary, mps, "pdhg", 1e-8, True, args.time_limit)
-        off = run(binary, mps, "pdhg", 1e-8, False, args.time_limit)
+        on = run(binary, mps, "pdhg", 1e-8, True, args.time_limit, args.solver_option)
+        off = run(binary, mps, "pdhg", 1e-8, False, args.time_limit, args.solver_option)
         record(name, "pdhg", 1e-8, True, on, published)
         record(name, "pdhg", 1e-8, False, off, published)
         on_iters = on["iterations"] if isinstance(on["iterations"], int) else 0
