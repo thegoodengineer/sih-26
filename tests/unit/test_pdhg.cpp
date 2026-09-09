@@ -12,8 +12,8 @@
 // where a dense factorization cannot go, and on hardware this suite does not run on.
 
 #include <cmath>
-#include <iostream>
 #include <fstream>
+#include <iostream>
 #include <random>
 #include <string>
 #include <vector>
