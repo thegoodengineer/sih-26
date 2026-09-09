@@ -98,7 +98,7 @@ That is a better class of problem to have, and a different roadmap: speed on the
 largest instances rather than robustness. Tracked in #34.
 
 MIPLIB 2017 is benchmarked too: **13 of 30** easy instances reach the published optimum,
-**6 of 30** also prove it (`bench/results/miplib-adcee1b.csv`, 60 s) —
+**6 of 30** also prove it (`bench/results/miplib-53cbe16.csv`, 60 s) —
 branch and bound now has reliability branching and warm-started node LPs, but no cutting
 planes (#23), so it finds good incumbents far more often than it closes the bound. For
 scale beyond what Netlib tests, `bench/runners/generate_large_lp.py` builds sparse LPs of
@@ -228,11 +228,14 @@ tracks every PS26119 requirement against what exists on `main`; section 6 of
 | **MIQP bound quality** | MIQP is implemented, but its node bound comes from a first-order method and is only accurate to the tolerance it converged to, so pruning is deliberately kept on the conservative side and costs nodes. With no cuts either, expect incumbents more often than proofs. |
 | **Parallelism** | Single-threaded by default. `--option threads=N` runs the column loops of an iteration under OpenMP, deterministically - results are bit-identical at 1 and 8 threads - and at Netlib scale it is measured to buy nothing, because an iteration is too short to amortize the fork (#57). It is a correctness-preserving switch, not a speed claim. |
 
-On speed against HiGHS: on the committed instances the two are **indistinguishable**, not
-faster. They solve in single-digit milliseconds and the timing envelopes overlap, so
-`bench/runners/compare.py` marks the rows it cannot separate and says so. The reproducible
-comparison is iteration count, where the gap narrowed by a third when devex pricing became
-the default (#66); HiGHS's devex still takes fewer.
+On speed against HiGHS: on the medium tier the objectives agree on all 50 instances, and
+the speed comparison is **indistinguishable rather than a result**. These models solve in
+single-digit milliseconds, 20 of the 50 timing envelopes overlap outright, and the median
+per-instance ratio came out 1.38x, 2.11x and 2.68x on three runs of the same binary on
+this machine within one day - while on the cleanest of those runs our total solve time was
+0.68x the earlier one's. A number that unstable is not a speed claim in either direction.
+The reproducible comparison is iteration count, where the gap narrowed by a third when
+devex pricing became the default (#66); HiGHS's devex still takes fewer.
 
 ## Licence
 
