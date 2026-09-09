@@ -166,17 +166,71 @@ def parse_summary_table(readme: str) -> dict[str, dict]:
     return entries
 
 
-def find_c_compiler() -> list[str] | None:
-    """A C compiler for emps.c. Prefers a modern one over whatever PATH offers first."""
+def compiler_env(work_dir: Path) -> dict:
+    """The environment a C compiler is invoked with, with a temp directory it can write to.
+
+    GCC writes its intermediate files to $TMPDIR, then $TMP, then $TEMP, and falls back to a
+    system directory when none of them names somewhere writable. Launched from this script it
+    landed on `C:\WINDOWS\` and every compile - by every compiler on the machine, not just
+    the preferred one - failed with
+
+        Cannot create temporary file in C:\WINDOWS\: Permission denied
+
+    while the identical command run from a shell worked, because that shell had the variables
+    set. The compiler is not the problem and neither is the machine; the environment handed to
+    it is. So it is handed one that names the directory this function already owns.
+    """
+    env = dict(os.environ)
+    for name in ("TMPDIR", "TMP", "TEMP"):
+        env[name] = str(work_dir)
+    return env
+
+
+def find_c_compiler(work_dir: Path | None = None) -> list[str] | None:
+    """A C compiler that can actually compile something. Preference order, then a probe.
+
+    EXISTING IS NOT WORKING, and the difference is not theoretical. This list used to be
+    checked with Path.exists() alone, so it returned the first entry that was installed. On a
+    Windows box here that is Strawberry Perl's gcc, which exists, is on the preference list
+    ahead of everything else, and fails every single compile with
+
+        Cannot create temporary file in C:\WINDOWS\: Permission denied
+
+    while MSYS2's gcc sits one line below it on PATH and works. The fetcher therefore refused
+    to fetch any Netlib data at all on a machine perfectly able to build the decoder, and the
+    error named a temp directory rather than the choice that led there.
+
+    So each candidate compiles a two-line program before being trusted. That costs a fraction
+    of a second once per fetch and turns an obscure failure into the right compiler.
+    """
     candidates = [
         "C:/Strawberry/c/bin/gcc.exe",
         shutil.which("cc"),
         shutil.which("gcc"),
         shutil.which("clang"),
     ]
-    for candidate in candidates:
-        if candidate and Path(candidate).exists():
-            return [candidate]
+    tried: list[str] = []
+    with tempfile.TemporaryDirectory() as probe_dir:
+        probe = Path(work_dir or probe_dir) / "sankhya_cc_probe.c"
+        probe.write_text("int main(void) { return 0; }\n", encoding="utf-8")
+        for candidate in candidates:
+            if not candidate or not Path(candidate).exists():
+                continue
+            if candidate in tried:
+                continue
+            tried.append(candidate)
+            out = probe.with_suffix(".exe" if sys.platform == "win32" else ".out")
+            try:
+                result = subprocess.run([candidate, "-w", "-O0", str(probe), "-o", str(out)],
+                                        capture_output=True, text=True, timeout=120,
+                                        env=compiler_env(probe.parent))
+            except (OSError, subprocess.SubprocessError):
+                continue
+            if result.returncode == 0:
+                return [candidate]
+            detail = (result.stderr or result.stdout or "").strip().splitlines()
+            print(f"  {candidate} cannot compile a two-line program: "
+                  f"{detail[-1] if detail else 'no output'}")
     return None
 
 
@@ -230,10 +284,13 @@ def build_emps(work_dir: Path) -> tuple[Path, str]:
     source = work_dir / "emps.c"
     source.write_bytes(source_bytes)
 
-    compiler = find_c_compiler()
+    compiler = find_c_compiler(work_dir)
     if compiler is None:
         raise SystemExit(
-            "no C compiler found to build Netlib's emps decoder; install gcc or clang"
+            "no C compiler on this machine could build Netlib's emps decoder - each candidate "
+            "was tried on a two-line program and none of them produced a binary. Install gcc "
+            "or clang, or point the fetcher at a decoder you already have:\n"
+            "    SANKHYA_EMPS=/path/to/emps python bench/runners/fetch_data.py --set full"
         )
 
     binary = work_dir / ("emps.exe" if sys.platform == "win32" else "emps")
@@ -242,6 +299,7 @@ def build_emps(work_dir: Path) -> tuple[Path, str]:
         compiler + ["-w", "-std=gnu89", "-O1", str(source), "-o", str(binary)],
         capture_output=True,
         text=True,
+        env=compiler_env(work_dir),
     )
     if result.returncode != 0:
         raise SystemExit(f"failed to compile emps.c:\n{result.stderr}")
