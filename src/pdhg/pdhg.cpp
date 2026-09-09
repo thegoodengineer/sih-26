@@ -574,9 +574,14 @@ Solution solve_pdhg(const Model& model, const Options& options, Logger& logger) 
     // point at the 1e-8 cost. That is the right default - the default has to be the answer
     // that can be verified - but it is not what a caller wants who reached for a first-order
     // method precisely to get a cheap approximate answer on a huge model.
-    // `pdhg_stop_at_request` is that caller's switch: the loop stops on the request alone, and
-    // the report below still refuses to call the result `optimal` unless it meets the standard,
-    // so nothing about the switch can turn a weak point into a claim.
+    // `pdhg_stop_at_request` is that caller's switch: the loop stops on the request PLUS
+    // absolute primal feasibility - meets_request() carries that clause so that `feasible`
+    // keeps meaning a feasible point - and waives the dual, gap and complementarity halves of
+    // the standard. The report below still refuses to call the result `optimal` unless it
+    // meets the full standard, so nothing about the switch can turn a weak point into a
+    // claim. On a model with large row bounds the primal clause binds long after the relative
+    // request is met (adlittle: 132,520 iterations at 1e-4 and at 1e-8 alike), which is the
+    // price of that promise.
     const bool stop_here =
         better.meets_request(tolerance) && (stop_at_request || better.meets_project_standard());
     if (stop_here) {
@@ -682,10 +687,13 @@ Solution solve_pdhg(const Model& model, const Options& options, Logger& logger) 
         "met the requested relative tolerance {:.1e} after {} iterations, but NOT the "
         "absolute standard this project verifies against (primal {:.3e} vs {:.1e}, dual "
         "{:.3e} vs {:.1e}, relative gap {:.3e} vs {:.1e}). Reported as feasible, not "
-        "optimal. Tighten --option pdhg_tolerance to close it",
+        "optimal. {}",
         tolerance, iteration, final_residuals.absolute_primal, tol::kPrimalFeasibility,
         final_residuals.absolute_dual, tol::kDualFeasibility, final_residuals.gap_as_verified,
-        tol::kDualityGap);
+        tol::kDualityGap,
+        stop_at_request ? "pdhg_stop_at_request is on, so this is the cheap answer that was "
+                          "asked for; turn it off to run on to the standard"
+                        : "Tighten --option pdhg_tolerance to close it");
   } else {
     // PDHG stopping short is the normal case, not an exception. Report the residuals it
     // actually reached rather than implying the point is optimal.

@@ -2,6 +2,7 @@
 // SANKHYA - the interior-point method (#56) against the simplex and the exact oracle.
 
 #include <cmath>
+#include <filesystem>
 #include <iostream>
 #include <random>
 #include <string>
@@ -172,13 +173,15 @@ TEST(InteriorPoint, SolvesTheCommittedNetlibInstancesToTheSimplexAnswer) {
                          "blend", "share2b",  "stocfor1", "israel"};
   for (const char* name : names) {
     Model model;
-    const std::string path = std::string("data/netlib/") + name + ".mps";
+    // From this file's own location, not the working directory: gtest_discover_tests runs
+    // the binary from build/tests, where the relative path did not exist, and this test had
+    // been skipping every instance in CI while reporting a pass.
+    const std::string path =
+        (std::filesystem::path(__FILE__).parent_path().parent_path().parent_path() /
+         "data/netlib" / (std::string(name) + ".mps"))
+            .string();
     const io::ReadResult read = io::read_model(path, &model);
-    if (!read.ok) {
-      std::cout << "ipm netlib: " << path << " not readable here (" << read.error
-                << "); skipped\n";
-      continue;
-    }
+    ASSERT_TRUE(read.ok) << path << ": " << read.error;
     const Solution ipm = solve(model, with_algorithm("ipm"));
     const Solution simplex = solve(model, with_algorithm("dual-simplex"));
     ASSERT_EQ(simplex.status, SolveStatus::kOptimal) << name << ": " << simplex.message;

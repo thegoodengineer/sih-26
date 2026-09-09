@@ -311,11 +311,14 @@ const std::vector<OptionSpec>& Options::registry() {
         {"pdhg_stop_at_request",
          OptionType::Bool,
          false,
-         "Stop PDHG as soon as pdhg_tolerance is met, even where the point misses the "
-         "project's absolute feasibility tolerances. The answer is then reported as "
-         "`feasible`, never `optimal`: it is the cheap approximate answer a first-order "
-         "method exists to give, and it is opt-in because the default has to be the one "
-         "that can be verified (#180).",
+         "Stop PDHG once pdhg_tolerance is met and the point is primal-feasible to the "
+         "project's absolute tolerance, without waiting for absolute dual feasibility, the "
+         "verified gap or complementarity. Absolute primal feasibility is kept because "
+         "`feasible` promises a feasible point, so on a model with large row bounds a loose "
+         "request may not stop the loop much earlier. The point is reported as `feasible` "
+         "unless it meets the full standard anyway; the switch cannot manufacture an "
+         "`optimal`. Opt-in, because the default has to be the answer that can be verified "
+         "(#180).",
          0.0,
          0.0,
          {}});

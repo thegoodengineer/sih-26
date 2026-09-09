@@ -135,7 +135,11 @@ def main() -> int:
             "published_objective": repr(published),
             "relative_error": "" if error is None else repr(error),
             "iterations": result["iterations"], "seconds": round(result["seconds"], 6),
-            "reached_tolerance": int(result["status"] == "optimal"),
+            # `optimal` and `feasible` both mean the loop stopped because the requested
+            # relative tolerance was met; `feasible` is the point that met it without also
+            # meeting the project's absolute standard (see #179, #180). A limit means it
+            # was not met.
+            "reached_tolerance": int(result["status"] in ("optimal", "feasible")),
             "git_commit": commit, "machine": machine, "timestamp_utc": timestamp,
             "solver_options": " ".join(args.solver_option),
         })
@@ -155,7 +159,7 @@ def main() -> int:
             continue
         published = reference[name]["published_optimal"]
 
-        simplex = run(binary, mps, "simplex", None, True, args.time_limit, args.solver_option)
+        simplex = run(binary, mps, "simplex", None, True, args.time_limit)
         simplex_error = record(name, "simplex", None, None, simplex, published)
 
         loose = run(binary, mps, "pdhg", 1e-4, True, args.time_limit, args.solver_option)
@@ -163,7 +167,7 @@ def main() -> int:
 
         tight = run(binary, mps, "pdhg", 1e-8, True, args.time_limit, args.solver_option)
         tight_error = record(name, "pdhg", 1e-8, True, tight, published)
-        if tight["status"] != "optimal":
+        if tight["status"] not in ("optimal", "feasible"):
             missed_tight.append(name)
 
         def fmt(value, width, digits):
@@ -174,7 +178,7 @@ def main() -> int:
               f"{str(loose['iterations']):>8}"
               f"{fmt(tight['objective'], 21, 12)}{fmt(tight_error, 10, 1)}"
               f"{str(tight['iterations']):>8}"
-              f"  {'yes' if tight['status'] == 'optimal' else 'NO'}")
+              f"  {'yes' if tight['status'] in ('optimal', 'feasible') else 'NO'}")
 
     print("-" * 124)
     if missed_tight:
