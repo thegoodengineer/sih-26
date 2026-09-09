@@ -301,10 +301,24 @@ const std::vector<OptionSpec>& Options::registry() {
     s.push_back({"pdhg_tolerance",
                  OptionType::Double,
                  tol::kPdhgLoose,
-                 "PDHG relative KKT termination tolerance.",
+                 "PDHG relative KKT termination tolerance. By default the loop also runs on "
+                 "until the point meets the project's ABSOLUTE tolerances, so a request looser "
+                 "than those changes nothing (#180); see pdhg_stop_at_request.",
                  1e-14,
                  1e-1,
                  {}});
+    s.push_back(
+        {"pdhg_stop_at_request",
+         OptionType::Bool,
+         false,
+         "Stop PDHG as soon as pdhg_tolerance is met, even where the point misses the "
+         "project's absolute feasibility tolerances. The answer is then reported as "
+         "`feasible`, never `optimal`: it is the cheap approximate answer a first-order "
+         "method exists to give, and it is opt-in because the default has to be the one "
+         "that can be verified (#180).",
+         0.0,
+         0.0,
+         {}});
 
     // ---- Reporting ---------------------------------------------------------------------
     s.push_back({"log_level",

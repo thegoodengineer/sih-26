@@ -312,6 +312,7 @@ Solution solve_pdhg(const Model& model, const Options& options, Logger& logger) 
   const Count iteration_limit =
       iteration_option < 0 ? 1000000 : static_cast<Count>(iteration_option);
   const bool use_restarts = options.get_bool("pdhg_restart");
+  const bool stop_at_request = options.get_bool("pdhg_stop_at_request");
 
   logger.info("Solving LP with restarted PDHG: {} rows, {} columns, {} nonzeros", rows, cols,
               model.num_nonzeros());
@@ -559,14 +560,26 @@ Solution solve_pdhg(const Model& model, const Options& options, Logger& logger) 
     logger.iteration(iteration, sense * better.primal_objective + model.objective_offset,
                      better.primal, better.dual, timer.elapsed_seconds());
 
-    // THE STOPPING TEST AND THE REPORTING TEST ARE NOW THE SAME TEST, deliberately. Below,
-    // at the report, `verifiable` is `converged && final_residuals.meets_project_standard()`:
-    // a point that satisfies the requested tolerance but not the project's absolute standard
-    // is downgraded to `feasible` after the loop has already stopped on it. Stopping on that
-    // point wastes the iterations that would have reached the standard, and hands back the
-    // weaker answer while the solver was still converging. Asking for both here means the
-    // loop stops only where it can report what it stopped for.
-    if (better.meets_request(tolerance) && better.meets_project_standard()) {
+    // THE STOPPING TEST AND THE REPORTING TEST ARE THE SAME TEST BY DEFAULT, deliberately.
+    // Below, at the report, `verifiable` is `converged &&
+    // final_residuals.meets_project_standard()`: a point that satisfies the requested tolerance
+    // but not the project's absolute standard is downgraded to `feasible` after the loop has
+    // already stopped on it. Stopping on that point wastes the iterations that would have
+    // reached the standard, and hands back the weaker answer while the solver was still
+    // converging. Asking for both here means the loop stops only where it can report what it
+    // stopped for.
+    //
+    // THE CONSEQUENCE, AND THE OPT-OUT (#180). The absolute standard does not move with the
+    // request, so a request looser than it changes nothing: ask for 1e-4 and you get the 1e-8
+    // point at the 1e-8 cost. That is the right default - the default has to be the answer
+    // that can be verified - but it is not what a caller wants who reached for a first-order
+    // method precisely to get a cheap approximate answer on a huge model.
+    // `pdhg_stop_at_request` is that caller's switch: the loop stops on the request alone, and
+    // the report below still refuses to call the result `optimal` unless it meets the standard,
+    // so nothing about the switch can turn a weak point into a claim.
+    const bool stop_here =
+        better.meets_request(tolerance) && (stop_at_request || better.meets_project_standard());
+    if (stop_here) {
       // Report the point that PASSED, not whichever earlier iterate happened to have the
       // smallest relative residual. best_x tracks worst(), which is a relative measure, so
       // an earlier iterate can hold that title while being less feasible in absolute terms -

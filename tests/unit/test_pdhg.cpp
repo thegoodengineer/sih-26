@@ -12,6 +12,7 @@
 // where a dense factorization cannot go, and on hardware this suite does not run on.
 
 #include <cmath>
+#include <iostream>
 #include <fstream>
 #include <random>
 #include <string>
@@ -20,6 +21,7 @@
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
 
+#include "sankhya/io.hpp"
 #include "sankhya/model.hpp"
 #include "sankhya/options.hpp"
 #include "sankhya/tolerances.hpp"
@@ -320,6 +322,43 @@ Model make_blend_lp() {
   model.matrix.finalize();
   EXPECT_EQ(model.validate(), "");
   return model;
+}
+
+TEST(Pdhg, StopAtRequestGivesTheCheapAnswerAndNeverCallsItOptimal) {
+  // #180: the default runs on to the project's absolute standard whatever the request, so a
+  // caller who wants the cheap approximate answer a first-order method exists to give has to
+  // say so. No hand-built model in this file separates the two measures - on every one the
+  // relative request and the absolute standard flip on the same 40-iteration check - so this
+  // uses a committed Netlib instance, the way test_ipm.cpp does: adlittle at a 1e-4 request
+  // meets it at 132,520 iterations and the standard at 192,080.
+  //
+  // Three things are pinned. The switch stops the loop earlier than the default on the same
+  // model. The point it stops on is reported `feasible`, never `optimal`, unless it happens
+  // to meet the standard anyway - the switch cannot manufacture a claim. And the honest run
+  // on the same instance does reach `optimal`, so the two are measuring the same thing.
+  Model model;
+  const io::ReadResult read = io::read_model("data/netlib/adlittle.mps", &model);
+  if (!read.ok) {
+    std::cout << "pdhg #180: data/netlib/adlittle.mps not readable here (" << read.error
+              << "); skipped\n";
+    return;
+  }
+  const Solution honest = solve(model, pdhg_options(1e-4));
+  Options cheap_options = pdhg_options(1e-4);
+  cheap_options.set_bool("pdhg_stop_at_request", true);
+  const Solution cheap = solve(model, cheap_options);
+
+  ASSERT_EQ(honest.status, SolveStatus::kOptimal) << honest.message;
+  ASSERT_TRUE(cheap.status == SolveStatus::kFeasible || cheap.status == SolveStatus::kOptimal)
+      << cheap.message;
+  EXPECT_LT(cheap.iterations, honest.iterations)
+      << "stopping on the request should cost fewer iterations than running to the standard";
+  if (cheap.status == SolveStatus::kOptimal) {
+    EXPECT_LE(cheap.primal_infeasibility, tol::kPrimalFeasibility) << cheap.message;
+    EXPECT_LE(cheap.dual_infeasibility, tol::kDualFeasibility) << cheap.message;
+  } else {
+    EXPECT_TRUE(cheap.has_primal_values());
+  }
 }
 
 TEST(SolveStatusGuard, AnInfeasiblePointIsNeverReportedAsOptimal) {
