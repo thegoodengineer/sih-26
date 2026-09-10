@@ -93,6 +93,10 @@ class InteriorPoint {
   void build();
   void residuals();
   [[nodiscard]] bool factorize();
+
+  /// The deadline handed down to the linear algebra, so a time limit is not defeated by one
+  /// very long ordering or factorization (#193). Empty when there is no limit.
+  SparseLdl::ShouldStop should_stop_;
   void newton_direction();
   [[nodiscard]] double step_length(const std::vector<double>& s, const std::vector<double>& ds,
                                    const std::vector<double>& t,
@@ -376,10 +380,10 @@ bool InteriorPoint::factorize() {
   normal_equations_lower(model_.matrix, theta_x, row_shift, kDualRegularization,
                          &normal_lower_);
   if (!analyzed_) {
-    if (!ldl_.analyze(normal_lower_)) return false;
+    if (!ldl_.analyze(normal_lower_, should_stop_)) return false;
     analyzed_ = true;
   }
-  if (!ldl_.factorize(normal_lower_, kDualRegularization)) return false;
+  if (!ldl_.factorize(normal_lower_, kDualRegularization, should_stop_)) return false;
   ++factorizations_;
   regularized_pivots_ += ldl_.regularized_pivots();
   return true;
@@ -535,6 +539,11 @@ Solution InteriorPoint::finish(SolveStatus status, const std::string& message, C
 Solution InteriorPoint::run() {
   Timer timer;
   const double time_limit = options_.get_double("time_limit");
+  // Handed to the linear algebra so the clock is not only consulted between iterations.
+  // Captured by reference to the local timer, which outlives every call that uses it.
+  if (time_limit > 0.0 && std::isfinite(time_limit)) {
+    should_stop_ = [&timer, time_limit] { return timer.elapsed_seconds() > time_limit; };
+  }
   const std::int64_t iteration_limit = options_.get_int("iteration_limit");
   build();
   logger_.info("Interior point: {} rows, {} columns, {} nonzeros", m_, n_,
@@ -578,6 +587,16 @@ Solution InteriorPoint::run() {
                     timer.elapsed_seconds());
     }
     if (!factorize()) {
+      // Told to stop rather than unable to: the difference matters to a reader, and to the
+      // status guard. Neither is a point, but only one of them is a failure.
+      if (ldl_.stopped_early()) {
+        restore_best();
+        return finish(SolveStatus::kTimeLimit,
+                      fmt::format("time limit {:g}s reached inside the factorization, which "
+                                  "was abandoned",
+                                  time_limit),
+                      iterations, timer.elapsed_seconds());
+      }
       return finish(SolveStatus::kNumericalError,
                     "the normal equations could not be factorized", iterations,
                     timer.elapsed_seconds());

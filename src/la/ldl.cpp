@@ -23,7 +23,7 @@ namespace sankhya {
 // the cost is proportional to the fill it creates, which is fine for the row counts this
 // solver reaches today and is the part to replace (by AMD's quotient graph) when it is not.
 // Ties go to the lowest index, so the ordering is deterministic.
-void SparseLdl::minimum_degree(const SparseMatrix& lower) {
+bool SparseLdl::minimum_degree(const SparseMatrix& lower, const ShouldStop& should_stop) {
   const Index n = n_;
   std::vector<std::vector<Index>> adjacency(static_cast<std::size_t>(n));
   for (Index c = 0; c < n; ++c) {
@@ -45,6 +45,12 @@ void SparseLdl::minimum_degree(const SparseMatrix& lower) {
   perm_.reserve(static_cast<std::size_t>(n));
   std::vector<Index> merged;
   for (Index step = 0; step < n; ++step) {
+    // ASKED EVERY STEP. A coarser granularity was tried first and is not good enough: the
+    // cost of one elimination step grows as fill accumulates, and on a 20,000-row model a
+    // single batch of 64 steps ran for 48 seconds past a 10 second limit. One call through a
+    // std::function per step is nothing beside the clique merging below (#193).
+    if (should_stop && should_stop()) return false;
+
     // The vertex of minimum current degree; lowest index on a tie.
     Index best = -1;
     std::size_t best_degree = std::numeric_limits<std::size_t>::max();
@@ -79,6 +85,7 @@ void SparseLdl::minimum_degree(const SparseMatrix& lower) {
   inverse_.assign(static_cast<std::size_t>(n), -1);
   for (Index k = 0; k < n; ++k)
     inverse_[static_cast<std::size_t>(perm_[static_cast<std::size_t>(k)])] = k;
+  return true;
 }
 
 // -----------------------------------------------------------------------------------------
@@ -187,11 +194,19 @@ void SparseLdl::symbolic_pattern() {
   d_.assign(static_cast<std::size_t>(n), 0.0);
 }
 
-bool SparseLdl::analyze(const SparseMatrix& lower) {
+bool SparseLdl::analyze(const SparseMatrix& lower, const ShouldStop& should_stop) {
   analyzed_ = false;
+  stopped_early_ = false;
   if (lower.num_rows() != lower.num_cols() || lower.num_rows() <= 0) return false;
   n_ = lower.num_rows();
-  minimum_degree(lower);
+  // The ordering is where the time goes: measured on generated instances, analyze() costs
+  // three to four times a numeric factorization, and at 20,000 rows it is most of an
+  // 813-second first iteration (#193). It is therefore the one phase that has to be
+  // interruptible for a time limit to mean anything.
+  if (!minimum_degree(lower, should_stop)) {
+    stopped_early_ = true;
+    return false;
+  }
   build_permuted_pattern(lower);
   elimination_tree();
   symbolic_pattern();
@@ -208,7 +223,9 @@ bool SparseLdl::analyze(const SparseMatrix& lower) {
 // tree guarantees that order is topological); then L(k, j) = y_j / d_j and
 // d_k = A(k, k) - sum_j L(k, j) y_j. Each column's rows are filled in increasing k, which is
 // exactly the order the symbolic pattern listed them in.
-bool SparseLdl::factorize(const SparseMatrix& lower, double regularization) {
+bool SparseLdl::factorize(const SparseMatrix& lower, double regularization,
+                          const ShouldStop& should_stop) {
+  stopped_early_ = false;
   if (!analyzed_ || lower.num_rows() != n_ || lower.num_cols() != n_) return false;
   const Index n = n_;
 
@@ -241,6 +258,13 @@ bool SparseLdl::factorize(const SparseMatrix& lower, double regularization) {
   largest_pivot_ = 0.0;
 
   for (Index k = 0; k < n; ++k) {
+    // The same coarse deadline the ordering uses (#193). A numeric factorization is cheaper
+    // than the ordering that preceded it, but on a large model it is still long enough to
+    // outlast a time limit on its own.
+    if (should_stop && should_stop()) {
+      stopped_early_ = true;
+      return false;
+    }
     // Scatter A(0:k-1, k) and the diagonal; collect the reach.
     reach.clear();
     double diagonal = 0.0;

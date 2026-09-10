@@ -28,6 +28,7 @@
 // recovers most of what the perturbation costs.
 #pragma once
 
+#include <functional>
 #include <vector>
 
 #include "sankhya/sparse.hpp"
@@ -37,16 +38,39 @@ namespace sankhya {
 class SparseLdl {
  public:
   /// Symbolic analysis of a symmetric matrix given by its LOWER triangle (entries with
+  /// A caller's deadline, asked between elimination steps and between columns.
+  ///
+  /// WHY THIS EXISTS (#193). The solver checks the clock between iterations, which is the
+  /// right place for a method whose iterations are alike. An interior-point iteration is not:
+  /// it factorizes, and the FIRST one also pays for the ordering. Measured on a generated
+  /// 20,000-row model, one iteration took 813 s against a 120 s limit, most of it inside
+  /// analyze(), which the loop had not returned from to look at the clock.
+  ///
+  /// Returning true here abandons the work. That is safe in the sense CLAUDE.md means when it
+  /// says wall-clock must never decide anything inside the solver: a solve that COMPLETES
+  /// does exactly the arithmetic it always did, in the same order, and gets the same answer.
+  /// The clock only decides whether an unfinished solve keeps running, which is what a time
+  /// limit has always decided.
+  using ShouldStop = std::function<bool()>;
+
+  /// Symbolic analysis of the lower triangle of a symmetric matrix (entries with
   /// row >= col) in CSC form; entries above the diagonal are ignored. Computes a minimum
   /// degree ordering, the elimination tree of the permuted matrix and the pattern of L.
-  /// Returns false on an empty or non-square input. O(n^2) worst case in the ordering.
-  [[nodiscard]] bool analyze(const SparseMatrix& lower);
+  /// Returns false on an empty or non-square input, or if `should_stop` asked it to give up.
+  /// O(n^2) worst case in the ordering.
+  [[nodiscard]] bool analyze(const SparseMatrix& lower, const ShouldStop& should_stop = {});
+
+  /// True when the last analyze() or factorize() returned false because the deadline was
+  /// reached rather than because the matrix was wrong. The caller reports a time limit in
+  /// that case, not a numerical failure.
+  [[nodiscard]] bool stopped_early() const noexcept { return stopped_early_; }
 
   /// Numeric factorization of a matrix with the SAME pattern (or a subset of it) as the
   /// one analyzed. Pivots below `regularization` are set to `regularization`; the number
   /// of pivots so treated is available afterwards. Returns false if analyze() was not
   /// called or the pattern does not fit.
-  [[nodiscard]] bool factorize(const SparseMatrix& lower, double regularization);
+  [[nodiscard]] bool factorize(const SparseMatrix& lower, double regularization,
+                               const ShouldStop& should_stop = {});
 
   /// Solve (P^T L D L^T P) x = b in place.
   void solve(double* b) const;
@@ -61,13 +85,14 @@ class SparseLdl {
   [[nodiscard]] const std::vector<Index>& permutation() const noexcept { return perm_; }
 
  private:
-  void minimum_degree(const SparseMatrix& lower);
+  [[nodiscard]] bool minimum_degree(const SparseMatrix& lower, const ShouldStop& should_stop);
   void build_permuted_pattern(const SparseMatrix& lower);
   void elimination_tree();
   void symbolic_pattern();
 
   Index n_ = 0;
   bool analyzed_ = false;
+  bool stopped_early_ = false;  ///< the last failure was a deadline, not a bad matrix
 
   /// perm_[k] = original index of the k-th pivot; inverse_[i] = position of original i.
   std::vector<Index> perm_;
