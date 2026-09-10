@@ -476,9 +476,34 @@ Solution InteriorPoint::finish(SolveStatus status, const std::string& message, C
   solution.solve_seconds = seconds;
   logger_.info("IPM: {} iterations, {} factorizations, {} regularized pivot(s) in total",
                iterations, factorizations_, regularized_pivots_);
-  const bool have_point = status == SolveStatus::kOptimal || status == SolveStatus::kFeasible ||
-                          status == SolveStatus::kIterationLimit ||
-                          status == SolveStatus::kTimeLimit;
+  bool have_point = status == SolveStatus::kOptimal || status == SolveStatus::kFeasible ||
+                    status == SolveStatus::kIterationLimit || status == SolveStatus::kTimeLimit;
+
+  // A LIMIT IS NOT A LICENCE TO REPORT NONSENSE (#194). Reaching the time limit means the
+  // iterate in hand is the answer, and normally it is a real point. It is not one if the
+  // iteration has broken down numerically: on a generated 5000x5000 instance this method ran
+  // out of time with x_ full of NaN, reported it as its point, and the objective computed
+  // from it went into a results CSV as `nan` - into the file that is this project's only
+  // evidence, in the column that says whether the answer was right.
+  //
+  // A NaN is not a number a reader can compare, and it does not announce itself: it
+  // propagates through every arithmetic operation downstream looking like data. So the
+  // iterate is checked before it is called a point, and a broken one is reported as the
+  // numerical failure it is.
+  if (have_point) {
+    const bool finite_point =
+        std::all_of(x_.begin(), x_.begin() + n_, [](double v) { return std::isfinite(v); });
+    if (!finite_point) {
+      have_point = false;
+      status = SolveStatus::kNumericalError;
+      solution.status = status;
+      solution.message =
+          message +
+          "; the iterate is not finite, so it is reported as a numerical failure rather than "
+          "as a point (#194)";
+    }
+  }
+
   if (!have_point) {
     solution.recompute_quality(model_);
     solution.dual_bound = model_.sense == ObjSense::kMaximize ? kInfinity : -kInfinity;

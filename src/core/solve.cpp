@@ -11,6 +11,8 @@
 // quietly handed to the simplex and its fractional relaxation reported as optimal, which
 // is the single most damaging thing this dispatcher could do.
 
+#include <algorithm>
+#include <cmath>
 #include <string>
 
 #include <fmt/format.h>
@@ -82,6 +84,41 @@ const char* class_name(ProblemClass c) {
 /// bound closing against the incumbent, not by the reduced costs of the last LP solved, so
 /// applying the dual test there would reject correct answers. Integrality is checked instead:
 /// it is the condition that actually distinguishes a MILP solution from its relaxation.
+/// Never publish an answer whose numbers are not numbers (#194).
+///
+/// This is the belt to the interior-point method's braces, and it is deliberately engine
+/// agnostic: any solve that claims a point and then reports a non-finite objective is
+/// reporting something no consumer can use and no reader can check. The benchmark runners
+/// write whatever comes back into a CSV, so a NaN here does not stay here - it becomes an
+/// entry in the project's evidence, in the column that exists to say whether the answer was
+/// right. Downgrading is the honest outcome: the solve failed numerically, and saying so is
+/// worth more than a plausible-looking row.
+void refuse_a_non_finite_answer(Solution* solution, Logger& logger) {
+  const bool claims_a_point = solution->status == SolveStatus::kOptimal ||
+                              solution->status == SolveStatus::kFeasible ||
+                              solution->status == SolveStatus::kIterationLimit ||
+                              solution->status == SolveStatus::kTimeLimit;
+  if (!claims_a_point) return;
+
+  const bool finite = std::isfinite(solution->objective) &&
+                      std::all_of(solution->col_value.begin(), solution->col_value.end(),
+                                  [](double v) { return std::isfinite(v); });
+  if (finite) return;
+
+  logger.warning(
+      "the solve returned a non-finite answer under status {}; reporting it as a numerical "
+      "failure rather than as a point",
+      to_string(solution->status));
+  solution->message +=
+      "; the answer contained a value that is not a number, so it is reported as a numerical "
+      "failure rather than as a point (#194)";
+  solution->status = SolveStatus::kNumericalError;
+  solution->col_value.clear();
+  solution->row_activity.clear();
+  solution->objective = 0.0;
+  solution->dual_bound = 0.0;
+}
+
 void reconcile_status_with_measurement(Solution* solution, const Options& options,
                                        Logger& logger, bool check_dual) {
   const bool claims_a_point =
@@ -239,6 +276,7 @@ Solution solve(const Model& model, const Options& options) {
                              : solve_primal_simplex(model, options, logger);
     }
     reconcile_status_with_measurement(&solution, options, logger, /*check_dual=*/true);
+    refuse_a_non_finite_answer(&solution, logger);
     logger.info("Result: {}  objective {:.10g}  {} iterations  {:.3f}s",
                 to_string(solution.status), solution.objective, solution.iterations,
                 solution.solve_seconds);
@@ -250,6 +288,11 @@ Solution solve(const Model& model, const Options& options) {
   if (problem_class == ProblemClass::kMilp) {
     solution = mip::solve_branch_and_bound(model, options, logger);
     reconcile_status_with_measurement(&solution, options, logger, /*check_dual=*/false);
+    // NOT for the branch and bound's "nothing found" convention, which deliberately reports
+    // the worst representable objective - an infinity there is a considered statement that
+    // no point exists, not a broken number. Only a claimed POINT is checked, and that
+    // convention comes with kInfeasible or a limit and no values.
+    refuse_a_non_finite_answer(&solution, logger);
     logger.info("Result: {}  objective {:.10g}  bound {:.10g}  {} nodes  {:.3f}s",
                 to_string(solution.status), solution.objective, solution.dual_bound,
                 solution.nodes, solution.solve_seconds);
