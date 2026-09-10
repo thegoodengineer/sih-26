@@ -125,7 +125,7 @@ rejects. Run the pinned one before pushing - it provisions itself on first use:
     scripts/format.sh --check    # exactly what CI runs
 
 The CPU build must work with zero CUDA installed — all GPU code behind
-`#ifdef SANKHYA_ENABLE_CUDA` plus a runtime `--gpu` flag with silent CPU fallback.
+`#ifdef SANKHYA_ENABLE_CUDA` plus a runtime `--gpu` flag that warns and falls back to the CPU.
 
 ## Local toolchain note (Windows dev boxes)
 
