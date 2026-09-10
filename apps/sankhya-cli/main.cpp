@@ -65,12 +65,15 @@ void print_option_table() {
                defaults.value_as_string(spec.name), description);
   }
 
-  // The algorithm choices need the same honesty: two of the five are not engines yet,
-  // and asking for one returns not_solved rather than an answer.
+  // The algorithm choices need the same honesty, and for a while this footer had it
+  // backwards: it went on saying dual-simplex and ipm were not implemented after both had
+  // shipped (#65, #56). Every name below is an engine that returns an answer.
   fmt::print(
-      "\nalgorithm choices: auto and simplex select the revised primal simplex; pdhg "
-      "selects the\nfirst-order engine. dual-simplex and ipm are NOT IMPLEMENTED "
-      "(Phases 6 and 8) and\nreturn not_solved if requested.\n");
+      "\nalgorithm choices: auto selects the dual simplex (bounded, warm-started; the "
+      "measured default,\n#65). simplex is the revised primal simplex; dual-simplex the "
+      "dual explicitly; ipm the Mehrotra\ninterior point (#56: produces no basis, does not "
+      "certify infeasibility or unboundedness);\npdhg the restarted first-order engine "
+      "(#179, #180).\n");
 }
 
 /// True when the path names an LP-format file, ignoring a trailing .gz.
@@ -202,6 +205,13 @@ int main(int argc, char** argv) {
   std::string progress_out_path;
   solve_cmd->add_option("--progress-out", progress_out_path,
                         "Append live solve progress as JSON lines to this path");
+  // Every document that mentions the GPU tells the reader to type --gpu, and until this
+  // flag existed the parser rejected it; the option behind it was reachable only as
+  // --option gpu=true. The flag is the spelling the documents promise.
+  bool use_gpu = false;
+  solve_cmd->add_flag("--gpu", use_gpu,
+                      "Use the CUDA backend where one is compiled in; otherwise warn and "
+                      "run on the CPU (the same as --option gpu=true)");
 
   CLI::App* info_cmd = app.add_subcommand("info", "Report the dimensions of a model file");
   std::string info_path;
@@ -223,6 +233,7 @@ int main(int argc, char** argv) {
   sankhya::Options options;
   if (!apply_options(option_assignments, &options)) return 2;
   if (time_limit > 0.0) options.set_double("time_limit", time_limit);
+  if (use_gpu) options.set_bool("gpu", true);
 
   if (info_cmd->parsed()) {
     sankhya::Model model;
