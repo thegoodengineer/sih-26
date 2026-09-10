@@ -448,18 +448,18 @@ jobs:
       - name: scripts/reproduce.sh, from a clone that has never been built
         run: |
           set -o pipefail
-          scripts/reproduce.sh 2>&1 | tee reproduce.log
+          scripts/reproduce.sh 2>&1 | tee "$RUNNER_TEMP/reproduce.log"
 
       # The script prints what it could not run rather than failing, because a reader is
       # better served by partial evidence than by a stack trace. That makes its exit code the
       # wrong thing to gate on: the assertion that matters is that the list of skips is empty.
       - name: Nothing may have been skipped
         run: |
-          if grep -q 'Nothing was skipped' reproduce.log; then
+          if grep -q 'Nothing was skipped' "$RUNNER_TEMP/reproduce.log"; then
             echo "the whole evidence chain ran on a machine that had never built it"
           else
             echo "FAIL: reproduce.sh skipped at least one step on a fresh machine:"
-            sed -n '/step(s) skipped/,$p' reproduce.log
+            sed -n '/step(s) skipped/,$p' "$RUNNER_TEMP/reproduce.log"
             exit 1
           fi
 
@@ -470,12 +470,16 @@ jobs:
       # filtering the diff keeps this from failing on an unrelated wording change.
       - name: The regenerated document may differ only in timings
         run: |
-          git diff -- docs/BENCHMARKS.md > benchmarks.diff || true
-          git show HEAD:docs/BENCHMARKS.md > committed.md
+          # Scratch files go to RUNNER_TEMP, never the workspace: a later step diffs the
+          # tree, and a stray file there is noise at best and a false signal at worst.
+          git diff -- docs/BENCHMARKS.md > "$RUNNER_TEMP/benchmarks.diff" || true
+          git show HEAD:docs/BENCHMARKS.md > "$RUNNER_TEMP/committed.md"
           python3 - <<'PY'
           import re, sys
+          import os
           counts = lambda p: re.findall(r"\*\*(\d+) of (\d+)\*\*", open(p, encoding="utf-8").read())
-          before, after = counts("committed.md"), counts("docs/BENCHMARKS.md")
+          tmp = os.environ["RUNNER_TEMP"]
+          before, after = counts(f"{tmp}/committed.md"), counts("docs/BENCHMARKS.md")
           if before == after:
               print(f"{len(after)} counts unchanged; only timings moved")
               sys.exit(0)
@@ -490,8 +494,8 @@ jobs:
         with:
           name: fresh-machine-reproduction
           path: |
-            reproduce.log
-            benchmarks.diff
+            ${{ runner.temp }}/reproduce.log
+            ${{ runner.temp }}/benchmarks.diff
 
   format:
     name: clang-format
