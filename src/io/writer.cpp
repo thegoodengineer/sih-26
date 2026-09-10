@@ -23,6 +23,7 @@
 
 #include "sankhya/io.hpp"
 #include "sankhya/model.hpp"
+#include "sankhya/options.hpp"
 #include "sankhya/version.hpp"
 
 namespace sankhya::io {
@@ -112,6 +113,11 @@ namespace {
 
 bool write_solution(const std::string& path, const Model& model, const Solution& solution,
                     std::string* error) {
+  return write_solution(path, model, solution, Options{}, error);
+}
+
+bool write_solution(const std::string& path, const Model& model, const Solution& solution,
+                    const Options& options, std::string* error) {
   std::FILE* out = std::fopen(path.c_str(), "wb");
   if (out == nullptr) {
     if (error != nullptr) *error = fmt::format("{}: cannot open for writing", path);
@@ -132,6 +138,10 @@ bool write_solution(const std::string& path, const Model& model, const Solution&
              solution.algorithm.empty() ? "unknown" : solution.algorithm);
   fmt::print(out, "objective {}\n", exact(solution.objective));
   fmt::print(out, "dual_bound {}\n", exact(solution.dual_bound));
+  // The targets an `optimal` MILP was held to (#188). Written for every model so the header
+  // has one shape; the verifier only reads them when there are integer columns.
+  fmt::print(out, "mip_relative_gap {}\n", exact(options.get_double("mip_relative_gap")));
+  fmt::print(out, "mip_absolute_gap {}\n", exact(options.get_double("mip_absolute_gap")));
   fmt::print(out, "objective_offset {}\n", exact(model.objective_offset));
   fmt::print(out, "rows {}\n", m);
   fmt::print(out, "columns {}\n", n);

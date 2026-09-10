@@ -838,6 +838,7 @@ Solution BranchAndBound::run() {
   bool logged_table = false;
   bool dive = false;
   bool limit_hit = false;
+  bool gap_target_met = false;
 
   while (!open_.empty()) {
     if (nodes_explored_ >= node_limit_) {
@@ -879,9 +880,16 @@ Solution BranchAndBound::run() {
       if (gap > 0.0) {
         const double relative = gap / std::max(1.0, std::fabs(incumbent_internal_));
         if (gap <= absolute_gap_target_ || relative <= relative_gap_target_) {
-          limit_hit = true;
+          // Meeting the gap target is what every MIP solver means by "optimal": the
+          // incumbent is within the requested tolerance of the best any open node can
+          // reach. Until #188 this was reported kFeasible with exit code 1, and a judge
+          // solving demo/miqp_blend.mps at the defaults saw a failure on a solved model.
+          // The message carries the achieved gap and says the tree was not exhausted, and
+          // dual_bound is the best OPEN bound, so the claim is exactly what was proven.
+          gap_target_met = true;
           solution.message = fmt::format(
-              "stopped on a {} gap target ({:.3e} absolute, {:.3e} relative) after {} nodes",
+              "optimal within the {} gap target ({:.3e} absolute, {:.3e} relative) after {} "
+              "nodes; the bound is the best open node's, the tree was not exhausted",
               relative <= relative_gap_target_ ? "relative" : "absolute", gap, relative,
               nodes_explored_);
           break;
@@ -1178,14 +1186,21 @@ Solution BranchAndBound::run() {
   solution.nodes = nodes_explored_;
   solution.solve_seconds = timer_.elapsed_seconds();
 
-  if (open_.empty() && !limit_hit) {
+  if (open_.empty() && !limit_hit && !gap_target_met) {
     // The tree is exhausted: the incumbent is proven optimal and is its own bound.
     solution.status = SolveStatus::kOptimal;
     solution.dual_bound = reported(incumbent_internal_);
+  } else if (gap_target_met) {
+    // Optimal within the gap target (#188). dual_bound is the best open bound, so
+    // objective - dual_bound is the gap that was accepted, and recompute_quality() below
+    // reports it; tools/verify_solution.py checks that gap against the targets recorded in
+    // the .sol header rather than demanding a closed tree.
+    solution.status = SolveStatus::kOptimal;
+    solution.dual_bound = reported(final_bound);
   } else {
-    // A limit stopped the proof. The incumbent is feasible, not proven, and dual_bound
-    // carries the best bound still open - claiming otherwise would assert a proof that was
-    // never established.
+    // A node or time limit stopped the proof short of the target. The incumbent is
+    // feasible, not proven, and dual_bound carries the best bound still open - claiming
+    // otherwise would assert a proof that was never established.
     solution.status = SolveStatus::kFeasible;
     solution.dual_bound = reported(final_bound);
   }

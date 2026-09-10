@@ -14,6 +14,7 @@
 #include <string>
 
 #include "sankhya/model.hpp"
+#include "sankhya/options.hpp"
 
 namespace sankhya::io {
 
@@ -63,6 +64,12 @@ ReadResult read_model(const std::string& path, Model* model);
 /// Returns false and fills `error` on an I/O failure.
 bool write_solution(const std::string& path, const Model& model, const Solution& solution,
                     std::string* error);
+
+/// The same, recording the MIP gap targets the solve ran with in the header
+/// (`mip_relative_gap`, `mip_absolute_gap`), so that a verifier can hold an `optimal` MILP to
+/// the tolerance that was actually requested rather than to the project default (#188).
+bool write_solution(const std::string& path, const Model& model, const Solution& solution,
+                    const Options& options, std::string* error);
 
 /// Write a machine-readable JSON result blob: status, objective, measured infeasibilities,
 /// effort counters and build identification. This is what the benchmark runners parse, so

@@ -673,14 +673,45 @@ def cuts_ab_paragraph() -> str:
             f"measurement, not caution.")
 
 
+def proved_convention_note(rows: list[dict]) -> str:
+    """Name the rows whose `proved` value would change on a rerun, or say none would.
+
+    #188 made a gap-target stop report `optimal`: the incumbent is within the tolerance the
+    caller asked for, which is what the word means everywhere else in the field. A CSV
+    produced before that recorded those rows as `feasible` and therefore as not proved. The
+    count above is read from the CSV and so is the OLD count; saying which rows carry the
+    difference is the only way the reader can tell an improved solver from a renamed status.
+    """
+    stale = sorted(row.get("instance", "?") for row in rows
+                   if "gap target" in (row.get("message") or "")
+                   and (row.get("status") or "").strip() != "optimal")
+    if not stale:
+        return ("Every row above was counted under the #188 convention: a search that meets "
+                "the requested gap target reports `optimal`, because the incumbent is within "
+                "the tolerance that was asked for. Only a node or time limit leaves a row "
+                "unproved.")
+    return ("**This CSV predates #188.** " + str(len(stale)) + " of these rows stopped on the "
+            "gap target and were recorded `feasible`, so they are counted above as NOT "
+            "proved: " + ", ".join(f"`{n}`" for n in stale) + ". Since #188 such a stop "
+            "reports `optimal` - the incumbent is within the tolerance the caller asked for, "
+            "which is what the word means everywhere else in the field - so a rerun would "
+            "count them as proved. That is a renamed status, not a better search, and the "
+            "number above is left as the run measured it.")
+
+
 def milp_section(path: Path | None) -> str:
     """MIPLIB, where TWO questions have to be answered separately.
 
     On an LP there is one: is the objective right. On a MILP there are two, and they come
     apart constantly - reaching the published optimum is not the same as proving it is the
     optimum. `flugpl` returns exactly 1201500, which IS the published value, while the search
-    stopped on a relative gap target rather than closing the bound. Reporting one number for
-    both would either discard a correct answer or launder a tolerance stop into a proof.
+    stopped without exhausting the tree. Reporting one number for both would either discard a
+    correct answer or launder a limit stop into a proof.
+
+    What counts as PROVED changed in #188 and this function reports both readings. A search
+    that meets the requested gap target now reports `optimal`, the way every MIP solver
+    means the word, so a rerun counts those rows as proved; every CSV committed before #188
+    counted only an exhausted tree, and the note below names the rows that separates.
     """
     if path is None:
         return chr(10).join([
@@ -707,9 +738,10 @@ def milp_section(path: Path | None) -> str:
         f"Commit `{commit}` · machine `{machine}`",
         "",
         f"**{len(matched)} of {len(rows)}** instances reached the published optimum. "
-        f"**{len(proved)} of {len(rows)}** also PROVED it - closed the bound rather than "
-        f"stopping at a gap target or a limit.",
+        f"**{len(proved)} of {len(rows)}** also PROVED it - closed the bound to within the "
+        f"requested gap target rather than stopping at a node or time limit.",
         "",
+        proved_convention_note(rows),
         "Those are different claims and are kept apart deliberately. Branch and bound here "
         "finds good incumbents far more often than it finishes the proof: reliability "
         "branching (#69) and warm-started dual node LPs (#65) do the searching, and the root "
