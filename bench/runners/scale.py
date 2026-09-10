@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""How far up does this solver actually go? (#34)
+"""How far up does this solver actually go? (#198)
 
 PS26119 asks for "thousands to millions of variables", and until this script there was no
 CSV behind any answer to that - only one 5000x5000 instance solved live in the demo, which

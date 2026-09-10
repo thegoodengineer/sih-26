@@ -700,7 +700,7 @@ def proved_convention_note(rows: list[dict]) -> str:
 
 
 def scale_section(path: Path | None) -> str:
-    """How far up the solver goes, against optima that are exact by construction (#34).
+    """How far up the solver goes, against optima that are exact by construction (#198).
 
     This is the one section whose instances nobody published. They are generated backwards
     from a chosen primal-dual pair satisfying the KKT conditions, out of integer data, so the

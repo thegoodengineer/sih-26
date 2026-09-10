@@ -565,7 +565,7 @@ cat <<'GAPS' | fill_gaps
                         smallest LPs, 6330 to 376500 rows, the result is 0 of 8 inside 300s
                         (bench/runners/mittelmann.py) - which is the honest shape of it:
                         correct wherever we finish, and both curves bend well before
-                        "millions of variables". That is issue #34. Reproduce with:
+                        "millions of variables". That is issue #198. Reproduce with:
                             python bench/runners/fetch_data.py --set full
                             python bench/runners/netlib.py --time-limit 120
     MIPLIB              PS26119 names MIPLIB before Netlib, and this demo does not run it.
