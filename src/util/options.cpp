@@ -217,7 +217,9 @@ const std::vector<OptionSpec>& Options::registry() {
     s.push_back({"gpu",
                  OptionType::Bool,
                  false,
-                 "Use the CUDA path where available; silently falls back to CPU.",
+                 "Use the CUDA backend where one is compiled in (the CLI spells it --gpu); "
+                 "otherwise warn once and run on the CPU. No build carries the backend yet "
+                 "(#16-#19).",
                  0.0,
                  0.0,
                  {}});
