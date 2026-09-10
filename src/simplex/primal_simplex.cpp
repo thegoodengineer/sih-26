@@ -284,6 +284,21 @@ bool Simplex::repair_basis() {
   return true;
 }
 
+std::vector<double> Simplex::unbounded_ray(Index entering, int direction) const {
+  std::vector<double> ray(static_cast<std::size_t>(n_), 0.0);
+  const auto place = [&](Index k, double step) {
+    // Only structural columns are part of the model's ray; a logical column is the row's own
+    // activity, which follows from the structural moves rather than being chosen.
+    if (k < n_) ray[static_cast<std::size_t>(k)] = step;
+  };
+  place(entering, static_cast<double>(direction));
+  for (Index slot = 0; slot < m_; ++slot) {
+    place(basis_[static_cast<std::size_t>(slot)],
+          -static_cast<double>(direction) * alpha_[static_cast<std::size_t>(slot)]);
+  }
+  return ray;
+}
+
 double Simplex::unbounded_ray_residual(Index entering, int direction) const {
   // THE CERTIFICATE BEHIND AN UNBOUNDED CLAIM. The ratio test found no blocking variable,
   // which means the direction d - entering variable moving by `direction`, every basic
@@ -1113,9 +1128,21 @@ Solution Simplex::finish(SolveStatus status, const std::string& message, Count i
   solution.residual_before_refinement = residual_before_refinement_;
   solution.residual_after_refinement = residual_after_refinement_;
 
+  // The certificate is attached before the early return below, because the two statuses
+  // that HAVE one are exactly the two that take it (#191).
+  if (status == SolveStatus::kInfeasible) solution.farkas_dual = pending_farkas_;
+  if (status == SolveStatus::kUnbounded) solution.primal_ray = pending_ray_;
+
+  // UNBOUNDED HAS A POINT, and it is half of the proof (#191). The ratio test only reaches
+  // that verdict in phase 2, which means the current basic solution is FEASIBLE; a ray is
+  // only evidence of an unbounded objective when it starts somewhere the model allows, so
+  // the point is written alongside it. The objective and the bound keep their unbounded
+  // convention below: what is being reported is still "no finite optimum", not this point's
+  // value.
   const bool have_point = status == SolveStatus::kOptimal || status == SolveStatus::kFeasible ||
                           status == SolveStatus::kIterationLimit ||
-                          status == SolveStatus::kTimeLimit;
+                          status == SolveStatus::kTimeLimit ||
+                          status == SolveStatus::kUnbounded;
   if (!have_point) {
     solution.recompute_quality(model_);
     solution.dual_bound = status == SolveStatus::kInfeasible ? kInfinity : -kInfinity;
@@ -1351,6 +1378,13 @@ Solution Simplex::primal_loop(Timer& timer, Count* iterations_io) {
                                     infeasibility, primal_tolerance_),
                         iterations, timer.elapsed_seconds());
         }
+        // THE PROOF, KEPT (#191). y_ was set by compute_reduced_costs(phase_one) at the
+        // top of this iteration: it is B^-T applied to the phase-1 cost vector, which is
+        // precisely a Farkas vector for the rows. It is handed over as a CANDIDATE - the
+        // bounds it was computed under may have been perturbed, and the model may be a
+        // scaled one - and solve() checks it against the original model before anyone sees
+        // it. A candidate that fails that check is dropped, never published.
+        pending_farkas_ = y_;
         return finish(
             SolveStatus::kInfeasible,
             fmt::format("phase 1 terminated with max bound violation {:.3e}, far above the "
@@ -1485,6 +1519,8 @@ Solution Simplex::primal_loop(Timer& timer, Count* iterations_io) {
       // above tolerance - alpha was wrong, not the model. Reporting UNBOUNDED there is the
       // worst answer available; reporting a numerical failure is the true one.
       const double ray_residual = unbounded_ray_residual(entering, direction);
+      // The same direction the residual above was measured on, kept rather than rebuilt.
+      pending_ray_ = unbounded_ray(entering, direction);
       if (ray_residual > primal_tolerance_) {
         return finish(SolveStatus::kNumericalError,
                       fmt::format("ratio test found no blocking variable at iteration {}, but "
@@ -1841,10 +1877,14 @@ Solution solve_with_scaling(const Model& model, const Options& options, Logger& 
     const double dc = scaling.column[u];
     if (u < solution.col_value.size()) solution.col_value[u] *= dc;
     if (u < solution.col_dual.size()) solution.col_dual[u] /= dc;
+    // A ray is a difference of primal points, so it maps exactly as a point does (#191).
+    if (u < solution.primal_ray.size()) solution.primal_ray[u] *= dc;
   }
   for (Index i = 0; i < m; ++i) {
     const auto u = static_cast<std::size_t>(i);
     if (u < solution.row_dual.size()) solution.row_dual[u] *= scaling.row[u];
+    // Farkas multipliers are row duals, and map the same way.
+    if (u < solution.farkas_dual.size()) solution.farkas_dual[u] *= scaling.row[u];
   }
 
   // Re-measure against the ORIGINAL model. This is the second half of the correctness

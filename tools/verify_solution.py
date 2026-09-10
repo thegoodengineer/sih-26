@@ -403,6 +403,12 @@ class Solution:
         self.row_activity: dict[str, float] = {}
         self.row_dual: dict[str, float] = {}
         self.row_status: dict[str, str] = {}
+        # A verdict of infeasible or unbounded carries its PROOF, not a point (#191).
+        # farkas: row multipliers whose aggregate no point in the column box can satisfy.
+        # ray: a direction along which the model stays feasible and the objective improves
+        # without limit, checked together with the feasible point in the columns section.
+        self.farkas: dict[str, float] = {}
+        self.ray: dict[str, float] = {}
 
     @property
     def status(self) -> str:
@@ -475,6 +481,10 @@ def parse_sol(path: Path) -> Solution:
                 solution.col_value[fields[0]] = float(fields[1])
                 solution.col_dual[fields[0]] = float(fields[2])
                 solution.col_status[fields[0]] = fields[3] if len(fields) > 3 else "unknown"
+            elif block == "farkas" and len(fields) >= 2:
+                solution.farkas[fields[0]] = float(fields[1])
+            elif block == "ray" and len(fields) >= 2:
+                solution.ray[fields[0]] = float(fields[1])
             elif block == "rows" and len(fields) >= 3:
                 solution.row_activity[fields[0]] = float(fields[1])
                 solution.row_dual[fields[0]] = float(fields[2])
@@ -529,10 +539,191 @@ def bound_contribution(multiplier: float, lower: float, upper: float) -> float:
     return 0.0
 
 
+def transpose_times(model: Model, y: list[float]) -> list[float]:
+    """A' y, from the column-wise entries. One line of arithmetic, written out."""
+    d = [0.0] * model.num_cols
+    for j in range(model.num_cols):
+        for i, value in model.entries[j]:
+            d[j] += value * y[i]
+    return d
+
+
+def times(model: Model, x: list[float]) -> list[float]:
+    """A x, from the same column-wise entries."""
+    out = [0.0] * model.num_rows
+    for j in range(model.num_cols):
+        if x[j] == 0.0:
+            continue
+        for i, value in model.entries[j]:
+            out[i] += value * x[j]
+    return out
+
+
+def verify_farkas(model: Model, solution: Solution, report: Report) -> Report:
+    """Check a claim of INFEASIBILITY, in the only way a claim of infeasibility can be checked.
+
+    There is no point to test - that is the whole content of the verdict - so a checker that
+    asks for one is asking the wrong question. What CAN be handed over is a Farkas
+    certificate: one multiplier per row. Aggregating the rows with those weights produces a
+    single inequality that every feasible point would have to satisfy, and the certificate is
+    good exactly when no point in the column box satisfies it.
+
+    Written out, with rows `row_lower <= a_i.x <= row_upper` and columns in `[l, u]`:
+
+        a multiplier y_i > 0 uses the row's LOWER bound   (a_i.x >= row_lower[i])
+        a multiplier y_i < 0 uses the row's UPPER bound   (a_i.x <= row_upper[i])
+
+    so every feasible x satisfies  d.x >= S  where  d = A'y  and  S = sum_i y_i * (that
+    bound). The largest d.x can be over the box is M, taking each column to whichever of its
+    own bounds the sign of d_j prefers. If M < S the system has no feasible point at all.
+
+    Two ways a certificate can be bogus, both checked rather than assumed: a multiplier that
+    leans on a bound the row does not have (infinite), and a column free in the direction d
+    prefers, which makes M infinite and proves nothing.
+    """
+    y = [solution.farkas.get(name, 0.0) for name in model.row_names]
+    if not any(y):
+        # NOT a failure. Presolve proves infeasibility from bound arithmetic and does not
+        # keep the chain of tightenings that would make a Farkas vector, so it says
+        # `certificate none` and puts its reason in the message. Failing here would be the
+        # very thing #191 exists to stop: this script calling a correct verdict wrong.
+        report.note("infeasibility proof",
+                    "no certificate offered, so nothing is claimed and nothing is checked; "
+                    + (solution.header.get("message", "the solver gave no reason")))
+        return report
+
+    # A multiplier may only use a bound the row actually has.
+    borrowed = [model.row_names[i] for i, m in enumerate(y)
+                if (m > 0.0 and not math.isfinite(model.row_lower[i]))
+                or (m < 0.0 and not math.isfinite(model.row_upper[i]))]
+    if not report.check(not borrowed, "certificate uses only real bounds",
+                        "every multiplier leans on a finite row bound" if not borrowed
+                        else f"{len(borrowed)} lean on an infinite bound: "
+                             + ", ".join(borrowed[:5])):
+        return report
+
+    required = sum(bound_contribution(y[i], model.row_lower[i], model.row_upper[i])
+                   for i in range(model.num_rows))
+
+    d = transpose_times(model, y)
+    reachable = 0.0
+    free = []
+    for j in range(model.num_cols):
+        if d[j] > 0.0:
+            if not math.isfinite(model.col_upper[j]):
+                free.append(model.col_names[j])
+            else:
+                reachable += d[j] * model.col_upper[j]
+        elif d[j] < 0.0:
+            if not math.isfinite(model.col_lower[j]):
+                free.append(model.col_names[j])
+            else:
+                reachable += d[j] * model.col_lower[j]
+    if not report.check(not free, "aggregate is bounded above",
+                        "every column the aggregate uses is bounded in that direction"
+                        if not free
+                        else f"{len(free)} unbounded in the direction used, so the aggregate "
+                             f"proves nothing: " + ", ".join(free[:5])):
+        return report
+
+    # Strictly, and by more than the arithmetic could have invented.
+    scale = max(1.0, abs(required), abs(reachable))
+    report.check(reachable < required - 1e-9 * scale, "infeasibility proof",
+                 f"the rows aggregate to at least {required:.12e}, the column bounds allow at "
+                 f"most {reachable:.12e}, a contradiction of {required - reachable:.3e}")
+    report.note("certificate size",
+                f"{sum(1 for m in y if m != 0.0)} of {model.num_rows} rows carry a multiplier")
+    return report
+
+
+def verify_ray(model: Model, solution: Solution, report: Report, primal_tol: float) -> Report:
+    """Check a claim of UNBOUNDEDNESS: a feasible point, and a direction that never stops.
+
+    Unbounded is two claims, and a checker that tests one of them tests nothing. The point in
+    the columns section must be feasible - checked by the ordinary primal checks, which run
+    first - and the ray must satisfy, for every t >= 0, that x + t*d stays inside every bound
+    while the objective improves without limit. That holds exactly when moving along d is
+    blocked by nothing:
+
+        (A d)_i > 0 needs the row to have NO upper bound, and < 0 no lower bound
+        d_j     > 0 needs the column to have NO upper bound, and < 0 no lower bound
+
+    and the objective strictly improves, c.d < 0 in minimize space. For a quadratic objective
+    the ray must also not curve back up, d'Qd <= 0, or the improvement is only local.
+    """
+    if not solution.ray:
+        report.note("unboundedness proof",
+                    "no ray offered, so nothing is claimed and nothing is checked; "
+                    + (solution.header.get("message", "the solver gave no reason")))
+        return report
+    d = [solution.ray.get(name, 0.0) for name in model.col_names]
+    if not report.check(any(d), "ray is a direction",
+                        f"{sum(1 for v in d if v != 0.0)} of {model.num_cols} columns move"
+                        if any(d) else "the ray is all zeros, which is not a direction"):
+        return report
+
+    scale = max(abs(v) for v in d)
+    moving = primal_tol * scale
+
+    blocked_cols = [model.col_names[j] for j in range(model.num_cols)
+                    if (d[j] > moving and math.isfinite(model.col_upper[j]))
+                    or (d[j] < -moving and math.isfinite(model.col_lower[j]))]
+    report.check(not blocked_cols, "ray respects the column bounds",
+                 "no column bound blocks the ray" if not blocked_cols
+                 else f"{len(blocked_cols)} would be crossed: " + ", ".join(blocked_cols[:5]))
+
+    activity = times(model, d)
+    blocked_rows = [model.row_names[i] for i in range(model.num_rows)
+                    if (activity[i] > moving and math.isfinite(model.row_upper[i]))
+                    or (activity[i] < -moving and math.isfinite(model.row_lower[i]))]
+    report.check(not blocked_rows, "ray respects the row bounds",
+                 "no row bound blocks the ray" if not blocked_rows
+                 else f"{len(blocked_rows)} would be crossed: " + ", ".join(blocked_rows[:5]))
+
+    sigma = -1.0 if model.maximize else 1.0
+    improvement = sigma * sum(model.col_cost[j] * d[j] for j in range(model.num_cols))
+    report.check(improvement < -1e-9 * max(1.0, abs(improvement)), "ray improves the objective",
+                 f"objective changes by {improvement:.12e} per unit step, in minimize space")
+
+    if model.hessian:
+        qd = model.hessian_times(d)
+        curvature = sum(d[j] * qd[j] for j in range(model.num_cols))
+        report.check(curvature <= 1e-9 * max(1.0, abs(curvature)), "ray does not curve back",
+                     f"d'Qd = {curvature:.12e}; a positive value means the improvement is "
+                     f"only local")
+    return report
+
+
 def verify(model: Model, solution: Solution, primal_tol: float, dual_tol: float,
            integer_tol: float, duality_tol: float) -> Report:
     report = Report()
     sigma = -1.0 if model.maximize else 1.0
+
+    # ---- A verdict with no point of its own ----------------------------------------------
+    # `infeasible` and `unbounded` are answers, not failures, and until #191 this script
+    # treated them as though the solver had claimed a solution: it read the all-zero point a
+    # .sol file carried out of habit, found it violated the rows, and printed REJECTED at a
+    # correct answer. Our own checker calling our own correct verdict wrong is worse than not
+    # checking it, so now each verdict is checked as what it is.
+    claimed = solution.header.get("certificate", "none")
+    if claimed == "farkas" and not solution.farkas:
+        report.check(False, "certificate present",
+                     "the header says `certificate farkas` but the file carries no farkas "
+                     "section")
+        return report
+    if claimed == "ray" and not solution.ray:
+        report.check(False, "certificate present",
+                     "the header says `certificate ray` but the file carries no ray section")
+        return report
+
+    if solution.status == "infeasible":
+        return verify_farkas(model, solution, report)
+    if solution.status in ("unbounded", "infeasible_or_unbounded"):
+        if solution.status == "infeasible_or_unbounded" and not solution.ray:
+            report.note("verdict",
+                        "the solver separated neither case and offers no ray; nothing to "
+                        "check, and nothing is claimed")
+            return report
 
     # ---- Structure ----------------------------------------------------------------------
     missing_cols = [n for n in model.col_names if n not in solution.col_value]
@@ -625,6 +816,12 @@ def verify(model: Model, solution: Solution, primal_tol: float, dual_tol: float,
     report.check(worst_activity_gap <= 1e-6, "activity agreement",
                  f"max |ours - solver's| = {worst_activity_gap:.3e}")
 
+    # ---- The ray, when the verdict was unbounded -------------------------------------------
+    # Reached only after the point above has been checked feasible, which is the other half
+    # of the claim: a ray from an infeasible point proves nothing at all.
+    if solution.status in ("unbounded", "infeasible_or_unbounded"):
+        return verify_ray(model, solution, report, primal_tol)
+
     # ---- Objective, recomputed -----------------------------------------------------------
     # c'x + 0.5 x'Qx + offset. Omitting the quadratic term would have this script declare a
     # correct QP answer wrong - and, worse, declare a solver that ITSELF dropped the term
@@ -669,13 +866,26 @@ def verify(model: Model, solution: Solution, primal_tol: float, dual_tol: float,
 
         scale = max(1.0, abs(objective))
         if solution.status == "optimal":
-            # "Optimal" on a MILP is a claim that the search CLOSED: the incumbent and the
-            # final bound have met. If they have not, the solver is calling an incumbent a
-            # proof, which is the most consequential thing a branch and bound can get wrong
-            # and the least visible - the point is integral and feasible either way.
-            report.check(abs(objective - bound) <= 1e-6 * scale, "optimality proof",
+            # "Optimal" on a MILP is a claim about the bound: the incumbent is within the
+            # gap target of the best bound the search still had open (#188), or the tree
+            # was exhausted and the two have met. The targets are read from the header the
+            # solver wrote, defaulting to the project's (tolerances.hpp: 1e-4 relative,
+            # 1e-6 absolute) when an older file has none. A gap wider than that means the
+            # solver called an incumbent a proof, which is the most consequential thing a
+            # branch and bound can get wrong and the least visible - the point is integral
+            # and feasible either way.
+            relative_target = solution.header_float("mip_relative_gap")
+            absolute_target = solution.header_float("mip_absolute_gap")
+            allowed = max(1e-6 if absolute_target is None else absolute_target,
+                          (1e-4 if relative_target is None else relative_target) * scale)
+            gap = abs(objective - bound)
+            report.check(gap <= allowed + 1e-9 * scale, "optimality proof",
                          f"objective {objective:.12e} vs dual bound {bound:.12e}, "
-                         f"gap {abs(objective - bound):.3e}")
+                         f"gap {gap:.3e} against an allowed {allowed:.3e}")
+            # And the bound must still be on the right side of the incumbent.
+            slack = (objective - bound) if not model.maximize else (bound - objective)
+            report.check(slack >= -1e-6 * scale, "dual bound is a bound",
+                         f"incumbent {objective:.12e}, bound {bound:.12e}")
         else:
             # Not closed. The bound must still BE a bound: never worse than the incumbent.
             slack = (objective - bound) if not model.maximize else (bound - objective)

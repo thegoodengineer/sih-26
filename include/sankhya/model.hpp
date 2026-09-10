@@ -67,8 +67,10 @@ enum class SolveStatus : std::uint8_t {
   /// Detected as "not both feasible and bounded" without separating the two cases. Some
   /// first-order methods legitimately stop here; reporting it honestly beats guessing.
   kInfeasibleOrUnbounded,
-  /// A feasible point exists and is reported, but optimality was not proven (MIP gap open,
-  /// or a limit hit with an incumbent in hand).
+  /// A feasible point exists and is reported, but optimality was not proven: a node or time
+  /// limit hit with an incumbent in hand, or a first-order method that met its request but
+  /// not the project standard. A MIP that met its gap target reports kOptimal with the
+  /// achieved gap in the message (#188).
   kFeasible,
   kIterationLimit,
   kTimeLimit,
@@ -224,6 +226,24 @@ class Solution {
   /// Basis, when the engine produces one. Empty for first-order methods.
   std::vector<BasisStatus> col_status;
   std::vector<BasisStatus> row_status;
+
+  // ---- Certificates for the two verdicts that have no point (#191) ---------------------
+  //
+  // These are an ADDITION to this frozen interface, made deliberately and called out here
+  // rather than slipped in: every existing consumer ignores them, and both default to empty,
+  // which is this class's established way of saying "the engine produced nothing of that
+  // kind". See include/sankhya/certificate.hpp for what they mean and how they are checked.
+
+  /// Farkas multipliers, one per row, when `status` is kInfeasible and the engine could
+  /// prove it. Aggregating the rows with these weights yields an inequality no point in the
+  /// column box satisfies. Empty when no proof was produced - presolve concludes
+  /// infeasibility from bound arithmetic and carries its reason in `message` instead.
+  std::vector<double> farkas_dual;
+
+  /// A ray, one entry per column, when `status` is kUnbounded: a direction no bound blocks
+  /// along which the objective improves without limit. Read together with `col_value`, which
+  /// carries the feasible point it starts from.
+  std::vector<double> primal_ray;
 
   // ---- Reported quality. Never assumed - always measured before reporting. -------------
 

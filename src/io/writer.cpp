@@ -23,6 +23,7 @@
 
 #include "sankhya/io.hpp"
 #include "sankhya/model.hpp"
+#include "sankhya/options.hpp"
 #include "sankhya/version.hpp"
 
 namespace sankhya::io {
@@ -112,6 +113,11 @@ namespace {
 
 bool write_solution(const std::string& path, const Model& model, const Solution& solution,
                     std::string* error) {
+  return write_solution(path, model, solution, Options{}, error);
+}
+
+bool write_solution(const std::string& path, const Model& model, const Solution& solution,
+                    const Options& options, std::string* error) {
   std::FILE* out = std::fopen(path.c_str(), "wb");
   if (out == nullptr) {
     if (error != nullptr) *error = fmt::format("{}: cannot open for writing", path);
@@ -132,7 +138,15 @@ bool write_solution(const std::string& path, const Model& model, const Solution&
              solution.algorithm.empty() ? "unknown" : solution.algorithm);
   fmt::print(out, "objective {}\n", exact(solution.objective));
   fmt::print(out, "dual_bound {}\n", exact(solution.dual_bound));
+  // The targets an `optimal` MILP was held to (#188). Written for every model so the header
+  // has one shape; the verifier only reads them when there are integer columns.
+  fmt::print(out, "mip_relative_gap {}\n", exact(options.get_double("mip_relative_gap")));
+  fmt::print(out, "mip_absolute_gap {}\n", exact(options.get_double("mip_absolute_gap")));
   fmt::print(out, "objective_offset {}\n", exact(model.objective_offset));
+  fmt::print(out, "certificate {}\n",
+             !solution.farkas_dual.empty()  ? "farkas"
+             : !solution.primal_ray.empty() ? "ray"
+                                            : "none");
   fmt::print(out, "rows {}\n", m);
   fmt::print(out, "columns {}\n", n);
   fmt::print(out, "iterations {}\n", solution.iterations);
@@ -142,6 +156,32 @@ bool write_solution(const std::string& path, const Model& model, const Solution&
   fmt::print(out, "dual_infeasibility {}\n", exact(solution.dual_infeasibility));
   fmt::print(out, "integrality_violation {}\n", exact(solution.integrality_violation));
   if (!solution.message.empty()) fmt::print(out, "message {}\n", solution.message);
+
+  // A VERDICT WITH NO POINT DOES NOT GET A POINT (#191). `infeasible` is a statement
+  // about the whole feasible region, and this file used to answer it with a full
+  // all-zero columns and rows block, indistinguishable from a claimed solution. Our own
+  // independent checker then read that point, found it violated the rows, and printed
+  // REJECTED at a correct answer. What is written instead is the proof, when the engine
+  // had one. An UNBOUNDED claim keeps its columns block, because its ray starts from a
+  // feasible point and both halves are needed to check it.
+  if (solution.status == SolveStatus::kInfeasible) {
+    if (!solution.farkas_dual.empty()) {
+      fmt::print(out,
+                 "\n# Farkas certificate: one multiplier per row. Aggregating the rows\n"
+                 "# with these weights gives an inequality that no point inside the\n"
+                 "# column bounds can satisfy. tools/verify_solution.py recomputes both\n"
+                 "# sides.\n");
+      fmt::print(out, "begin farkas {}\n", m);
+      for (Index i = 0; i < m; ++i) {
+        fmt::print(out, "{} {}\n", quoted_name(row_name(model, i)),
+                   exact(value_or(solution.farkas_dual, i)));
+      }
+      fmt::print(out, "end farkas\n");
+    }
+    const bool closed = std::fclose(out) == 0;
+    if (!closed && error != nullptr) *error = fmt::format("{}: write failed", path);
+    return closed;
+  }
 
   fmt::print(out, "\n# name value reduced_cost basis_status\n");
   fmt::print(out, "begin columns {}\n", n);
@@ -160,6 +200,21 @@ bool write_solution(const std::string& path, const Model& model, const Solution&
                status_or(solution.row_status, i));
   }
   fmt::print(out, "end rows\n");
+
+  // The ray, read together with the point above: x + t*d stays feasible for every
+  // t >= 0 and the objective improves without limit along it (#191).
+  if (solution.status == SolveStatus::kUnbounded && !solution.primal_ray.empty()) {
+    fmt::print(out,
+               "\n# Unboundedness certificate: a direction no bound blocks, along\n"
+               "# which the objective improves forever, starting from the feasible point\n"
+               "# above.\n");
+    fmt::print(out, "begin ray {}\n", n);
+    for (Index j = 0; j < n; ++j) {
+      fmt::print(out, "{} {}\n", quoted_name(column_name(model, j)),
+                 exact(value_or(solution.primal_ray, j)));
+    }
+    fmt::print(out, "end ray\n");
+  }
 
   const bool ok = std::fclose(out) == 0;
   if (!ok && error != nullptr) *error = fmt::format("{}: write failed", path);

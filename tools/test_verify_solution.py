@@ -431,6 +431,126 @@ def test_quadratic_maximization_keeps_its_sign() -> None:
               f"{report.failures} check(s) failed, as expected")
 
 
+# =========================================================================================
+# The two verdicts that have no point of their own (#191)
+# =========================================================================================
+
+
+def _two_row_lp(cost, lower, upper, rows) -> "vs.Model":
+    """Columns x0.., rows r0.. Each row is (row_lower, row_upper, [coefficients])."""
+    model = vs.Model()
+    model.name = "VERDICT"
+    model.col_names = [f"x{j}" for j in range(len(cost))]
+    model.col_index = {name: j for j, name in enumerate(model.col_names)}
+    model.col_cost = list(cost)
+    model.col_lower = list(lower)
+    model.col_upper = list(upper)
+    model.col_integer = [False] * len(cost)
+    model.row_names = [f"r{i}" for i in range(len(rows))]
+    model.row_index = {name: i for i, name in enumerate(model.row_names)}
+    model.row_lower = [r[0] for r in rows]
+    model.row_upper = [r[1] for r in rows]
+    model.entries = [[(i, rows[i][2][j]) for i in range(len(rows)) if rows[i][2][j] != 0.0]
+                     for j in range(len(cost))]
+    return model
+
+
+def _verdict(status, header=None, columns=None, rows=None, farkas=None, ray=None):
+    solution = vs.Solution()
+    solution.header = {"status": status, "objective": "0.0"}
+    solution.header.update(header or {})
+    for name, value in (columns or {}).items():
+        solution.col_value[name] = value
+        solution.col_dual[name] = 0.0
+    for name, value in (rows or {}).items():
+        solution.row_activity[name] = value
+        solution.row_dual[name] = 0.0
+    solution.farkas = dict(farkas or {})
+    solution.ray = dict(ray or {})
+    return solution
+
+
+def _run(model, solution):
+    return vs.verify(model, solution, vs.DEFAULT_PRIMAL_TOL, vs.DEFAULT_DUAL_TOL,
+                     vs.DEFAULT_INTEGER_TOL, vs.DEFAULT_DUALITY_TOL)
+
+
+def _contradictory_pair() -> "vs.Model":
+    """x >= 5 and x <= 2. Needs both rows, so a one-row certificate cannot express it."""
+    return _two_row_lp(cost=[1.0], lower=[0.0], upper=[vs.INF],
+                       rows=[(5.0, vs.INF, [1.0]), (-vs.INF, 2.0, [1.0])])
+
+
+def test_a_valid_farkas_certificate_verifies() -> None:
+    """Adding row 0 and subtracting row 1 gives 0 >= 3, which nothing satisfies."""
+    report = _run(_contradictory_pair(),
+                  _verdict("infeasible", farkas={"r0": 1.0, "r1": -1.0}))
+    check(report.failures == 0, "a valid Farkas certificate verifies",
+          "; ".join(f"{n}: {d}" for ok, n, d in report.lines if not ok))
+
+
+def test_a_weakened_farkas_certificate_is_rejected() -> None:
+    """The control. Shrink one multiplier and the aggregate stops contradicting anything -
+    it becomes 0.8x >= 4.6, which x can satisfy because x has no upper bound."""
+    report = _run(_contradictory_pair(),
+                  _verdict("infeasible", farkas={"r0": 1.0, "r1": -0.2}))
+    check(report.failures >= 1, "a weakened Farkas certificate is rejected",
+          "; ".join(f"{n}: {d}" for ok, n, d in report.lines))
+
+
+def test_an_infeasible_verdict_without_a_certificate_is_not_a_failure() -> None:
+    """THE BUG #191 IS ABOUT. Presolve proves infeasibility by bound arithmetic and keeps no
+    Farkas vector. Before this, the checker read the all-zero point such a file used to carry,
+    found it violated the rows, and printed REJECTED at a correct answer."""
+    report = _run(_contradictory_pair(),
+                  _verdict("infeasible", header={"certificate": "none",
+                                                 "message": "proved during presolve"}))
+    check(report.failures == 0, "an infeasible verdict with no certificate is not rejected",
+          "; ".join(f"{n}: {d}" for ok, n, d in report.lines if not ok))
+
+
+def test_a_header_that_promises_a_certificate_must_carry_one() -> None:
+    """The other direction: a file that SAYS it has a proof and does not is broken."""
+    report = _run(_contradictory_pair(),
+                  _verdict("infeasible", header={"certificate": "farkas"}))
+    check(report.failures == 1, "a promised certificate that is missing is a failure",
+          "; ".join(f"{n}: {d}" for ok, n, d in report.lines))
+
+
+def _open_below() -> "vs.Model":
+    """min -x subject to x >= 1, x free above."""
+    return _two_row_lp(cost=[-1.0], lower=[-vs.INF], upper=[vs.INF],
+                       rows=[(1.0, vs.INF, [1.0])])
+
+
+def test_a_valid_ray_with_a_feasible_point_verifies() -> None:
+    report = _run(_open_below(),
+                  _verdict("unbounded", header={"certificate": "ray", "objective": "-1.0"},
+                           columns={"x0": 1.0}, rows={"r0": 1.0}, ray={"x0": 1.0}))
+    check(report.failures == 0, "a valid ray verifies",
+          "; ".join(f"{n}: {d}" for ok, n, d in report.lines if not ok))
+
+
+def test_a_ray_pointing_the_wrong_way_is_rejected() -> None:
+    """The control. Reversing the ray both worsens the objective and crosses the row bound,
+    so it must fail on its own merits rather than on the status."""
+    report = _run(_open_below(),
+                  _verdict("unbounded", header={"certificate": "ray", "objective": "-1.0"},
+                           columns={"x0": 1.0}, rows={"r0": 1.0}, ray={"x0": -1.0}))
+    check(report.failures >= 1, "a reversed ray is rejected",
+          "; ".join(f"{n}: {d}" for ok, n, d in report.lines))
+
+
+def test_a_ray_from_an_infeasible_point_is_rejected() -> None:
+    """Unbounded is TWO claims. A ray that starts outside the feasible region proves nothing,
+    and the point is checked before the ray is even looked at."""
+    report = _run(_open_below(),
+                  _verdict("unbounded", header={"certificate": "ray", "objective": "0.0"},
+                           columns={"x0": 0.0}, rows={"r0": 0.0}, ray={"x0": 1.0}))
+    check(report.failures >= 1, "a ray from an infeasible point is rejected",
+          "; ".join(f"{n}: {d}" for ok, n, d in report.lines))
+
+
 def main() -> int:
     print("test_fixed_format_row_name_with_space")
     test_fixed_format_row_name_with_space()
@@ -446,6 +566,14 @@ def main() -> int:
     test_qp_optimum_verifies_and_a_wrong_one_does_not()
     print("test_quadratic_maximization_keeps_its_sign")
     test_quadratic_maximization_keeps_its_sign()
+    print("the two verdicts with no point (#191)")
+    test_a_valid_farkas_certificate_verifies()
+    test_a_weakened_farkas_certificate_is_rejected()
+    test_an_infeasible_verdict_without_a_certificate_is_not_a_failure()
+    test_a_header_that_promises_a_certificate_must_carry_one()
+    test_a_valid_ray_with_a_feasible_point_verifies()
+    test_a_ray_pointing_the_wrong_way_is_rejected()
+    test_a_ray_from_an_infeasible_point_is_rejected()
     print()
     if FAILURES == 0:
         print("ALL TESTS PASSED")

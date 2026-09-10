@@ -338,6 +338,11 @@ class Simplex {
                      : nonbasic_value_[static_cast<std::size_t>(k)];
   }
 
+  /// The ray the ratio test proved unblocked, over the STRUCTURAL columns: the entering
+  /// variable moves by `direction` and each basic variable by -direction * alpha. This is the
+  /// same vector unbounded_ray_residual() assembles to check itself; #191 keeps it.
+  [[nodiscard]] std::vector<double> unbounded_ray(Index entering, int direction) const;
+
   [[nodiscard]] double minimization_objective() const;
   Solution finish(SolveStatus status, const std::string& message, Count iterations,
                   double seconds);
@@ -421,6 +426,12 @@ class Simplex {
   Count iterations_seen_ = 0;       ///< for the per-refactorization log line only
   Count rejected_updates_ = 0;
   Count accuracy_refactorizations_ = 0;
+  /// A certificate the loop has just computed, handed to finish() rather than recomputed.
+  /// Both are in the units of the model this engine was given, which may be a scaled one;
+  /// solve_with_scaling() maps them back the same way it maps the duals and the point (#191).
+  std::vector<double> pending_farkas_;
+  std::vector<double> pending_ray_;
+
   std::vector<double> x_basic_;
   std::vector<double> cost_basic_;
   std::vector<double> y_;

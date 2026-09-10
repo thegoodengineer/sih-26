@@ -124,9 +124,11 @@ cat <<'MIQPINTRO'
     Nothing new solves it. It is branch and bound (src/mip/branch_and_bound.cpp) with the
     convex QP engine as the node relaxation instead of the simplex.
 
-    The gap targets are set to ZERO below, so the run has to close the bound rather than
-    stop once it is close enough. That is the harder thing to do and the only one worth
-    demonstrating: finding 66.67 is easy, PROVING nothing better exists is the search.
+    The gap targets are set to ZERO below, so the run has to EXHAUST the tree rather than
+    stop once it is close enough. At the default 1e-4 the search meets the target at the
+    root and reports optimal within it (#188), which is the ordinary industrial answer; a
+    zero target is the harder thing and the only one worth demonstrating here: finding
+    66.67 is easy, PROVING nothing better exists is the search.
 MIQPINTRO
 solve_case miqp_blend demo/miqp_blend.mps --option mip_relative_gap=0 --option mip_absolute_gap=0
 # The GAP is the point, not the objective: a MIP reports an objective the moment it finds any

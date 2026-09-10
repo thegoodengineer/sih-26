@@ -233,8 +233,10 @@ def main() -> int:
 
         matched = (ours is not None and math.isfinite(ours)
                    and abs(ours - published) <= MATCH_RELATIVE_TOLERANCE * max(1.0, abs(published)))
-        # PROVED means the solver closed the bound itself, not that the number happens to be
-        # right. Only kOptimal asserts that, and #29's guard has already re-measured it.
+        # PROVED means the solver closed the bound itself - to within the gap target (1e-4
+        # relative, 1e-6 absolute; since #188 that is reported optimal) or by exhausting the
+        # tree - not that the number happens to be right. Only kOptimal asserts that, and
+        # #29's guard has already re-measured it.
         proved = status == "optimal" and matched
 
         relative = blob.get("relative_gap")
