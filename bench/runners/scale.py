@@ -51,7 +51,7 @@ CSV_COLUMNS = [
     "instance", "instance_sha256", "rows", "columns", "nonzeros", "analytic_optimum",
     "engine", "status", "our_objective", "absolute_error", "relative_error",
     "reached_optimum", "iterations", "wall_seconds", "solver_seconds", "time_limit",
-    "git_commit", "machine", "timestamp_utc", "solver_options",
+    "iteration_limit", "git_commit", "machine", "timestamp_utc", "solver_options",
 ]
 
 # An objective this close to one known exactly by construction is the right answer; the
@@ -116,13 +116,15 @@ OVERRUN_FACTOR = 3.0
 
 
 def solve(binary: Path, instance: Path, engine: str, time_limit: float,
-          extra: list[str]) -> dict:
+          extra: list[str], iteration_limit: int = 0) -> dict:
     with tempfile.TemporaryDirectory() as tmp:
         stats = Path(tmp) / "stats.json"
         command = [str(binary), "solve", str(instance), "--stats", str(stats),
                    "--time-limit", str(time_limit),
                    "--option", "log_to_console=false",
                    "--option", f"algorithm={engine}"]
+        if iteration_limit > 0:
+            command += ["--option", f"iteration_limit={iteration_limit}"]
         for option in extra:
             command += ["--option", option]
         started = time.perf_counter()
@@ -166,6 +168,17 @@ def main() -> int:
     parser.add_argument("--nnz-per-col", type=int, default=5)
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--time-limit", type=float, default=120.0)
+    parser.add_argument("--iteration-limit", type=int, default=0, metavar="N",
+                        help="give each solve N iterations instead of a clock. THE ONLY "
+                             "MEASUREMENT ON THIS PAGE A DIFFERENT MACHINE REPRODUCES "
+                             "EXACTLY. A time limit answers the industrial question - what "
+                             "can you do in two minutes - and its answer belongs to the "
+                             "laptop as much as to the solver: a machine at half speed does "
+                             "half the iterations and lands further from the optimum, so the "
+                             "same solver looks worse. A fixed iteration budget removes the "
+                             "machine entirely, which is what makes an accuracy claim at a "
+                             "million variables worth publishing. The time limit stays as a "
+                             "backstop so a solve cannot run forever.")
     parser.add_argument("--solver-option", action="append", default=[], metavar="KEY=VALUE",
                         help="pass --option KEY=VALUE to every solve and record it in the "
                              "CSV's solver_options column, so a run made to measure an "
@@ -184,8 +197,11 @@ def main() -> int:
     options = " ".join(args.solver_option)
     rows: list[dict] = []
 
-    print(f"Scale, against optima known exactly by construction. Limit {args.time_limit:g}s "
-          f"per solve, commit {commit}.\n")
+    budget = (f"{args.iteration_limit} iterations per solve (a {args.time_limit:g}s "
+              f"backstop), which a different machine reproduces exactly"
+              if args.iteration_limit > 0 else f"{args.time_limit:g}s per solve")
+    print(f"Scale, against optima known exactly by construction. {budget}, "
+          f"commit {commit}.\n")
     print(f"{'size':>8}  {'engine':<13}{'status':<13}{'objective':>18}{'rel err':>10}"
           f"{'iters':>10}{'seconds':>9}")
     print("-" * 82)
@@ -198,7 +214,8 @@ def main() -> int:
             digest = sha256(instance)
             nonzeros = size * args.nnz_per_col
             for engine in args.engines:
-                result = solve(binary, instance, engine, args.time_limit, args.solver_option)
+                result = solve(binary, instance, engine, args.time_limit,
+                               args.solver_option, args.iteration_limit)
                 objective = result["objective"]
                 claims_a_point = result["status"] in STATUSES_WITH_A_POINT
                 if objective is None or not math.isfinite(objective) or not claims_a_point:
@@ -225,6 +242,7 @@ def main() -> int:
                     "wall_seconds": f"{result['wall']:.6f}",
                     "solver_seconds": result["solver"],
                     "time_limit": args.time_limit,
+                    "iteration_limit": args.iteration_limit or "",
                     "git_commit": commit,
                     "machine": machine,
                     "timestamp_utc": timestamp,
