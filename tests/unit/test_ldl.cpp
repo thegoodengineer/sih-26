@@ -231,5 +231,59 @@ TEST(SparseLdl, NormalEquationsMatchTheDenseProduct) {
   EXPECT_LT(worst, 1e-12);
 }
 
+TEST(SparseLdl, ADeadlineStopsTheOrderingAndSaysSoWasWhy) {
+  // #193: the solver checks the clock between iterations, which is no use to a method whose
+  // FIRST iteration pays for the ordering. On a generated 20,000-row model that iteration ran
+  // 813 s against a 120 s limit, almost all of it inside analyze(), which the loop had not
+  // returned from to look at the clock. So analyze() takes a deadline.
+  //
+  // The distinction this pins is the one a caller acts on: a false return because the matrix
+  // is wrong is a numerical failure, and a false return because time ran out is a time limit.
+  // Reporting the first as the second would hide a real defect; the second as the first would
+  // invent one.
+  std::mt19937_64 rng(7);
+  const SpdSystem system = random_spd(rng, 40, 0.3, 8.0);
+
+  SparseLdl ldl;
+  ASSERT_FALSE(ldl.analyze(system.lower, [] { return true; }));
+  EXPECT_TRUE(ldl.stopped_early()) << "a deadline is not a broken matrix";
+
+  SparseLdl unwanted;
+  SparseMatrix empty;
+  empty.reset(0, 0);
+  empty.finalize();
+  ASSERT_FALSE(unwanted.analyze(empty));
+  EXPECT_FALSE(unwanted.stopped_early()) << "a bad matrix is not a deadline";
+}
+
+TEST(SparseLdl, ADeadlineNeverAskedIsADeadlineThatChangesNothing) {
+  // The property that makes this safe under CLAUDE.md's rule that wall-clock must never
+  // decide anything inside the solver: a factorization that COMPLETES does the same
+  // arithmetic and produces the same numbers whether or not a deadline was supplied. Only an
+  // unfinished one is affected, and an unfinished one has no answer either way.
+  std::mt19937_64 rng(11);
+  const SpdSystem system = random_spd(rng, 30, 0.35, 6.0);
+
+  SparseLdl plain;
+  ASSERT_TRUE(plain.analyze(system.lower));
+  ASSERT_TRUE(plain.factorize(system.lower, 1e-12));
+
+  SparseLdl watched;
+  ASSERT_TRUE(watched.analyze(system.lower, [] { return false; }));
+  ASSERT_TRUE(watched.factorize(system.lower, 1e-12, [] { return false; }));
+
+  ASSERT_EQ(plain.factor_nonzeros(), watched.factor_nonzeros());
+  std::vector<double> b(static_cast<std::size_t>(system.n));
+  for (Index i = 0; i < system.n; ++i) b[static_cast<std::size_t>(i)] = 1.0 + 0.25 * i;
+  std::vector<double> x_plain = b;
+  std::vector<double> x_watched = b;
+  plain.solve(x_plain.data());
+  watched.solve(x_watched.data());
+  for (Index i = 0; i < system.n; ++i) {
+    const auto u = static_cast<std::size_t>(i);
+    EXPECT_DOUBLE_EQ(x_plain[u], x_watched[u]) << "the deadline changed the arithmetic";
+  }
+}
+
 }  // namespace
 }  // namespace sankhya
