@@ -257,9 +257,10 @@ def comparison_verdict(ratio):
     """Say what the measured ratio shows, rather than a fixed sentence that can go stale."""
     standing = (
         "HiGHS is a decade of specialist work with presolve, a dual simplex and a mature "
-        "pricing scheme, and this solver still has neither of the first two. The part that "
-        "has to be right first is that **the answers agree** - the problem statement asks us "
-        "to compare, not to win.")
+        "pricing scheme. This solver now has a presolve (#43, #92) and a dual simplex (#65) "
+        "of its own, both defaults, so what remains between the two is the pricing and the "
+        "years. The part that has to be right first is that **the answers agree** - the "
+        "problem statement asks us to compare, not to win.")
     if ratio is None:
         return standing
     if ratio > 1.15:
@@ -611,6 +612,67 @@ def pdhg_section(path: Path | None) -> str:
     return chr(10).join(out)
 
 
+def cuts_ab_paragraph() -> str:
+    """The root-cut A/B (#159), computed from its two CSVs rather than typed.
+
+    Both runs were made at one commit on one machine, on the PR branch that added the cuts,
+    with `enable_root_cuts` off and on and nothing else different. The option's own
+    description quotes these numbers; recomputing them here on every regeneration is what
+    keeps the description, this document and the files from disagreeing.
+    """
+    off_path = RESULTS_DIR / "miplib-cuts-off.csv"
+    on_path = RESULTS_DIR / "miplib-cuts-on.csv"
+    if not off_path.exists() or not on_path.exists():
+        return ("**Root cuts, on versus off:** not measured on this checkout (no "
+                "`bench/results/miplib-cuts-{off,on}.csv`).")
+    off = {r["instance"]: r for r in read_csv(off_path)}
+    on = {r["instance"]: r for r in read_csv(on_path)}
+    common = [n for n in off if n in on]
+    if not common:
+        return "**Root cuts, on versus off:** the two CSVs share no instance."
+    same = [n for n in common if off[n]["status"] == on[n]["status"]]
+    changed = [n for n in common if off[n]["status"] != on[n]["status"]]
+
+    def nodes(row: dict) -> int:
+        try:
+            return int(row.get("nodes") or 0)
+        except ValueError:
+            return 0
+
+    nodes_off = sum(nodes(off[n]) for n in same)
+    nodes_on = sum(nodes(on[n]) for n in same)
+    per = [nodes(on[n]) / nodes(off[n]) for n in same if nodes(off[n]) > 0]
+    ratio = (nodes_on / nodes_off) if nodes_off else float("nan")
+
+    def tally(table: dict) -> tuple[int, int]:
+        return (sum(int(r.get("matched_published") or 0) for r in table.values()),
+                sum(int(r.get("proved_optimal") or 0) for r in table.values()))
+
+    matched_off, proved_off = tally(off)
+    matched_on, proved_on = tally(on)
+    commit = off[common[0]].get("git_commit", "?")
+
+    def outcome(name: str) -> str:
+        text = (f"`{name}` {off[name]['status'].replace('_', ' ')} -> "
+                f"{on[name]['status'].replace('_', ' ')}")
+        message = (on[name].get("message") or "").strip()
+        return f"{text} ({message})" if message else text
+
+    changed_text = "; ".join(outcome(n) for n in changed) if changed else "none"
+    spread = (f" (per instance from {min(per):.3f}x to {max(per):.3f}x)" if per else "")
+    return (f"**Root cuts, on versus off** (`bench/results/miplib-cuts-off.csv` and "
+            f"`miplib-cuts-on.csv`, both at `{commit}` on the PR branch, {len(common)} "
+            f"instances, the same time limit): with cuts on, {matched_on} of {len(on)} reach "
+            f"the published optimum and {proved_on} prove it, against {matched_off} and "
+            f"{proved_off} with them off. Over the {len(same)} instances that end the same "
+            f"way either way, the cuts take the total node count to {ratio:.3f}x{spread}. "
+            f"The outcome changed on {len(changed)}: {changed_text}. A cut row makes every "
+            f"node LP dearer, so at this limit the cuts buy nodes and cost proofs, and a run "
+            f"that reaches the gap target with them stops as `feasible` where the run without "
+            f"them exhausted its tree. That is why `enable_root_cuts` is off by default: a "
+            f"measurement, not caution.")
+
+
 def milp_section(path: Path | None) -> str:
     """MIPLIB, where TWO questions have to be answered separately.
 
@@ -648,11 +710,14 @@ def milp_section(path: Path | None) -> str:
         f"**{len(proved)} of {len(rows)}** also PROVED it - closed the bound rather than "
         f"stopping at a gap target or a limit.",
         "",
-        "Those are different claims and are kept apart deliberately. Branch and bound here has "
-        "no cutting planes - a rounding heuristic and a root dive, but nothing that tightens "
-        "the relaxation - so it finds good incumbents far more often than it finishes the "
-        "proof. Collapsing the two columns would hide exactly the thing #23 is meant to "
-        "improve.",
+        "Those are different claims and are kept apart deliberately. Branch and bound here "
+        "finds good incumbents far more often than it finishes the proof: reliability "
+        "branching (#69) and warm-started dual node LPs (#65) do the searching, and the root "
+        "cutting planes that exist (#159: Gomory mixed-integer and lifted knapsack cover) are "
+        "off by default, for the reason measured below. Collapsing the two columns would hide "
+        "exactly the thing cuts are meant to improve.",
+        "",
+        cuts_ab_paragraph(),
         "",
         "**The time limit decides some of these, not the solver.** A row that stops at the limit "
         "with a small gap says \"needs more time than we gave it\", not \"cannot\"; which side of "

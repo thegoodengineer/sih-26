@@ -13,8 +13,33 @@
 //   2. a negative control - a deliberately invalid cut the same harness must reject - because
 //      a validity test that has never failed is not evidence that it can fail.
 //
-// #23 carries the design notes for the Gomory mixed-integer family, which needs the simplex
-// tableau and is not here yet.
+// Two families live here, both generated once at the root and both OFF by default
+// (`enable_root_cuts`; the measurement behind the default is in the option's description):
+//
+//   - lifted knapsack cover cuts, on rows of the form sum(a_j x_j) <= b over binaries, with
+//     exact sequential lifting through a 0/1 knapsack dynamic programme;
+//   - Gomory mixed-integer cuts, from the tableau row of each fractional basic integer
+//     column, reconstructed from the final basis of the root LP.
+//
+// References, written from the literature:
+//   Gomory, "An algorithm for the mixed integer problem", RAND RM-2597, 1960 - the cut
+//   Balas, Ceria, Cornuejols & Natraj, "Gomory cuts revisited", Oper. Res. Letters 19, 1996
+//     - the cut as a practical root-node tool, and the numerical care it needs
+//   Marchand & Wolsey, "Aggregation and mixed integer rounding to solve MIPs", Oper. Res.
+//     49(3), 2001 - the mixed-integer-rounding view of the same inequality
+//   Balas, "Facets of the knapsack polytope", Math. Programming 8, 1975; Wolsey, "Faces for
+//     a linear inequality in 0-1 variables", Math. Programming 8, 1975 - cover inequalities
+//     and their lifting
+//   Zemel, "Easily computable facets of the knapsack polytope", Math. Oper. Res. 14, 1989 -
+//     sequential lifting
+//   Crowder, Johnson & Padberg, "Solving large-scale zero-one linear programming problems",
+//     Oper. Res. 31(5), 1983; Gu, Nemhauser & Savelsbergh, "Lifted cover inequalities for
+//     0-1 integer programs: computation", INFORMS J. Computing 10(4), 1998 - covers in
+//     practice
+//   Chvatal, "Edmonds polytopes and a hierarchy of combinatorial problems", Discrete Math.
+//     4, 1973 - rounding an integral row's bound (tighten_integral_rows)
+//   Achterberg, "Constraint Integer Programming" (thesis, 2007), ch. 8 - keeping a cut pool
+//     small: density, coefficient range and violation (filter_and_deduplicate_cuts)
 #pragma once
 
 #include <optional>

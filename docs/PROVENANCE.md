@@ -38,14 +38,15 @@ Every dependency is a general-purpose library. None of them solves an optimizati
 | **GoogleTest** | 1.14.0 | BSD-3-Clause | test binary only | Unit test framework. Never linked into `sankhya_core`. |
 | **highspy** | pip, benchmark only | MIT | **never linked** | The HiGHS solver, used ONLY as the comparison baseline in `bench/runners/compare.py`. It runs in a separate Python process, is not a build dependency, and nothing in `src/` knows it exists. Its source does not inform ours - see the red line in section 1. |
 
-Planned, not yet present:
+Considered, and not present. Each was allowed by the policy above; none turned out to be
+needed, and none is linked, vendored or fetched:
 
-| Dependency | Phase | Licence | Why it is not a solver |
-|---|---|---|---|
-| pybind11 | 10 | BSD-3-Clause | C++/Python binding glue. |
-| cuSPARSE / cuBLAS | 4, 8 | NVIDIA SDK | Vendor BLAS-level kernels (SpMV, dense linear algebra). They provide matrix arithmetic, not an optimization algorithm. |
-| AMD / COLAMD ordering | 6, 8 | per-module, to be checked before use | Graph fill-reducing permutations. Combinatorics on a sparsity pattern, not optimization. |
-| Eigen | 6+ | MPL-2.0 | **Tests only**, as a dense reference oracle. Never in `src/`. |
+| Dependency | Licence | Status |
+|---|---|---|
+| pybind11 | BSD-3-Clause | Not used. The Python bindings (#59, #129) are `ctypes` over the C API and compile nothing. |
+| cuSPARSE / cuBLAS | NVIDIA SDK | Not used yet. The CUDA backend is #16-#19; when it lands these supply SpMV and dense kernels, which are matrix arithmetic, not an optimization algorithm. |
+| AMD / COLAMD ordering | per-module | Not used. The sparse LDL^T (#70) carries its own minimum-degree ordering, and the LU orders by Markowitz counts. |
+| Eigen | MPL-2.0 | Not used. `DenseLu` (`src/simplex/dense_lu.cpp`) is the reference oracle the sparse LU is tested against. |
 
 ---
 
@@ -98,8 +99,8 @@ mathematics, not transcribed from anyone's implementation.
 | Primal-dual hybrid gradient (the base iteration) | Chambolle & Pock, *A first-order primal-dual algorithm for convex problems with applications to imaging*, JMIV 40(1), 2011, Algorithm 1 | `src/pdhg/pdhg.cpp` |
 | Adaptive step size, primal weight, restarts | Applegate et al., *Practical Large-Scale Linear Programming using Primal-Dual Hybrid Gradient* (PDLP), NeurIPS 2021, sections 3.1, 3.2, 4.3 | `src/pdhg/pdhg.cpp` |
 | GPU-oriented restarted PDHG (design reference) | Lu & Yang, *cuPDLP.jl*, arXiv:2311.12180 | `src/pdhg/pdhg.cpp` |
-| Ruiz equilibration | Ruiz, *A scaling algorithm to equilibrate both rows and columns norms in matrices*, RAL-TR-2001-034 | `src/pdhg/scaling.cpp` |
-| Diagonal preconditioning, alpha = 1 | Pock & Chambolle, *Diagonal preconditioning for first order primal-dual algorithms*, ICCV 2011, section 4 | `src/pdhg/scaling.cpp` |
+| Ruiz equilibration | Ruiz, *A scaling algorithm to equilibrate both rows and columns norms in matrices*, RAL-TR-2001-034 | `src/la/scaling.cpp` |
+| Diagonal preconditioning, alpha = 1 | Pock & Chambolle, *Diagonal preconditioning for first order primal-dual algorithms*, ICCV 2011, section 4 | `src/la/scaling.cpp` |
 | Moreau decomposition for the support-function prox | Rockafellar, *Convex Analysis*, theorem 31.5 | `src/pdhg/pdhg.cpp` |
 | Branch and bound | Land & Doig, *An automatic method of solving discrete programming problems*, Econometrica 28(3), 1960; Wolsey, *Integer Programming*, ch. 7 | `src/mip/branch_and_bound.cpp` |
 | Node propagation from row activities | Savelsbergh, *Preprocessing and probing for MIP*, ORSA J. Computing 6(4), 1994 | `src/mip/branch_and_bound.cpp` |
@@ -115,13 +116,22 @@ mathematics, not transcribed from anyone's implementation.
 | Exact rational branch and bound (test oracle) | as above, in exact arithmetic | `tests/oracles/rational_simplex.cpp` |
 | Shifted geometric mean benchmark reporting | Mittelmann, plato.asu.edu benchmark methodology | `bench/runners/make_benchmarks_doc.py` |
 | LP duality checks (feasibility, complementary slackness, strong duality) | Chvátal, *Linear Programming*, ch. 5 | `tools/verify_solution.py` |
+| Lifted knapsack cover cuts at the root, exact sequential lifting through a 0/1 knapsack dynamic programme (#159; `--option enable_root_cuts=true`, off by default by measurement) | Balas, *Facets of the knapsack polytope*, Math. Programming 8 (1975); Wolsey, *Faces for a linear inequality in 0-1 variables*, ibid.; Zemel, *Easily computable facets of the knapsack polytope*, Math. Oper. Res. 14 (1989); Crowder, Johnson & Padberg, Oper. Res. 31 (1983); Gu, Nemhauser & Savelsbergh, INFORMS J. Computing 10 (1998) | `src/mip/cuts.cpp` |
+| Gomory mixed-integer cuts at the root, from tableau rows reconstructed off the final basis (#159) | Gomory, *An algorithm for the mixed integer problem*, RAND RM-2597 (1960); Balas, Ceria, Cornuéjols & Natraj, *Gomory cuts revisited*, Oper. Res. Letters 19 (1996); Marchand & Wolsey, *Aggregation and mixed integer rounding to solve MIPs*, Oper. Res. 49 (2001) | `src/mip/cuts.cpp` |
+| Bound rounding on integral rows; cut filtering by density, coefficient range and violation, duplicates dropped | Chvátal, *Edmonds polytopes and a hierarchy of combinatorial problems*, Discrete Math. 4 (1973); Achterberg, *Constraint Integer Programming* (thesis, 2007), ch. 8 | `src/mip/cuts.cpp` |
+| Cut validity gate: every family checked in exact arithmetic against the rational oracle's optimum, with a deliberately invalid cut as the negative control | as above, in exact arithmetic | `tests/unit/test_cuts.cpp` |
+| Convex QP by a primal-dual proximal method with a forward step for the smooth 0.5 x'Qx term (#55; the LP engine's iteration with the gradient added) | Condat, *A primal-dual splitting method for convex optimization involving Lipschitzian, proximable and linear composite terms*, J. Optim. Theory Appl. 158 (2013); Vũ, *A splitting algorithm for dual monotone inclusions involving cocoercive operators*, Adv. Comput. Math. 38 (2013); Chambolle & Pock (2011) for the Q = 0 case | `src/qp/qp_condat_vu.cpp` |
+| Convexity decided before any arithmetic: LDL^T without interchanges on sense · Q, a negative pivot returned as the certificate; dense, and above 2000 columns it reports unverified rather than guessing | Golub & Van Loan, *Matrix Computations* (4th ed.), section 4.1; Higham, *Accuracy and Stability of Numerical Algorithms* (2nd ed.), ch. 10 | `src/qp/convexity.cpp` |
+| Presolve: empty, singleton, redundant and forcing rows, fixed and empty columns (#43), free column singletons and doubleton equations (#92); every reduction pushes a record and postsolve replays the stack in reverse, with the round-trip asserted against the rational oracle | Brearley, Mitra & Williams, *Analysis of mathematical programming problems prior to applying the simplex algorithm*, Math. Programming 8 (1975); Andersen & Andersen, *Presolving in linear programming*, Math. Programming 71 (1995); Achterberg et al., *Presolve reductions in mixed integer programming*, INFORMS J. Computing 32 (2020) | `src/presolve/presolve.cpp` |
+| Root diving heuristic: fix the least-fractional integer column, re-solve, to a bounded depth, so the search starts with an incumbent (#25) | Achterberg, *Constraint Integer Programming* (thesis, 2007), ch. 6; Berthold, *Primal heuristics for mixed integer programs* (diploma thesis, TU Berlin, 2006) | `src/mip/branch_and_bound.cpp` |
+| Singular-basis repair: the LU reports dependent columns by position, the simplex evicts them for their logicals, and a budget of stalled repairs stops a solve that is being carried by repair alone (#34, #174) | Maros, *Computational Techniques of the Simplex Method*, section 9.4; Suhl & Suhl, *Computing sparse LU factorizations for large-scale linear programming bases*, ORSA J. Computing 2 (1990) | `src/la/lu.cpp`, `src/simplex/simplex_core.hpp` |
 
-Phases 6 onwards add: Forrest–Tomlin update
-(Forrest & Tomlin 1972), restarted PDHG (Applegate et al.; Lu & Yang, arXiv:2311.12180;
-arXiv:2507.14051), Mehrotra predictor–corrector (Nocedal & Wright; Gondzio), Gomory MIR and
-cover cuts (Marchand & Wolsey; Wolsey), and branch-and-cut search (Achterberg). Devex pricing
-(#66) has landed early and is the default; the Harris ratio test (#67) has landed and stays
-opt-in - see the table above.
+Of the work once listed here as "Phases 6 onwards", restarted PDHG, the Mehrotra
+predictor-corrector, Gomory mixed-integer and lifted cover cuts, Devex pricing (#66, the
+default) and the Harris ratio test (#67, opt-in) have all landed and are in the table
+above. Not landed: the Forrest-Tomlin update (Forrest & Tomlin 1972; what ships is the
+product form of the inverse with refactorization forced by an accuracy check),
+mixed-integer rounding cuts, and cuts below the root.
 
 ---
 
@@ -176,7 +186,9 @@ $ ldd build/sankhya | grep -Ei 'cbc|clp|highs|scip|soplex|glpk|lpsolve|osqp|orto
 OK: no solver library is linked
 ```
 
-zlib, the C++ runtime, libc and libm. Nothing else.
+zlib, the C++ runtime, libc and libm - and, on a build with `SANKHYA_WITH_OPENMP` on (the
+default, #57), the compiler's own OpenMP runtime, `libgomp` with GCC, which the listing
+above predates. Nothing else.
 
 That grep is a **gate**, not a comment: the `provenance` job in `.github/workflows/ci.yml`
 exits non-zero if any linked library name matches a known solver. The claim cannot silently
