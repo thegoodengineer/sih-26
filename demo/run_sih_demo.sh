@@ -21,13 +21,36 @@ cd "$REPO"
 
 BIN="${SANKHYA_BIN:-}"
 if [ -z "$BIN" ]; then
-  for candidate in build/sankhya build/sankhya.exe build/Release/sankhya.exe; do
+  # build-dbg is searched too, and deliberately last. On Windows 11, Smart App Control
+  # blocks a freshly linked unsigned executable by hash and reputation, and a Release build
+  # is the one that usually gets blocked; a Debug build has different bytes and runs. That
+  # is the escape hatch scripts/preflight.sh documents and scripts/reproduce.sh offers as
+  # --debug, and without it the demo stops at its first command on a machine that can
+  # nevertheless run the solver perfectly well.
+  for candidate in build/sankhya build/sankhya.exe build/Release/sankhya.exe                    build-dbg/sankhya build-dbg/sankhya.exe; do
     [ -x "$REPO/$candidate" ] && BIN="$REPO/$candidate" && break
   done
 fi
 if [ -z "$BIN" ]; then
   echo "No solver binary found. Build first:" >&2
   echo "    scripts/configure.sh build Release && cmake --build build -j" >&2
+  exit 1
+fi
+# CHECKED, NOT ASSUMED. `[ -x ]` above answers a question Windows answers wrongly: the file
+# carries the executable bit and is still refused at exec time by Smart App Control, so the
+# first thing this script does would fail with "Permission denied" and nothing would say
+# why. One cheap invocation settles it here, where the message can name the cause and the
+# way out.
+if ! "$BIN" version >/dev/null 2>&1; then
+  echo "The solver binary at $BIN cannot be executed." >&2
+  echo "" >&2
+  echo "On Windows 11 this is usually Smart App Control refusing a freshly linked unsigned" >&2
+  echo "executable. A Debug build has different bytes and is generally allowed:" >&2
+  echo "" >&2
+  echo "    scripts/configure.sh build-dbg Debug && cmake --build build-dbg -j" >&2
+  echo "    SANKHYA_BIN=\$PWD/build-dbg/sankhya.exe demo/run_sih_demo.sh" >&2
+  echo "" >&2
+  echo "scripts/preflight.sh reports on this before anything else runs." >&2
   exit 1
 fi
 
