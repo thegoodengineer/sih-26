@@ -551,6 +551,57 @@ def test_a_ray_from_an_infeasible_point_is_rejected() -> None:
           "; ".join(f"{n}: {d}" for ok, n, d in report.lines))
 
 
+def test_a_verdict_that_claims_no_point_is_not_checked_as_if_it_did() -> None:
+    """#200. #191 fixed this for `infeasible` by naming that one status, so every other
+    verdict with nothing to show kept the bug: a numerical failure was written as a full
+    all-zero point and this script printed REJECTED at an answer the solver never made."""
+    model = _open_below()
+    report = _run(model, _verdict("numerical_error",
+                                  header={"certificate": "none",
+                                          "message": "the basis went singular"}))
+    check(report.failures == 0, "a numerical failure is not rejected for having no point",
+          "; ".join(f"{n}: {d}" for ok, n, d in report.lines if not ok))
+
+
+def test_a_limit_is_checked_on_what_it_claims_not_on_feasibility() -> None:
+    """A limit says only where the solve stopped. An interior-point iterate stopped by the
+    clock approaches feasibility from OUTSIDE, so holding it to a feasibility standard tests
+    something nobody asserted. What it does claim is the primal_infeasibility in its own
+    header, and that number has to be true."""
+    model = _open_below()  # min -x subject to x >= 1
+    # x = 0 violates the row by 1.0, and the file says so.
+    solution = _verdict("time_limit",
+                        header={"objective": "0.0", "primal_infeasibility": "1.0"},
+                        columns={"x0": 0.0}, rows={"r0": 0.0})
+    report = _run(model, solution)
+    check(report.failures == 0, "a limit that states its own infeasibility verifies",
+          "; ".join(f"{n}: {d}" for ok, n, d in report.lines if not ok))
+
+
+def test_a_limit_that_understates_its_infeasibility_is_rejected() -> None:
+    """The control, and the failure a solver has an incentive to make. Same point, same
+    violation, but the file claims to be a thousand times closer to feasible than it is."""
+    model = _open_below()
+    solution = _verdict("time_limit",
+                        header={"objective": "0.0", "primal_infeasibility": "1e-9"},
+                        columns={"x0": 0.0}, rows={"r0": 0.0})
+    report = _run(model, solution)
+    check(report.failures >= 1, "an understated infeasibility is rejected",
+          "; ".join(f"{n}: {d}" for ok, n, d in report.lines))
+
+
+def test_an_optimal_answer_is_still_held_to_feasibility() -> None:
+    """The other control. The relaxation above must not have loosened the case that matters:
+    `optimal` asserts a feasible point, and an infeasible one is still a failure."""
+    model = _open_below()
+    solution = _verdict("optimal",
+                        header={"objective": "0.0", "primal_infeasibility": "1.0"},
+                        columns={"x0": 0.0}, rows={"r0": 0.0})
+    report = _run(model, solution)
+    check(report.failures >= 1, "an infeasible point called optimal is still rejected",
+          "; ".join(f"{n}: {d}" for ok, n, d in report.lines))
+
+
 def main() -> int:
     print("test_fixed_format_row_name_with_space")
     test_fixed_format_row_name_with_space()
@@ -574,6 +625,11 @@ def main() -> int:
     test_a_valid_ray_with_a_feasible_point_verifies()
     test_a_ray_pointing_the_wrong_way_is_rejected()
     test_a_ray_from_an_infeasible_point_is_rejected()
+    print("verdicts that claim no point, and limits checked on honesty (#200)")
+    test_a_verdict_that_claims_no_point_is_not_checked_as_if_it_did()
+    test_a_limit_is_checked_on_what_it_claims_not_on_feasibility()
+    test_a_limit_that_understates_its_infeasibility_is_rejected()
+    test_an_optimal_answer_is_still_held_to_feasibility()
     print()
     if FAILURES == 0:
         print("ALL TESTS PASSED")

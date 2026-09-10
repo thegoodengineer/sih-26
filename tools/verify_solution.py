@@ -694,6 +694,27 @@ def verify_ray(model: Model, solution: Solution, report: Report, primal_tol: flo
     return report
 
 
+# The verdicts that hand back a point, mirroring claims_a_point() in include/sankhya/model.hpp.
+# The two lists are the .sol file's contract and have to agree; this script deliberately shares
+# no code with the solver, so they are kept in step by saying so in both places rather than by
+# a header. `unbounded` is here because since #191 it carries the feasible point its ray starts
+# from - a ray from outside the feasible region proves nothing.
+STATUSES_WITH_A_POINT = ("optimal", "feasible", "unbounded", "iteration_limit", "time_limit",
+                         "node_limit")
+
+# Of those, the ones that assert the point is FEASIBLE. The distinction is the whole of what
+# a limit means: `optimal` and `feasible` say "here is a point inside the model", and a limit
+# says only "here is where I stopped". An interior-point iterate stopped by the clock is not
+# feasible and was never claimed to be - it approaches feasibility from outside - so holding
+# it to a feasibility standard measures something nobody asserted. `unbounded` is here
+# because its ray is only a proof if it starts somewhere the model allows.
+#
+# A limit is still checked, on the claim it DOES make: the solver reports its own
+# primal_infeasibility in the header, and that number has to be true. Understating it is the
+# failure worth catching, and it is the one a solver has an incentive to make.
+STATUSES_ASSERTING_FEASIBILITY = ("optimal", "feasible", "unbounded")
+
+
 def verify(model: Model, solution: Solution, primal_tol: float, dual_tol: float,
            integer_tol: float, duality_tol: float) -> Report:
     report = Report()
@@ -718,6 +739,20 @@ def verify(model: Model, solution: Solution, primal_tol: float, dual_tol: float,
 
     if solution.status == "infeasible":
         return verify_farkas(model, solution, report)
+
+    # A VERDICT THAT CLAIMS NOTHING IS NOT CHECKED AS IF IT DID (#200). A numerical failure, a
+    # solve that never started, a model this solver refuses - none of these assert a point, and
+    # a file written under one carries no columns section since #200. Running the primal checks
+    # against what it does carry was the same bug #191 fixed for `infeasible` alone: this
+    # script printing REJECTED at an answer the solver never made.
+    if solution.status not in STATUSES_WITH_A_POINT and solution.status != "infeasible_or_unbounded":
+        report.note("verdict",
+                    f"status is {solution.status}, which claims no point; nothing is asserted "
+                    "and nothing is checked"
+                    + (f" - {solution.header['message']}" if "message" in solution.header
+                       else ""))
+        return report
+
     if solution.status in ("unbounded", "infeasible_or_unbounded"):
         if solution.status == "infeasible_or_unbounded" and not solution.ray:
             report.note("verdict",
@@ -739,6 +774,24 @@ def verify(model: Model, solution: Solution, primal_tol: float, dual_tol: float,
         return report
 
     x = [solution.col_value[n] for n in model.col_names]
+    asserts_feasibility = solution.status in STATUSES_ASSERTING_FEASIBILITY
+
+    def primal_check(worst_relative: float, worst_absolute: float, name: str,
+                     detail: str) -> None:
+        """Hold the point to what its status claims, and always report the measurement."""
+        if asserts_feasibility:
+            report.check(worst_relative <= primal_tol, name, detail)
+            return
+        claimed = solution.header_float("primal_infeasibility")
+        if claimed is None:
+            report.note(name, detail + f" - status is {solution.status}, which asserts no "
+                                       "feasibility, and the file states none to compare")
+            return
+        # The solver may be as far outside as it admits to being, and no further.
+        allowed = claimed * (1.0 + 1e-6) + primal_tol
+        report.check(worst_absolute <= allowed, name + " matches the stated",
+                     f"{detail}; the file states primal_infeasibility {claimed:.3e}, and "
+                     f"{solution.status} asserts no better")
 
     # ---- Column bounds ------------------------------------------------------------------
     # Scaled by the variable's own magnitude, for the same reason as the rows above.
@@ -748,7 +801,7 @@ def verify(model: Model, solution: Solution, primal_tol: float, dual_tol: float,
         scaled = violation / max(1.0, abs(x[j]))
         if scaled > worst:
             worst, where, worst_abs = scaled, name, violation
-    report.check(worst <= primal_tol, "column bounds",
+    primal_check(worst, worst_abs, "column bounds",
                  f"worst violation {worst_abs:.3e} ({worst:.3e} relative)"
                  + (f" on {where}" if where else ""))
 
@@ -803,7 +856,7 @@ def verify(model: Model, solution: Solution, primal_tol: float, dual_tol: float,
         scaled = violation / row_scale[i]
         if scaled > worst:
             worst, where, worst_abs = scaled, name, violation
-    report.check(worst <= primal_tol, "row activity",
+    primal_check(worst, worst_abs, "row activity",
                  f"worst violation {worst_abs:.3e} ({worst:.3e} relative to the row's terms)"
                  + (f" on {where}" if where else ""))
 

@@ -79,6 +79,40 @@ enum class SolveStatus : std::uint8_t {
   kModelError
 };
 
+/// Does a solve ending in this state hand back a point?
+///
+/// The question a writer, a checker and a caller all have to answer, asked once here so they
+/// cannot answer it differently (#200). Getting it wrong in the permissive direction is what
+/// #191 was: an `infeasible` answer was written as a full all-zero point, and the project's
+/// own independent checker read that point, found it violated the rows, and printed REJECTED
+/// at a correct answer. That was fixed for `infeasible` alone, and every other verdict with
+/// nothing to show kept the bug.
+///
+/// `kUnbounded` says yes deliberately. Since #191 it carries the feasible point its ray
+/// starts from, because a ray that begins outside the feasible region proves nothing, and a
+/// checker needs both halves.
+///
+/// The limit states say yes because they normally stop with an iterate or an incumbent in
+/// hand. The one exception is a node limit reached before branch and bound found any integer
+/// point, which reports no objective and infinite gaps rather than a point (see
+/// `src/mip/branch_and_bound.cpp`); that case predates this predicate and is unchanged by it.
+[[nodiscard]] constexpr bool claims_a_point(SolveStatus status) noexcept {
+  switch (status) {
+    case SolveStatus::kOptimal:
+    case SolveStatus::kFeasible:
+    case SolveStatus::kUnbounded:
+    case SolveStatus::kIterationLimit:
+    case SolveStatus::kTimeLimit:
+    case SolveStatus::kNodeLimit: return true;
+    case SolveStatus::kNotSolved:
+    case SolveStatus::kInfeasible:
+    case SolveStatus::kInfeasibleOrUnbounded:
+    case SolveStatus::kNumericalError:
+    case SolveStatus::kModelError: return false;
+  }
+  return false;
+}
+
 /// Human-readable name for a status, for logs and the JSON result blob.
 [[nodiscard]] const char* to_string(SolveStatus status) noexcept;
 [[nodiscard]] const char* to_string(BasisStatus status) noexcept;
