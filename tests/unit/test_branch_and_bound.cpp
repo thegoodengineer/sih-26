@@ -275,7 +275,7 @@ TEST(BranchAndBound, ReportsFeasibleRatherThanOptimalAtTheNodeLimit) {
   }
 }
 
-TEST(BranchAndBound, StopsOnALooseRelativeGapAndReportsFeasible) {
+TEST(BranchAndBound, StopsOnALooseRelativeGapAndReportsOptimalWithinIt) {
   // #37: mip_relative_gap was read into relative_gap_target_ and never referenced again, so
   // setting it had zero effect on when the search stopped - it always ran to full closure.
   //
@@ -295,11 +295,15 @@ TEST(BranchAndBound, StopsOnALooseRelativeGapAndReportsFeasible) {
   options.set_double("mip_relative_gap", 0.5);
   const Solution loose = solve(model, options);
 
-  EXPECT_EQ(loose.status, SolveStatus::kFeasible)
-      << "a 50% relative gap should stop the search before it proves optimality; before the "
-         "fix this always came back kOptimal regardless of the setting";
+  // #188: meeting the target IS the optimality claim every MIP solver makes, so the status
+  // is kOptimal; what distinguishes it from an exhausted tree is the message and the gap
+  // it reports. Before #37 this always came back kOptimal with a CLOSED gap regardless of
+  // the setting, which is why the node count and the gap below are what carry the test.
+  EXPECT_EQ(loose.status, SolveStatus::kOptimal) << loose.message;
+  EXPECT_NE(loose.message.find("gap target"), std::string::npos) << loose.message;
   EXPECT_LT(loose.nodes, tight.nodes)
       << "the gap should make the search stop with fewer nodes than closing the tree";
+  EXPECT_GT(loose.absolute_gap, 0.0) << "a gap-target stop reports the gap it accepted";
 
   // The bound must remain a genuine bound: at least as good as the incumbent.
   EXPECT_LE(loose.dual_bound, loose.objective + 1e-9);
@@ -528,7 +532,8 @@ FuzzTally run_milp_fuzz(const Options& options, const char* label) {
     const double expected = exact.objective.to_double();
     const double scale = std::max(1.0, std::fabs(expected));
 
-    if (s.status == SolveStatus::kOptimal) {
+    const bool stopped_on_gap = s.message.find("gap target") != std::string::npos;
+    if (s.status == SolveStatus::kOptimal && !stopped_on_gap) {
       if (std::fabs(s.objective - expected) > 1e-6 * scale) {
         disagree("objectives differ by " + std::to_string(std::fabs(s.objective - expected)));
         continue;
@@ -537,11 +542,13 @@ FuzzTally run_milp_fuzz(const Options& options, const char* label) {
       continue;
     }
 
-    if (s.status == SolveStatus::kFeasible) {
-      // #37: a search that stops on a GAP rather than by exhausting the tree legitimately
-      // reports kFeasible even when the incumbent already IS the true optimum - only
-      // exhaustion proves that, and gap-based termination stops before exhaustion by
-      // design. That alone is not a disagreement with the oracle. A real disagreement
+    if (s.status == SolveStatus::kFeasible || stopped_on_gap) {
+      // #37: a search that stops on a GAP rather than by exhausting the tree is optimal
+      // WITHIN THE TARGET (#188: reported kOptimal, with the accepted gap in the message)
+      // even when the incumbent already IS the true optimum - only exhaustion proves that,
+      // and gap-based termination stops before exhaustion by design. That alone is not a
+      // disagreement with the oracle; the same holds of a kFeasible limit stop. A real
+      // disagreement
       // would be: an incumbent worse than the gap tolerance allows, an incumbent BETTER
       // than the true optimum (impossible unless something upstream is broken), or a
       // reported bound that oversteps the true optimum (the gap check trusted that bound
@@ -558,7 +565,7 @@ FuzzTally run_milp_fuzz(const Options& options, const char* label) {
       const bool within_gap = s.objective <= expected + gap_tolerance + 1e-6 * scale;
       const bool bound_is_valid = s.dual_bound <= expected + 1e-6 * scale;
       if (!not_better_than_optimal || !within_gap || !bound_is_valid) {
-        disagree("kFeasible incumbent falls outside what the default gap tolerances allow");
+        disagree("the incumbent falls outside what the default gap tolerances allow");
         continue;
       }
       ++agreed_optimal;

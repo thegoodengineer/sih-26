@@ -669,13 +669,26 @@ def verify(model: Model, solution: Solution, primal_tol: float, dual_tol: float,
 
         scale = max(1.0, abs(objective))
         if solution.status == "optimal":
-            # "Optimal" on a MILP is a claim that the search CLOSED: the incumbent and the
-            # final bound have met. If they have not, the solver is calling an incumbent a
-            # proof, which is the most consequential thing a branch and bound can get wrong
-            # and the least visible - the point is integral and feasible either way.
-            report.check(abs(objective - bound) <= 1e-6 * scale, "optimality proof",
+            # "Optimal" on a MILP is a claim about the bound: the incumbent is within the
+            # gap target of the best bound the search still had open (#188), or the tree
+            # was exhausted and the two have met. The targets are read from the header the
+            # solver wrote, defaulting to the project's (tolerances.hpp: 1e-4 relative,
+            # 1e-6 absolute) when an older file has none. A gap wider than that means the
+            # solver called an incumbent a proof, which is the most consequential thing a
+            # branch and bound can get wrong and the least visible - the point is integral
+            # and feasible either way.
+            relative_target = solution.header_float("mip_relative_gap")
+            absolute_target = solution.header_float("mip_absolute_gap")
+            allowed = max(1e-6 if absolute_target is None else absolute_target,
+                          (1e-4 if relative_target is None else relative_target) * scale)
+            gap = abs(objective - bound)
+            report.check(gap <= allowed + 1e-9 * scale, "optimality proof",
                          f"objective {objective:.12e} vs dual bound {bound:.12e}, "
-                         f"gap {abs(objective - bound):.3e}")
+                         f"gap {gap:.3e} against an allowed {allowed:.3e}")
+            # And the bound must still be on the right side of the incumbent.
+            slack = (objective - bound) if not model.maximize else (bound - objective)
+            report.check(slack >= -1e-6 * scale, "dual bound is a bound",
+                         f"incumbent {objective:.12e}, bound {bound:.12e}")
         else:
             # Not closed. The bound must still BE a bound: never worse than the incumbent.
             slack = (objective - bound) if not model.maximize else (bound - objective)

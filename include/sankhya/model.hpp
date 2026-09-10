@@ -67,8 +67,10 @@ enum class SolveStatus : std::uint8_t {
   /// Detected as "not both feasible and bounded" without separating the two cases. Some
   /// first-order methods legitimately stop here; reporting it honestly beats guessing.
   kInfeasibleOrUnbounded,
-  /// A feasible point exists and is reported, but optimality was not proven (MIP gap open,
-  /// or a limit hit with an incumbent in hand).
+  /// A feasible point exists and is reported, but optimality was not proven: a node or time
+  /// limit hit with an incumbent in hand, or a first-order method that met its request but
+  /// not the project standard. A MIP that met its gap target reports kOptimal with the
+  /// achieved gap in the message (#188).
   kFeasible,
   kIterationLimit,
   kTimeLimit,

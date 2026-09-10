@@ -264,7 +264,7 @@ int main(int argc, char** argv) {
 
     std::string error;
     if (!solution_path.empty() &&
-        !sankhya::io::write_solution(solution_path, model, solution, &error)) {
+        !sankhya::io::write_solution(solution_path, model, solution, options, &error)) {
       fmt::print(stderr, "error: {}\n", error);
       return 4;
     }
