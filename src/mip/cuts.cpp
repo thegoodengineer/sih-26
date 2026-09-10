@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-// SANKHYA - cutting planes. See cuts.hpp for the correctness obligations this file carries.
+// SANKHYA - cutting planes. See cuts.hpp for the correctness obligations this file carries
+// and for the references each family is written from.
 
 #include "cuts.hpp"
 
@@ -338,7 +339,7 @@ std::optional<KnapsackCoverCut> generate_knapsack_cover_cut(const Model& model, 
 }
 
 // =========================================================================================
-// tighten_integral_rows â€” unchanged from baseline
+// tighten_integral_rows - rounding an integral row's bound (Chvatal 1973)
 // =========================================================================================
 
 RowTightening tighten_integral_rows(Model* model, Logger& logger) {

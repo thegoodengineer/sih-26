@@ -122,6 +122,43 @@ def failure_line(rows: list[dict]) -> str:
     return f"{len(failed)} of {len(rows)} not passed: " + "; ".join(parts)
 
 
+def extremes_line(rows: list[dict]) -> str:
+    """Largest and slowest passed instance, and the ones the clock stopped, from the CSV.
+
+    The demo's closing section carried these as typed numbers - a size, two timings and a
+    CSV name - and the timings were from one run while the counts beside them were from
+    another. Read from the newest CSV they are the same run as the counts.
+    """
+    def num(row: dict, key: str) -> float:
+        try:
+            return float(row.get(key) or 0.0)
+        except ValueError:
+            return 0.0
+
+    passed = [row for row in rows if row.get("passed") == "1"]
+    if not passed:
+        return "no passed instance to report"
+    largest = max(passed, key=lambda row: num(row, "nonzeros"))
+    slowest = max(passed, key=lambda row: num(row, "wall_seconds"))
+    limited = [row for row in rows if (row.get("status") or "").strip() == "time_limit"]
+    parts = [
+        f"largest solved: {largest.get('instance')} ({largest.get('rows')} x "
+        f"{largest.get('columns')}, {largest.get('nonzeros')} nonzeros) in "
+        f"{num(largest, 'wall_seconds'):.2f} s",
+        f"slowest solved: {slowest.get('instance')} ({slowest.get('rows')} x "
+        f"{slowest.get('columns')}) in {num(slowest, 'wall_seconds'):.1f} s",
+    ]
+    if limited:
+        cap = max(num(row, "wall_seconds") for row in limited)
+        parts.append(f"at the {cap:.0f} s limit: "
+                     + ", ".join(sorted(row.get("instance", "?") for row in limited)))
+    commit = rows[0].get("git_commit", "?") if rows else "?"
+    parts.append(f"measured on commit {commit}")
+    # One fact per line: the demo indents each into its ledger, and a single 200-character
+    # line wraps unreadably at any terminal width.
+    return "\n".join(parts)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("pattern", help='e.g. "netlib-medium-*.csv"')
@@ -139,6 +176,10 @@ def main() -> int:
                              "hand-written prose, and it was stale within a day of every "
                              "solver change - understating and overstating by turns. Read "
                              "from the CSV it cannot drift.")
+    parser.add_argument("--extremes", action="store_true",
+                        help="print the largest and slowest passed instance and the ones the "
+                             "time limit stopped, from the same CSV as the counts. The demo "
+                             "used to type these from a different run than its counts.")
     args = parser.parse_args()
 
     path = latest(args.pattern)
@@ -148,7 +189,7 @@ def main() -> int:
             return 0
         return 1
 
-    if not args.summary and not args.status_counts and not args.failures:
+    if not (args.summary or args.status_counts or args.failures or args.extremes):
         print(path)
         return 0
 
@@ -171,6 +212,9 @@ def main() -> int:
         return 0
     if args.failures:
         print(failure_line(rows))
+        return 0
+    if args.extremes:
+        print(extremes_line(rows))
         return 0
     passed = sum(1 for row in rows if row.get("passed") == "1")
     commit = rows[0].get("git_commit", "?") if rows else "?"

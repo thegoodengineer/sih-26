@@ -421,6 +421,12 @@ jobs:
       - name: SBOM is up to date with the build file
         run: python3 tools/make_sbom.py --check
 
+      # Section 3 of PROVENANCE.md tells a judge where each algorithm lives. A row that
+      # points at a file that has moved reads as a citation nobody checked; two did, for a
+      # week, after scaling.cpp moved from src/pdhg/ to src/la/.
+      - name: Every path PROVENANCE.md names exists
+        run: python3 tools/check_provenance_paths.py
+
       - name: Generate SPDX SBOM from a scan, as a cross-check
         uses: anchore/sbom-action@v0
         with:

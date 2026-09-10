@@ -23,8 +23,8 @@ Petrochemicals Limited.
 | 2 | MPS/LP readers, revised primal simplex, CLI | **done** |
 | 3 | Verification spine: rational oracle, independent checker, Netlib harness | **done** |
 | 4 | Restarted PDHG — **CPU done**, CUDA backend not started (no GPU available) | partial |
-| 5 | Branch & bound → MILP | **done** (cuts still deferred, see #23; MIPLIB now benchmarked) |
-| 6–10 | Performance, branch & cut, IPM/QP, robustness, packaging | convex QP **done** (Phase 8, `src/qp/`); interior point **done, opt-in** (`src/ipm/`, no basis); robustness sweep **done** (`bench/runners/robustness.py`); cuts and packaging remain |
+| 5 | Branch & bound → MILP | **done** (MIPLIB benchmarked; root cuts landed in #159 and are off by default, see below) |
+| 6–10 | Performance, branch & cut, IPM/QP, robustness, packaging | convex QP **done** (Phase 8, `src/qp/`); interior point **done, opt-in** (`src/ipm/`, no basis); robustness sweep **done** (`bench/runners/robustness.py`); root cuts **done, off by default** (#159, `src/mip/cuts.cpp`); packaging **done** apart from the human items on #73 |
 
 LP is solved by a bounded-variable revised primal simplex (or restarted PDHG), MILP by
 branch and bound, and convex QP by a Condat-Vu primal-dual method — and MIQP by branch and
@@ -99,8 +99,10 @@ largest instances rather than robustness. Tracked in #34.
 
 MIPLIB 2017 is benchmarked too: **13 of 30** easy instances reach the published optimum,
 **6 of 30** also prove it (`bench/results/miplib-53cbe16.csv`, 60 s) —
-branch and bound now has reliability branching and warm-started node LPs, but no cutting
-planes (#23), so it finds good incumbents far more often than it closes the bound. For
+branch and bound has reliability branching and warm-started node LPs, and root cutting
+planes that are off by default because they were measured to cost proofs at this limit
+(#159; `docs/BENCHMARKS.md` section 2), so it finds good incumbents far more often than it
+closes the bound. For
 scale beyond what Netlib tests, `bench/runners/generate_large_lp.py` builds sparse LPs of
 any size with an exactly known analytic optimum, and `bench/runners/mittelmann.py` runs
 Mittelmann's LP set: on its eight smallest instances (6,330 to 376,500 rows) the result is
@@ -204,7 +206,7 @@ src/presolve      reductions + postsolve               (on by default)
 src/simplex       primal and dual revised simplex (the dual is the branch-and-bound node engine)
 src/la            sparse containers, sparse Markowitz LU (hyper-sparse FTRAN), sparse LDL^T, dense LU (test oracle only)
 src/pdhg          restarted PDHG, CPU                  (CUDA backend: not started)
-src/mip           branch and bound + diving heuristic  (cutting planes: Phase 7)
+src/mip           branch and bound + diving heuristic + root cuts (cuts off by default, #159)
 src/qp            convex QP, Condat-Vu primal-dual     (done)
 src/ipm           Mehrotra interior point, sparse LDL^T (opt-in: algorithm=ipm, no basis)
 bindings/python   Python bindings — ctypes over the C API, nothing to compile
@@ -223,17 +225,18 @@ tracks every PS26119 requirement against what exists on `main`; section 6 of
 | **GPU acceleration** | The first-order method it needs exists and runs on CPU - restarted PDHG, `--option algorithm=pdhg`, 8 of 9 committed instances to `optimal` at 1e-8 (`docs/BENCHMARKS.md` section 1e). The CUDA backend is unwritten (#16-#19); `--gpu` warns and falls back. No speed-up is claimed. |
 | **Scale** | The largest Netlib instance solved is `fit2d`, 25x10500 with 129018 nonzeros, in 0.3 s; the slowest solved is `fit2p`, 3000x13525, at 58.5 s; `dfl001` (6071x12230) and `pilot87` (2030x4883) hit the 120 s limit (`bench/results/netlib-full-53cbe16.csv`). On Mittelmann's eight smallest LPs, 6,330 to 376,500 rows, the result is 0 of 8 inside 300 s (`docs/BENCHMARKS.md` section 1d). A generated 5000x5000 instance is also demonstrated against an optimum known by construction. Nothing here supports the *"millions of variables"* end of the problem statement; the Mittelmann table is where that claim would have to start. |
 | **Interior point as a default** | An interior-point method exists (#56, `--option algorithm=ipm`, Mehrotra predictor-corrector over a from-scratch sparse LDL^T) and is opt-in: it produces no basis, so it cannot warm-start branch and bound and cannot certify infeasibility, and on the full Netlib set it verifies fewer instances than the dual simplex (`docs/PS26119_COVERAGE.md`). The default continuous engine is the simplex. |
-| **Cutting planes** | Branch and bound has reliability branching (pseudocosts with strong branching, #69) and warm-started dual node LPs (#65), but no Gomory, MIR or cover cuts (#23). This is why MIPLIB proves few optima. |
+| **Cutting planes by default** | Root Gomory mixed-integer and lifted knapsack cover cuts exist (#159, `--option enable_root_cuts=true`) and are off by default: on the 30-instance MIPLIB set at 60 s they take the node count to 0.887x over the 28 instances that end the same way and cost two proofs, because a cut row makes every node LP dearer (`bench/results/miplib-cuts-{off,on}.csv`; `docs/BENCHMARKS.md` section 2). No MIR cuts, and none below the root. Branch and bound itself has reliability branching (#69) and warm-started dual node LPs (#65). This is why MIPLIB proves few optima. |
 | **Non-convex QP** | Refused deliberately, with an LDL^T certificate. A local optimum reported as a global one is not something this solver will do. |
-| **MIQP bound quality** | MIQP is implemented, but its node bound comes from a first-order method and is only accurate to the tolerance it converged to, so pruning is deliberately kept on the conservative side and costs nodes. With no cuts either, expect incumbents more often than proofs. |
+| **MIQP bound quality** | MIQP is implemented, but its node bound comes from a first-order method and is only accurate to the tolerance it converged to, so pruning is deliberately kept on the conservative side and costs nodes. With root cuts off by default too, expect incumbents more often than proofs. |
 | **Parallelism** | Single-threaded by default. `--option threads=N` runs the column loops of an iteration under OpenMP, deterministically - results are bit-identical at 1 and 8 threads - and at Netlib scale it is measured to buy nothing, because an iteration is too short to amortize the fork (#57). It is a correctness-preserving switch, not a speed claim. |
 
 On speed against HiGHS: on the medium tier the objectives agree on all 50 instances, and
 the speed comparison is **indistinguishable rather than a result**. These models solve in
 single-digit milliseconds, 20 of the 50 timing envelopes overlap outright, and the median
-per-instance ratio came out 1.38x, 2.11x and 2.68x on three runs of the same binary on
-this machine within one day - while on the cleanest of those runs our total solve time was
-0.68x the earlier one's. A number that unstable is not a speed claim in either direction.
+per-instance ratio came out 1.38x on one committed run and 2.11x on the next, three days
+apart on this machine (`bench/results/compare-highs-medium-adcee1b.csv` and
+`compare-highs-medium-53cbe16.csv`) - while our total solve time on the second run was
+0.68x the first's. A number that unstable is not a speed claim in either direction.
 The reproducible comparison is iteration count, where the gap narrowed by a third when
 devex pricing became the default (#66); HiGHS's devex still takes fewer.
 

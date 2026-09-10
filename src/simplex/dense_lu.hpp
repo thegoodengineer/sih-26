@@ -4,13 +4,14 @@
 // Reference: Golub & Van Loan, "Matrix Computations" (4th ed.), sections 3.2 and 3.4, for
 // right-looking LU with partial pivoting and for the transposed triangular solves.
 //
-// THIS IS DELIBERATELY THE SLOW IMPLEMENTATION. Phase 2's job is a simplex whose answers
-// can be trusted; Phase 6 replaces this entire class with a sparse Markowitz LU plus
-// Forrest-Tomlin updates. Refactorizing the whole basis from scratch on every iteration
-// costs O(m^3) per pivot, which is indefensible at scale and invaluable now: there is no
-// eta file, no update formula and no accumulated round-off, so any wrong answer the
-// simplex produces is the simplex's fault and not the linear algebra's. Keeping those two
-// error sources separated is worth more at this stage than any amount of speed.
+// THIS IS DELIBERATELY THE SLOW IMPLEMENTATION, AND IT IS NOW THE ORACLE. Phase 2's job was
+// a simplex whose answers could be trusted, and this was its linear algebra; the engines
+// have since moved to the sparse Markowitz LU with product-form updates in src/la/lu.cpp.
+// This class stays (lu.hpp, "VERIFICATION"): the fuzz tests factorize the same basis both
+// ways and require the FTRAN and BTRAN results to agree. Refactorizing the whole basis from
+// scratch costs O(m^3) per pivot, which is indefensible at scale and invaluable in a
+// reference: there is no eta file, no update formula and no accumulated round-off, so a
+// disagreement between the two is the sparse code's fault and not this one's.
 //
 // Storage is column-major so that the inner loop of the elimination walks contiguous
 // memory, and L is unit-lower with its multipliers stored in place beneath the diagonal.

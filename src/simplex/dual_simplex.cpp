@@ -38,9 +38,11 @@
 // on every row but the ones the moved columns touch. No answer is ever reported about the
 // boxed problem: the boxes are gone before finish() runs, on every exit.
 //
-// WHAT IS NOT HERE. Cost perturbation against dual degeneracy, and the Harris variant of the
-// dual ratio test. A dual stall hands the basis to the primal loop instead, which has its
-// own anti-degeneracy machinery, so a stall costs iterations and never a wrong answer.
+// WHAT IS NOT HERE. The Harris variant of the dual ratio test. Cost perturbation against
+// dual degeneracy IS here (COST PERTURBATION, below): a stall perturbs the nonbasic costs
+// and iterates on, and only a stall that survives that hands the basis to the primal loop,
+// which has its own anti-degeneracy machinery - so a stall costs iterations and never a
+// wrong answer.
 
 #include "primal_simplex.hpp"
 #include "simplex_core.hpp"

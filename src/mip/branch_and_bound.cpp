@@ -15,11 +15,13 @@
 // therefore costs O(depth) to enter, not O(nonzeros), and the constraint matrix exists once
 // no matter how large the tree grows.
 //
-// WHAT THIS PHASE DELIBERATELY DOES NOT DO. No cutting planes, no pseudocost or reliability
-// branching, no node presolve beyond simple propagation, no parallelism. Those are Phase 7,
-// and they are also where MILP correctness bugs hide: a cut that is very slightly invalid
-// removes the optimum and the search then proves the wrong answer, confidently. Getting a
-// plain, correct search working first is what makes those additions checkable.
+// WHAT THIS FILE DOES BY DEFAULT, AND WHAT IT DOES NOT. Reliability branching (#69) is the
+// default rule. The root cutting planes in cuts.hpp (#159) exist and are OFF unless
+// `enable_root_cuts` is set, because they were measured to cost proofs at the benchmark's
+// time limit. There is no node presolve beyond simple propagation and no parallelism. The
+// order those arrived in was deliberate: a cut that is very slightly invalid removes the
+// optimum and the search then proves the wrong answer, confidently, so a plain, correct
+// search came first and is what makes each addition checkable.
 
 #include "sankhya/mip.hpp"
 #include "sankhya/qp.hpp"

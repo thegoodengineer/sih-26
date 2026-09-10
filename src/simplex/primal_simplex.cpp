@@ -37,9 +37,11 @@
 // column" is a proof of infeasibility rather than an inconclusive result.
 //
 // SCOPE. Devex pricing (default) with Dantzig behind an option and a Bland fallback, the
-// Harris two-pass ratio test with long-step bound flipping (issue #67, below), and a full
-// dense refactorization every iteration. Perturbation is still open (#67 leaves it there
-// deliberately - see the ratio test comment).
+// Harris two-pass ratio test with long-step bound flipping (opt-in, issue #67, below),
+// bound perturbation on a degenerate stall (#136; the dual loop's cost perturbation is its
+// analogue), and a sparse Markowitz LU updated in product form, refactorized when an FTRAN
+// residual check says the factors have drifted (#50). The full dense refactorization this
+// file started with survives as DenseLu, the oracle the sparse LU is tested against.
 
 #include "primal_simplex.hpp"
 #include "simplex_core.hpp"

@@ -341,7 +341,9 @@ Commit `53cbe16` · machine `Windows-AMD64`
 
 **13 of 30** instances reached the published optimum. **6 of 30** also PROVED it - closed the bound rather than stopping at a gap target or a limit.
 
-Those are different claims and are kept apart deliberately. Branch and bound here has no cutting planes - a rounding heuristic and a root dive, but nothing that tightens the relaxation - so it finds good incumbents far more often than it finishes the proof. Collapsing the two columns would hide exactly the thing #23 is meant to improve.
+Those are different claims and are kept apart deliberately. Branch and bound here finds good incumbents far more often than it finishes the proof: reliability branching (#69) and warm-started dual node LPs (#65) do the searching, and the root cutting planes that exist (#159: Gomory mixed-integer and lifted knapsack cover) are off by default, for the reason measured below. Collapsing the two columns would hide exactly the thing cuts are meant to improve.
+
+**Root cuts, on versus off** (`bench/results/miplib-cuts-off.csv` and `miplib-cuts-on.csv`, both at `adf4f20` on the PR branch, 30 instances, the same time limit): with cuts on, 12 of 30 reach the published optimum and 5 prove it, against 12 and 7 with them off. Over the 28 instances that end the same way either way, the cuts take the total node count to 0.887x (per instance from 0.257x to 1.209x). The outcome changed on 2: `enlight8` optimal -> node limit (stopped at the time limit after 60.00s and 51627 nodes); `f2gap40400` optimal -> feasible (stopped on a relative gap target (2.043e+00 absolute, 9.835e-05 relative) after 321 nodes). A cut row makes every node LP dearer, so at this limit the cuts buy nodes and cost proofs, and a run that reaches the gap target with them stops as `feasible` where the run without them exhausted its tree. That is why `enable_root_cuts` is off by default: a measurement, not caution.
 
 **The time limit decides some of these, not the solver.** A row that stops at the limit with a small gap says "needs more time than we gave it", not "cannot"; which side of the limit such a row lands on moves with the machine's speed rather than with anything about the search. The remedy is a longer limit, and the reason this table does not already use one is that the set already adds up to 21 minutes of solve time per run at this one.
 
@@ -481,7 +483,7 @@ Times are **solver-internal on both sides** - HiGHS's own `getRunTime()` against
 
 - per-instance ratio: median **2.11x**, worst **7.21x**, faster than HiGHS on **5 of 50** instances
 
-We are **2.57x slower** than HiGHS by this measure, and publish that rather than bury it. HiGHS is a decade of specialist work with presolve, a dual simplex and a mature pricing scheme, and this solver still has neither of the first two. The part that has to be right first is that **the answers agree** - the problem statement asks us to compare, not to win.
+We are **2.57x slower** than HiGHS by this measure, and publish that rather than bury it. HiGHS is a decade of specialist work with presolve, a dual simplex and a mature pricing scheme. This solver now has a presolve (#43, #92) and a dual simplex (#65) of its own, both defaults, so what remains between the two is the pricing and the years. The part that has to be right first is that **the answers agree** - the problem statement asks us to compare, not to win.
 
 ---
 

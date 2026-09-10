@@ -15,8 +15,9 @@ namespace sankhya::qp {
 namespace {
 
 /// Above this the dense O(n^2) working set stops being reasonable and the test reports
-/// kUnverified rather than guessing. A sparse LDL^T (#70) lifts this; until it exists,
-/// refusing a large QP is the honest answer and refusing is what kUnverified means.
+/// kUnverified rather than guessing. A sparse LDL^T exists now (#70, src/la/ldl.cpp) and
+/// is not wired in here yet; until it is, refusing a large QP is the honest answer and
+/// refusing is what kUnverified means.
 constexpr Index kDenseLimit = 2000;
 
 /// A pivot may go slightly negative on a genuinely semidefinite matrix purely through

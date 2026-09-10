@@ -150,7 +150,7 @@ class SparseLu {
 
   /// Nonzeros in the computed factors, excluding the unit diagonal of L. Compared against
   /// the nonzero count of the basis itself this is the fill ratio, which is what decides
-  /// when a Forrest-Tomlin update should give up and refactorize.
+  /// when the product-form update should give up and refactorize.
   [[nodiscard]] Index factor_nonzeros() const noexcept {
     return static_cast<Index>(l_rows_.size() + u_steps_.size());
   }

@@ -5,8 +5,9 @@
 #
 # Walks the problem statement in its own order and shows, for each thing it asks for, either
 # a live result or an explicit admission that we do not have it yet. Every number printed
-# below is produced by a command run during this script. Nothing is cached, quoted from an
-# earlier run, or read out of a file somebody wrote by hand - see CLAUDE.md, "Evidence rules".
+# below is either produced by a command run during this script or read, by a script and
+# with its commit named beside it, from a results CSV committed under bench/results/.
+# Nothing is quoted from memory or typed in by hand - see CLAUDE.md, "Evidence rules".
 #
 #   demo/run_sih_demo.sh              # the full walk
 #   demo/run_sih_demo.sh --quick      # skip the HiGHS comparison
@@ -224,8 +225,9 @@ echo
 echo "    SANKHYA: status $(field large result status), objective $(field large result objective),"
 echo "             $(field large effort iterations) PDHG iterations, $(field large effort solve_seconds)s"
 echo
-echo "    --progress-out, tail of $WORK/large_progress.jsonl (one line per 20 iterations,"
-echo "    flushed after every write - what 'tail -f' would show live during the solve above):"
+echo "    --progress-out, tail of $WORK/large_progress.jsonl (one line per residual"
+echo "    evaluation, every 40 iterations, flushed after every write - what 'tail -f' would"
+echo "    show live during the solve above):"
 echo
 tail -3 "$WORK/large_progress.jsonl" | sed 's/^/        /'
 echo
@@ -313,15 +315,20 @@ branch and bound which wrongly fathoms a node returns a point that passes every 
 The dispatch instance is small enough to settle by exhaustion, so we settle it:
 
 ORACLE
-"$PYTHON" "$CASES/dispatch_oracle.py" | sed 's/^/    /'
+ORACLE_OUT="$("$PYTHON" "$CASES/dispatch_oracle.py")"
+echo "$ORACLE_OUT" | sed 's/^/    /'
+# The oracle's own printed total is the reference, parsed from its output rather than typed
+# here: a literal would have to be kept in step with the instance by hand.
+ORACLE_COST="$(echo "$ORACLE_OUT" | sed -n 's/.*total cost *//p' | tail -1)"
 echo
 echo "    SANKHYA returned:  $(field power_dispatch result objective)  in $(field power_dispatch effort nodes) nodes"
-"$PYTHON" - "$WORK/power_dispatch.json" <<'PYCHK'
+"$PYTHON" - "$WORK/power_dispatch.json" "$ORACLE_COST" <<'PYCHK'
 import json, sys
 got = json.load(open(sys.argv[1]))["result"]["objective"]
-ok = abs(got - 3270.0) <= 1e-9
-print("    " + ("AGREES with the exhaustive oracle to 1e-9."
-                if ok else "DISAGREES with the oracle - got {!r}".format(got)))
+want = float(sys.argv[2])
+ok = abs(got - want) <= 1e-9 * max(1.0, abs(want))
+print("    " + ("AGREES with the exhaustive oracle ({:.6f}) to 1e-9.".format(want)
+                if ok else "DISAGREES with the oracle ({:.6f}) - got {!r}".format(want, got)))
 sys.exit(0 if ok else 1)
 PYCHK
 
@@ -456,6 +463,7 @@ FULL_SUMMARY="$("$PYTHON" bench/runners/latest_result.py "netlib-full-*.csv" --s
 # described a run three solver generations old by the time anyone reread it. Same reasoning
 # as FULL_SUMMARY: read, not typed.
 FULL_FAILURES="$("$PYTHON" bench/runners/latest_result.py "netlib-full-*.csv" --failures)"
+FULL_EXTREMES="$("$PYTHON" bench/runners/latest_result.py "netlib-full-*.csv" --extremes)"
 
 # The instance count in section 6 is READ, not typed. It said "eight" until someone
 # fetched a ninth instance, at which point the closing paragraph contradicted the table
@@ -472,7 +480,12 @@ rule "6. What PS26119 asks for that we do NOT yet have"
 # ===========================================================================================
 # The `g` flags matter: @NCOUNT@ appears twice on one line ("not the 9/9 above"), and
 # without them sed substitutes only the first occurrence per line.
-cat <<'GAPS' | sed -e "s|@FULL@|${FULL_SUMMARY}|g" -e "s|@MEDIUM@|${MEDIUM_SUMMARY}|g" -e "s|@NCOUNT@|${NETLIB_COUNT}|g" -e "s|@MIPLIB@|${MIPLIB_SUMMARY}|g" -e "s|@FAILURES@|${FULL_FAILURES}|g"
+fill_gaps() {
+  sed -e "s|@FULL@|${FULL_SUMMARY}|g" -e "s|@MEDIUM@|${MEDIUM_SUMMARY}|g" \
+      -e "s|@NCOUNT@|${NETLIB_COUNT}|g" -e "s|@MIPLIB@|${MIPLIB_SUMMARY}|g" \
+      -e "s|@FAILURES@|${FULL_FAILURES}|g"
+}
+cat <<'GAPS' | fill_gaps
     Stating these is the point. A solver that is vague about its limits is not one an
     industrial user can plan around.
 
@@ -485,7 +498,7 @@ cat <<'GAPS' | sed -e "s|@FULL@|${FULL_SUMMARY}|g" -e "s|@MEDIUM@|${MEDIUM_SUMMA
                         optimum, the node tolerance is tightened to 1e-10 and the pruning
                         margin widened by the same amount rather than pruning on the
                         optimistic side. That is the safe direction and it costs nodes. With
-                        no cuts (#23) to close the bound either, expect MIQP to show the same
+                        root cuts off by default (#159) as well, expect MIQP to show the same
                         weakness the MIPLIB line below reports: incumbents found, optimality
                         proved on fewer.
     Non-convex QP       REFUSED, deliberately. src/qp/convexity.cpp decides semidefiniteness
@@ -498,10 +511,14 @@ cat <<'GAPS' | sed -e "s|@FULL@|${FULL_SUMMARY}|g" -e "s|@MEDIUM@|${MEDIUM_SUMMA
                         infeasibility, and on the full Netlib set it verifies fewer instances
                         than the dual simplex. The default continuous engine stays the
                         simplex (exact, gives a basis); restarted PDHG is the first-order one.
-    Cutting planes      Branch and bound has reliability branching - pseudocosts, strong
-                        branching until they are reliable (#69) - and warm-starts every node
-                        LP in the dual simplex (#65), but no Gomory, MIR or cover cuts yet.
-                        Tracked as issue #23.
+    Cutting planes      EXIST, OFF BY DEFAULT. Root Gomory mixed-integer and lifted knapsack
+                        cover cuts landed in #159 (--option enable_root_cuts=true), validity
+                        gated against the exact rational optimum. Off because the A/B on the
+                        30 MIPLIB instances at 60 s cut nodes but cost two proofs - a cut row
+                        makes every node LP dearer (bench/results/miplib-cuts-{off,on}.csv).
+                        No MIR cuts, and none below the root. Branch and bound itself has
+                        reliability branching (#69) and warm-starts every node LP in the
+                        dual simplex (#65).
     GPU acceleration    NOT WRITTEN. The first-order method it needs exists and runs on CPU;
                         the CUDA backend is issues #16-#19. --gpu today prints a warning and
                         falls back to CPU. We are not claiming a speed-up we have not measured.
@@ -536,10 +553,13 @@ cat <<'GAPS' | sed -e "s|@FULL@|${FULL_SUMMARY}|g" -e "s|@MEDIUM@|${MEDIUM_SUMMA
                         objective agrees with HiGHS (bench/runners/cross_check_highs.py), and
                         HiGHS disagrees with the readme by the same amount.
 
-                        On size, the largest Netlib instance we solve is fit2d at 25 x
-                        10500 with 129018 nonzeros in 0.4s; the slowest we solve is fit2p
-                        at 3000 x 13525 in 102.7s, and dfl001 hits the 120s
-                        limit (bench/results/netlib-full-adcee1b.csv). On Mittelmann's eight
+                        On size, read from the same CSV as the counts above:
+GAPS
+# Several lines, so they are printed between the two halves of the ledger rather than
+# substituted into one line of it.
+echo "$FULL_EXTREMES" | sed 's/^/                            /'
+cat <<'GAPS' | fill_gaps
+                        On Mittelmann's eight
                         smallest LPs, 6330 to 376500 rows, the result is 0 of 8 inside 300s
                         (bench/runners/mittelmann.py) - which is the honest shape of it:
                         correct wherever we finish, and both curves bend well before
@@ -550,9 +570,10 @@ cat <<'GAPS' | sed -e "s|@FULL@|${FULL_SUMMARY}|g" -e "s|@MEDIUM@|${MEDIUM_SUMMA
                         We do have results:
                             @MIPLIB@
                         They are the weakest numbers in the project: branch and bound reaches
-                        a feasible incumbent on most of the set but PROVES optimality on few,
-                        because there are no cutting planes (#23) to close the bound;
-                        reliability branching (#69) landed and did not change the proof rate. Stated here rather than left out - a reader
+                        a feasible incumbent on most of the set but PROVES optimality on few.
+                        Root cuts (#159) exist and are off by default because at 60 s they
+                        cost proofs; reliability branching (#69) moved the count by one each
+                        way. Stated here rather than left out - a reader
                         who opens bench/results/ finds it either way, and #54 is the tracker.
     Parallelism         Single-threaded by default. --option threads=N runs an iteration's
                         column loops under OpenMP, deterministically (bit-identical results at
