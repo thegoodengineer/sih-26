@@ -157,14 +157,19 @@ bool write_solution(const std::string& path, const Model& model, const Solution&
   fmt::print(out, "integrality_violation {}\n", exact(solution.integrality_violation));
   if (!solution.message.empty()) fmt::print(out, "message {}\n", solution.message);
 
-  // A VERDICT WITH NO POINT DOES NOT GET A POINT (#191). `infeasible` is a statement
-  // about the whole feasible region, and this file used to answer it with a full
-  // all-zero columns and rows block, indistinguishable from a claimed solution. Our own
+  // A VERDICT WITH NO POINT DOES NOT GET A POINT (#191, generalised in #200). `infeasible`
+  // is a statement about the whole feasible region, and this file used to answer it with a
+  // full all-zero columns and rows block, indistinguishable from a claimed solution. Our own
   // independent checker then read that point, found it violated the rows, and printed
-  // REJECTED at a correct answer. What is written instead is the proof, when the engine
-  // had one. An UNBOUNDED claim keeps its columns block, because its ray starts from a
-  // feasible point and both halves are needed to check it.
-  if (solution.status == SolveStatus::kInfeasible) {
+  // REJECTED at a correct answer.
+  //
+  // #191 fixed that for `infeasible` and named it directly, so every other verdict with
+  // nothing to show kept the bug: a numerical failure still wrote a full point and was still
+  // rejected. The question is asked of claims_a_point() now, in one place, so there is no
+  // second list to forget. What is written instead is the proof, when the engine had one.
+  // An UNBOUNDED claim keeps its columns block, because its ray starts from a feasible point
+  // and both halves are needed to check it.
+  if (!claims_a_point(solution.status)) {
     if (!solution.farkas_dual.empty()) {
       fmt::print(out,
                  "\n# Farkas certificate: one multiplier per row. Aggregating the rows\n"
