@@ -239,9 +239,19 @@ jobs:
           # a reduced run can never be mistaken for the evidence docs/BENCHMARKS.md reports.
           python3 bench/runners/robustness.py --quick --binary ./build/sankhya               --out "$RUNNER_TEMP/robustness-quick.csv"
 
+          echo '--- every tracked shell script must be executable ---'
+          # README says `scripts/reproduce.sh`, not `bash scripts/reproduce.sh`. All six
+          # scripts were committed as 100644 from Windows, where git cannot see the bit,
+          # and this step ran the demo through `bash`, so a Linux clone failed on the first
+          # command a judge types (Permission denied, exit 126) while CI stayed green.
+          git ls-files -s -- '*.sh' \
+            | awk '$1 != "100755" { print "not executable: " $4; bad = 1 } END { exit bad }'
+          echo 'all tracked shell scripts are executable'
+
           echo '--- the demo itself must run start to finish ---'
-          # --quick skips the HiGHS comparison, which needs highspy.
-          bash demo/run_sih_demo.sh --quick > /dev/null
+          # --quick skips the HiGHS comparison, which needs highspy. Run through the shebang,
+          # not through `bash`, so the executable bit is exercised here too.
+          demo/run_sih_demo.sh --quick > /dev/null
           echo 'PS26119 demo ran clean'
 
   benchmarks:
