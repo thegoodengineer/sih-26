@@ -58,6 +58,15 @@ CSV_COLUMNS = [
 # construction's data are integers, so there is no reference error to allow for.
 MATCH_RELATIVE_TOLERANCE = 1e-6
 
+# The statuses that hand back a point. Anything else - a numerical failure, a solve stopped
+# from outside, no output at all - has no answer to compare, and the objective it carries is
+# a leftover rather than a result. The solver fills it from an all-zero vector, so on a model
+# with an objective offset it comes back as that offset: on the 5,000-row instance here the
+# interior point returned 960 under `numerical_error`, which read in the table as a wrong
+# answer off by 90 percent rather than as no answer at all. Recorded in the CSV as the solver
+# gave it, and shown as nothing, which is what it is.
+STATUSES_WITH_A_POINT = ("optimal", "feasible", "iteration_limit", "time_limit")
+
 
 def git_commit() -> str:
     result = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=REPO_ROOT,
@@ -191,7 +200,8 @@ def main() -> int:
             for engine in args.engines:
                 result = solve(binary, instance, engine, args.time_limit, args.solver_option)
                 objective = result["objective"]
-                if objective is None or not math.isfinite(objective):
+                claims_a_point = result["status"] in STATUSES_WITH_A_POINT
+                if objective is None or not math.isfinite(objective) or not claims_a_point:
                     absolute = relative = None
                     matched = False
                 else:
@@ -226,7 +236,7 @@ def main() -> int:
                 # loses every measurement it already made the first time something has to be
                 # stopped. Rewriting the file each time costs nothing at this row count.
                 write_csv(args.out or (RESULTS_DIR / f"scale-{commit}.csv"), rows)
-                shown = "-" if objective is None else f"{objective:.10g}"
+                shown = "-" if objective is None or not claims_a_point else f"{objective:.10g}"
                 error = "-" if relative is None else f"{relative:.1e}"
                 print(f"{size:>8}  {engine:<13}{result['status']:<13}{shown:>18}{error:>10}"
                       f"{str(result['iterations']):>10}{result['wall']:>8.1f}s", flush=True)
