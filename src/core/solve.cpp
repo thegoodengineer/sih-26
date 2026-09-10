@@ -118,6 +118,8 @@ void refuse_a_non_finite_answer(Solution* solution, Logger& logger) {
   solution->row_activity.clear();
   solution->objective = 0.0;
   solution->dual_bound = 0.0;
+}
+
 /// Keep a certificate only if it proves what the status claims, against the ORIGINAL model.
 ///
 /// The engines compute these on a scaled model, under perturbed bounds, from factors that may
