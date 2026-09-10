@@ -807,11 +807,31 @@ Solution postsolve(const Result& result, const Model& original, const Solution& 
     if (j < reduced.col_value.size()) solution.col_value[target] = reduced.col_value[j];
     if (j < reduced.col_dual.size()) solution.col_dual[target] = reduced.col_dual[j];
     if (j < reduced.col_status.size()) solution.col_status[target] = reduced.col_status[j];
+    // A ray of the reduced model, scattered into the original numbering with zero for every
+    // column presolve removed. That is a CANDIDATE and nothing more: a reduction that
+    // substituted a column out has no entry here, so the direction may no longer be a ray of
+    // the original model. solve() proves it against that model and drops it if it is not,
+    // which is why scattering an incomplete vector here is safe rather than reckless (#191).
+    if (j < reduced.primal_ray.size()) {
+      if (solution.primal_ray.empty()) {
+        solution.primal_ray.assign(static_cast<std::size_t>(original.num_cols()), 0.0);
+      }
+      solution.primal_ray[target] = reduced.primal_ray[j];
+    }
   }
   for (std::size_t i = 0; i < result.row_to_original.size(); ++i) {
     const auto target = static_cast<std::size_t>(result.row_to_original[i]);
     if (i < reduced.row_dual.size()) solution.row_dual[target] = reduced.row_dual[i];
     if (i < reduced.row_status.size()) solution.row_status[target] = reduced.row_status[i];
+    // The same for a Farkas certificate: a multiplier of zero on every row presolve removed,
+    // which is right whenever the removed row played no part in the contradiction, and is
+    // caught by the proof check in solve() whenever it did.
+    if (i < reduced.farkas_dual.size()) {
+      if (solution.farkas_dual.empty()) {
+        solution.farkas_dual.assign(static_cast<std::size_t>(original.num_rows()), 0.0);
+      }
+      solution.farkas_dual[target] = reduced.farkas_dual[i];
+    }
   }
 
   // Which position (index into result.records) removed each column, for columns that were

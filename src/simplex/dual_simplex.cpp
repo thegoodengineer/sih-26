@@ -513,6 +513,14 @@ std::optional<Solution> Simplex::dual_loop(Timer& timer, Count* iterations_io) {
         return hand_over(fmt::format(
             "no dual ratio-test candidate on a marginal violation of {:.3e}", violation));
       }
+      // THE PROOF, KEPT (#191). The comment above already names it: rho_ = B^-T e_r is a
+      // Farkas vector for the rows, computed by compute_pivot_row(leaving_slot) a few lines
+      // up, on fresh factors (the eta refresh above forces a `continue`, so the claiming
+      // path never runs on an updated basis). Its SIGN depends on which bound the leaving
+      // variable crossed, so solve() tries the vector both ways and keeps whichever proves
+      // the original model infeasible - the check is cheap and settles the convention
+      // without a derivation that could be silently wrong.
+      pending_farkas_ = rho_;
       return finish(SolveStatus::kInfeasible,
                     fmt::format("dual simplex: basic variable {} is outside its bounds by "
                                 "{:.3e}, far above the {:.1e} feasibility tolerance, and no "
