@@ -194,8 +194,8 @@ Solution solve(const Model& model, const Options& options) {
       solution.status = SolveStatus::kNotSolved;
       solution.algorithm = "none";
       solution.message = fmt::format(
-          "algorithm '{}' is not implemented yet; simplex, dual-simplex and pdhg are "
-          "available",
+          "algorithm '{}' is not an engine; auto, simplex, dual-simplex, pdhg and ipm "
+          "are available",
           requested);
       logger.warning("{}", solution.message);
       solution.solve_seconds = timer.elapsed_seconds();

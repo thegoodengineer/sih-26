@@ -111,6 +111,16 @@ jobs:
           diff <(sed -n '/begin columns/,/end rows/p' blend.sol) \
                <(sed -n '/begin columns/,/end rows/p' blend_gz.sol)
 
+          echo '--- --gpu must be accepted, must warn, and must give the same answer ---'
+          # CLAUDE.md: the CPU build works with zero CUDA installed and --gpu never crashes.
+          # Until the CUDA backend lands this is the whole of the GPU story a judge can
+          # type, so the flag has to parse and the CPU answer has to be the same one.
+          ./build/sankhya solve demo/crude_blend.mps --gpu --write-sol blend_gpu.sol 2>&1 \
+            | tee gpu.log
+          grep -q 'no CUDA backend' gpu.log
+          diff <(sed -n '/begin columns/,/end rows/p' blend.sol) \
+               <(sed -n '/begin columns/,/end rows/p' blend_gpu.sol)
+
           echo '--- objective must match the hand-verified value ---'
           python3 tools/check_demo_result.py blend.json
 
