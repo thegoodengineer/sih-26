@@ -13,6 +13,7 @@ add_executable(sankhya_tests
   unit/test_c_api.cpp
   unit/test_certificate.cpp
   unit/test_cuts.cpp
+  unit/test_non_finite.cpp
   unit/test_miqp.cpp
   unit/test_options.cpp
   unit/test_model.cpp
