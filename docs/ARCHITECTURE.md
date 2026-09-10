@@ -127,8 +127,11 @@ there by construction.
   §3) and plug in at the same dispatcher seam; the MILP tree needs no change to search over
   it, since it only reads `col_value` and the bound. Nothing of this exists yet, and
   `docs/PS26119_COVERAGE.md` says so.
-- **Cutting planes** — root GMI and lifted cover cuts are PR #159 (`src/mip/cuts.cpp`),
-  appended as rows of the working model before the search starts.
+- **Cutting planes** — already present, and off by default. Root GMI and lifted cover cuts
+  landed in #159 (`src/mip/cuts.cpp`), appended as rows of the working model before the
+  search starts. `enable_root_cuts` is false because the A/B measured them costing a proof
+  at the benchmark's time limit, not out of caution; `docs/BENCHMARKS.md` section 2 carries
+  the numbers.
 - **Parallelism** — the column loops in pricing and in the sparse products are
   embarrassingly parallel and deterministic (no cross-thread reductions); the tree search is
   the larger prize and the harder one, because a race on the incumbent can fathom a node

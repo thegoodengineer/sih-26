@@ -73,12 +73,21 @@ ran_with_failures() {
 # exit that wrote nothing is a step that could not run. Which file gets written is the
 # runner's business - it names them by tier and commit - so this looks for any CSV newer
 # than a marker taken just before the run, rather than duplicating that naming here.
+# SCRATCH THAT EXISTS ON EVERY MACHINE. The reduced runs below write their CSVs outside
+# bench/results/ so a short run can never outrank the real evidence. They used
+# "${TMPDIR:-/tmp}", which is fine under a shell but is handed to PYTHON, and a Windows
+# Python reads "/tmp/x.csv" as C:\tmp\x.csv - a directory that need not exist, on the one
+# platform this script most needs to work on. mktemp -d asks the system for a directory that
+# does exist, and says so in the shell's own terms.
+SCRATCH="$(mktemp -d)"
+trap 'rm -rf "$SCRATCH"' EXIT
+
 run_benchmark() {
   local label="$1"; shift
   local marker; marker="$(mktemp)"
   if "$@"; then rm -f "$marker"; return 0; fi
   local produced
-  produced="$(find bench/results "${TMPDIR:-/tmp}" -maxdepth 1 -name '*.csv' -newer "$marker" \
+  produced="$(find bench/results "$SCRATCH" -maxdepth 1 -name '*.csv' -newer "$marker" \
               -print -quit 2>/dev/null)"
   rm -f "$marker"
   if [ -n "$produced" ]; then
@@ -173,7 +182,7 @@ printf 'which shares no code with the solver.\n\n'
 # way; the numbers that would become documentation are not.
 NETLIB_OUT=()
 if [ "$BUILD_TYPE" != "Release" ]; then
-  NETLIB_OUT=(--out "${TMPDIR:-/tmp}/netlib-$BUILD_TYPE-scratch.csv")
+  NETLIB_OUT=(--out "$SCRATCH/netlib-$BUILD_TYPE-scratch.csv")
   printf '(%s build: results go to a scratch file, not bench/results/)\n\n' "$BUILD_TYPE"
 fi
 run_benchmark "Netlib benchmark" \
@@ -186,7 +195,7 @@ printf 'Every instance has an optimum known by construction; a pass needs the st
 printf 'objective and the independent verifier. docs/BENCHMARKS.md section 5 is this table.\n\n'
 ROBUST_OUT=()
 if [ "$BUILD_TYPE" != "Release" ]; then
-  ROBUST_OUT=(--out "${TMPDIR:-/tmp}/robustness-$BUILD_TYPE-scratch.csv")
+  ROBUST_OUT=(--out "$SCRATCH/robustness-$BUILD_TYPE-scratch.csv")
 fi
 run_benchmark "robustness sweep" \
   "$PYTHON" bench/runners/robustness.py --binary "$BIN" \
@@ -204,7 +213,7 @@ printf 'the small end so that the CHAIN is reproduced here, and names the comman
 # robustness sweep above.
 run_benchmark "scale (reduced)" \
   "$PYTHON" bench/runners/scale.py --binary "$BIN" --sizes 1000 5000 --time-limit 60 \
-  --out "${TMPDIR:-/tmp}/scale-reduced-$BUILD_TYPE.csv"
+  --out "$SCRATCH/scale-reduced-$BUILD_TYPE.csv"
 printf '\nThe full family, which is what section 1f reports:\n'
 printf '    python bench/runners/scale.py --binary %s\n' "$BIN"
 
@@ -215,7 +224,7 @@ if [ "$RUN_MIPLIB" = 1 ]; then
   printf 'many the search PROVES. docs/BENCHMARKS.md section 2 is this table.\n\n'
   MIPLIB_OUT=()
   if [ "$BUILD_TYPE" != "Release" ]; then
-    MIPLIB_OUT=(--out "${TMPDIR:-/tmp}/miplib-$BUILD_TYPE-scratch.csv")
+    MIPLIB_OUT=(--out "$SCRATCH/miplib-$BUILD_TYPE-scratch.csv")
   fi
   run_benchmark "MIPLIB benchmark" \
     "$PYTHON" bench/runners/miplib.py --binary "$BIN" --time-limit 60 \
