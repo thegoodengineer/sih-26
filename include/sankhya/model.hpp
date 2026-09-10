@@ -227,6 +227,24 @@ class Solution {
   std::vector<BasisStatus> col_status;
   std::vector<BasisStatus> row_status;
 
+  // ---- Certificates for the two verdicts that have no point (#191) ---------------------
+  //
+  // These are an ADDITION to this frozen interface, made deliberately and called out here
+  // rather than slipped in: every existing consumer ignores them, and both default to empty,
+  // which is this class's established way of saying "the engine produced nothing of that
+  // kind". See include/sankhya/certificate.hpp for what they mean and how they are checked.
+
+  /// Farkas multipliers, one per row, when `status` is kInfeasible and the engine could
+  /// prove it. Aggregating the rows with these weights yields an inequality no point in the
+  /// column box satisfies. Empty when no proof was produced - presolve concludes
+  /// infeasibility from bound arithmetic and carries its reason in `message` instead.
+  std::vector<double> farkas_dual;
+
+  /// A ray, one entry per column, when `status` is kUnbounded: a direction no bound blocks
+  /// along which the objective improves without limit. Read together with `col_value`, which
+  /// carries the feasible point it starts from.
+  std::vector<double> primal_ray;
+
   // ---- Reported quality. Never assumed - always measured before reporting. -------------
 
   double primal_infeasibility = 0.0;  ///< max violation over row and column bounds

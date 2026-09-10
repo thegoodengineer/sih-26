@@ -17,6 +17,7 @@
 
 #include "core/status_guard.hpp"
 #include "presolve/presolve.hpp"
+#include "sankhya/certificate.hpp"
 #include "sankhya/ipm.hpp"
 #include "sankhya/logging.hpp"
 #include "sankhya/mip.hpp"
@@ -82,6 +83,44 @@ const char* class_name(ProblemClass c) {
 /// bound closing against the incumbent, not by the reduced costs of the last LP solved, so
 /// applying the dual test there would reject correct answers. Integrality is checked instead:
 /// it is the condition that actually distinguishes a MILP solution from its relaxation.
+/// Keep a certificate only if it proves what the status claims, against the ORIGINAL model.
+///
+/// The engines compute these on a scaled model, under perturbed bounds, from factors that may
+/// have drifted, and a Farkas vector's SIGN depends on which bound the leaving variable
+/// crossed. Rather than derive the convention and hope, both signs are tried and the proof is
+/// checked here; a candidate that does not prove the claim is dropped and the message says
+/// so. An unproven certificate published as a proof would be worse than the empty field this
+/// project already uses to mean "no proof was produced" (#191).
+void keep_only_a_proved_certificate(Solution* solution, const Model& model, Logger& logger) {
+  std::string why;
+  if (solution->status == SolveStatus::kInfeasible && !solution->farkas_dual.empty()) {
+    if (farkas_proves_infeasible(model, solution->farkas_dual, &why)) {
+      solution->message += fmt::format("; proof: {}", why);
+      return;
+    }
+    std::vector<double> flipped = solution->farkas_dual;
+    for (double& value : flipped) value = -value;
+    if (farkas_proves_infeasible(model, flipped, &why)) {
+      solution->farkas_dual = std::move(flipped);
+      solution->message += fmt::format("; proof: {}", why);
+      return;
+    }
+    logger.verbose("the infeasibility certificate did not check out and was dropped: {}", why);
+    solution->farkas_dual.clear();
+    solution->message += "; no machine-checkable certificate accompanies this verdict";
+    return;
+  }
+  if (solution->status == SolveStatus::kUnbounded && !solution->primal_ray.empty()) {
+    if (ray_proves_unbounded(model, solution->primal_ray, &why)) {
+      solution->message += fmt::format("; proof: {}", why);
+      return;
+    }
+    logger.verbose("the unboundedness ray did not check out and was dropped: {}", why);
+    solution->primal_ray.clear();
+    solution->message += "; no machine-checkable certificate accompanies this verdict";
+  }
+}
+
 void reconcile_status_with_measurement(Solution* solution, const Options& options,
                                        Logger& logger, bool check_dual) {
   const bool claims_a_point =
@@ -220,7 +259,15 @@ Solution solve(const Model& model, const Options& options) {
       if (reduced.proved_infeasible) {
         solution.status = SolveStatus::kInfeasible;
         solution.algorithm = "presolve";
-        solution.message = reduced.message;
+        // Presolve proves infeasibility from bound arithmetic, and the chain of tightenings
+        // that led there is not kept, so there is no Farkas vector to hand over. The reason
+        // is in the message, which names the row and the two quantities that collide, and
+        // the .sol file says `certificate none` rather than pretending otherwise. Turning
+        // presolve off makes the simplex prove the same conclusion with a certificate (#191).
+        solution.message =
+            reduced.message +
+            "; proved by presolve, which carries no Farkas certificate - re-run with "
+            "--option presolve=false for one";
         solution.solve_seconds = timer.elapsed_seconds();
         logger.info("Result: {} (proved during presolve)  {:.3f}s", to_string(solution.status),
                     solution.solve_seconds);
@@ -239,6 +286,7 @@ Solution solve(const Model& model, const Options& options) {
                              : solve_primal_simplex(model, options, logger);
     }
     reconcile_status_with_measurement(&solution, options, logger, /*check_dual=*/true);
+    keep_only_a_proved_certificate(&solution, model, logger);
     logger.info("Result: {}  objective {:.10g}  {} iterations  {:.3f}s",
                 to_string(solution.status), solution.objective, solution.iterations,
                 solution.solve_seconds);

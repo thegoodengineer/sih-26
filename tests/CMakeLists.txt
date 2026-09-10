@@ -11,6 +11,7 @@ add_executable(sankhya_tests
   unit/test_sparse_vector.cpp
   unit/test_arena.cpp
   unit/test_c_api.cpp
+  unit/test_certificate.cpp
   unit/test_cuts.cpp
   unit/test_miqp.cpp
   unit/test_options.cpp
