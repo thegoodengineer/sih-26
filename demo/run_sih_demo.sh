@@ -516,8 +516,9 @@ cat <<'GAPS' | fill_gaps
     Cutting planes      EXIST, OFF BY DEFAULT. Root Gomory mixed-integer and lifted knapsack
                         cover cuts landed in #159 (--option enable_root_cuts=true), validity
                         gated against the exact rational optimum. Off because the A/B on the
-                        30 MIPLIB instances at 60 s cut nodes but cost two proofs - a cut row
-                        makes every node LP dearer (bench/results/miplib-cuts-{off,on}.csv).
+                        30 MIPLIB instances at 60 s cut nodes but cost one proof - enlight8,
+                        which runs out of the limit with them, because a cut row makes every
+                        node LP dearer (bench/results/miplib-cuts-{off,on}.csv).
                         No MIR cuts, and none below the root. Branch and bound itself has
                         reliability branching (#69) and warm-starts every node LP in the
                         dual simplex (#65).
@@ -565,7 +566,7 @@ cat <<'GAPS' | fill_gaps
                         smallest LPs, 6330 to 376500 rows, the result is 0 of 8 inside 300s
                         (bench/runners/mittelmann.py) - which is the honest shape of it:
                         correct wherever we finish, and both curves bend well before
-                        "millions of variables". That is issue #34. Reproduce with:
+                        "millions of variables". That is issue #198. Reproduce with:
                             python bench/runners/fetch_data.py --set full
                             python bench/runners/netlib.py --time-limit 120
     MIPLIB              PS26119 names MIPLIB before Netlib, and this demo does not run it.

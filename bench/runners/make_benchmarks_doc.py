@@ -645,8 +645,25 @@ def cuts_ab_paragraph() -> str:
     ratio = (nodes_on / nodes_off) if nodes_off else float("nan")
 
     def tally(table: dict) -> tuple[int, int]:
-        return (sum(int(r.get("matched_published") or 0) for r in table.values()),
-                sum(int(r.get("proved_optimal") or 0) for r in table.values()))
+        """Matched, and proved UNDER THE CURRENT CONVENTION.
+
+        The `proved_optimal` column in these CSVs was computed before #188, when a search
+        that met its gap target was reported `feasible` and therefore counted as not proved.
+        Since #188 that stop reports `optimal`, because the incumbent is within the tolerance
+        the caller asked for, which is what the word means everywhere else in the field.
+        Reading the raw column here would compare the two runs under a rule neither of them
+        would be measured by today - and it did: it made the cuts look like they cost two
+        proofs when one of the two was only a renamed status.
+        """
+        matched = sum(int(r.get("matched_published") or 0) for r in table.values())
+        proved = 0
+        for row in table.values():
+            if int(row.get("proved_optimal") or 0):
+                proved += 1
+            elif ("gap target" in (row.get("message") or "")
+                  and int(row.get("matched_published") or 0)):
+                proved += 1
+        return (matched, proved)
 
     matched_off, proved_off = tally(off)
     matched_on, proved_on = tally(on)
@@ -666,11 +683,18 @@ def cuts_ab_paragraph() -> str:
             f"the published optimum and {proved_on} prove it, against {matched_off} and "
             f"{proved_off} with them off. Over the {len(same)} instances that end the same "
             f"way either way, the cuts take the total node count to {ratio:.3f}x{spread}. "
-            f"The outcome changed on {len(changed)}: {changed_text}. A cut row makes every "
-            f"node LP dearer, so at this limit the cuts buy nodes and cost proofs, and a run "
-            f"that reaches the gap target with them stops as `feasible` where the run without "
-            f"them exhausted its tree. That is why `enable_root_cuts` is off by default: a "
-            f"measurement, not caution.")
+            f"The outcome changed on {len(changed)}: {changed_text}. Both counts above are "
+            f"recomputed under #188, where a search meeting its gap target is optimal; the "
+            f"CSVs predate that and their own `proved_optimal` column would read "
+            f"{sum(int(r.get('proved_optimal') or 0) for r in off.values())} and "
+            f"{sum(int(r.get('proved_optimal') or 0) for r in on.values())}, which is where "
+            f"the claim that the cuts cost TWO proofs came from. One of those two was only a "
+            f"renamed status: `f2gap40400` met the gap target in 321 nodes with cuts against "
+            f"509 without, which is the cuts working. The genuine loss is `enlight8`, which "
+            f"proves its optimum in 53.5 s without them and runs out of the 60 s limit with "
+            f"them, because a cut row makes every node LP dearer. That single lost proof, "
+            f"against a node count of {ratio:.3f}x, is why `enable_root_cuts` is off by "
+            f"default: a measurement, not caution.")
 
 
 def proved_convention_note(rows: list[dict]) -> str:
@@ -700,7 +724,7 @@ def proved_convention_note(rows: list[dict]) -> str:
 
 
 def scale_section(path: Path | None) -> str:
-    """How far up the solver goes, against optima that are exact by construction (#34).
+    """How far up the solver goes, against optima that are exact by construction (#198).
 
     This is the one section whose instances nobody published. They are generated backwards
     from a chosen primal-dual pair satisfying the KKT conditions, out of integer data, so the
@@ -736,6 +760,12 @@ def scale_section(path: Path | None) -> str:
                 return row.get(key, "")
         return ""
 
+    # A status that hands back no point has no objective to show. The CSV records what the
+    # solver returned, which on a failed solve is a leftover computed from an all-zero
+    # vector - the objective offset, not an answer. Printing it would put a number in the
+    # objective column of a row that has none.
+    with_a_point = ("optimal", "feasible", "iteration_limit", "time_limit")
+
     out = [
         f"Source CSV: `bench/results/{path.name}`  ",
         f"Commit `{commit}` · machine `{machine}` · {limit}s per solve",
@@ -769,10 +799,11 @@ def scale_section(path: Path | None) -> str:
             seconds = as_float(
                 next(r for r in rows if int(r["rows"]) == size and r["engine"] == engine),
                 "wall_seconds")
+            answered = status in with_a_point
             out.append(
                 f"| {size:,} | `{engine}` | {status.replace('_', ' ')} "
-                f"| {'-' if objective is None else f'{objective:.10g}'} "
-                f"| {'-' if error is None else f'{error:.1e}'} "
+                f"| {'-' if objective is None or not answered else f'{objective:.10g}'} "
+                f"| {'-' if error is None or not answered else f'{error:.1e}'} "
                 f"| {cell(size, engine, 'iterations') or '-'} "
                 f"| {'-' if seconds is None else f'{seconds:.1f}'} |")
     out.append("")
@@ -1023,7 +1054,7 @@ This file is generated from the CSVs in `bench/results/`, so it cannot drift fro
 evidence. Every number below came out of a run that recorded the instance sha256, the git
 commit and the machine tag alongside it.
 
-Times in sections 1a-1c and 2 are wall-clock, measured around the whole process, so they
+Times in sections 1a-1c, 1f and 2 are wall-clock, measured around the whole process, so they
 include reading the model and writing the outputs. That makes them slightly pessimistic and
 honest; it is not the figure to quote for algorithmic speed, and no attempt is made to
 dress it up. Section 1d prints solver-internal seconds (its instances take minutes, and the
@@ -1143,21 +1174,24 @@ of Beale and Kuhn.
 
 ## 6. What these numbers do not say
 
-- **Nothing here supports a claim about large models.** Section 1d is the evidence at
-  the scale PS26119's "thousands to millions of variables" means, and it is a table of
-  named time limits: the solver reaches Netlib's largest instances and stops there. No
-  pass rate above substitutes for that table. Tracked as part of #54.
+- **The large-model evidence is sections 1d and 1f, and it stops well short of "millions".**
+  1d is Mittelmann's set, a table of named time limits. 1f is generated instances whose
+  optimum is exact by construction, where the first-order engine reaches 100,000 rows and
+  columns and the other two do not. Neither is evidence about a million-variable industrial
+  model, and no pass rate in the Netlib sections above substitutes for either. Tracked as
+  #198 and as part of #54.
 - Wall-clock times at this size are dominated by process start-up and file reading, so
   ratios between solvers are not meaningful until the instances get big enough to matter.
   The comparison in section 4 uses solver-internal time on both sides for that reason.
 - The failures in section 1b are real and are not going to be quietly dropped from a later
   edition of this file. Each one carries the issue tracking it.
-- Two engines named in PS26119 are not measured on this page. The interior-point method
-  (`algorithm=ipm`, #56) is opt-in and produces no basis, so it is not the engine behind any
-  table above; its own Netlib run is committed as `netlib-full-*-ipm.csv` and quoted in
+- One engine named in PS26119 is not measured on this page at all: there is no GPU backend
+  on `main` (#16-#19). The interior-point method (`algorithm=ipm`, #56) is opt-in and
+  produces no basis, so it is not the engine behind any Netlib or MIPLIB table above -
+  section 1f is the exception, where it appears beside the others and does not scale past
+  1,000 rows (#193). Its own Netlib run is committed as `netlib-full-*-ipm.csv` and quoted in
   `docs/PS26119_COVERAGE.md`, not here, because a run made with a non-default option is a
-  measurement of that option rather than the tier's evidence. There is no GPU backend on
-  `main` (#16-#19). `docs/PROVENANCE.md` and issue #54 carry the full accounting.
+  measurement of that option rather than the tier's evidence. `docs/PROVENANCE.md` and issue #54 carry the full accounting.
 """
 
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)

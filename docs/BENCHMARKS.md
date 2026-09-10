@@ -7,7 +7,7 @@ This file is generated from the CSVs in `bench/results/`, so it cannot drift fro
 evidence. Every number below came out of a run that recorded the instance sha256, the git
 commit and the machine tag alongside it.
 
-Times in sections 1a-1c and 2 are wall-clock, measured around the whole process, so they
+Times in sections 1a-1c, 1f and 2 are wall-clock, measured around the whole process, so they
 include reading the model and writing the outputs. That makes them slightly pessimistic and
 honest; it is not the figure to quote for algorithmic speed, and no attempt is made to
 dress it up. Section 1d prints solver-internal seconds (its instances take minutes, and the
@@ -336,8 +336,8 @@ A ratio above 1 means restarts saved iterations on that instance.
 Every tier above is Netlib-sized: the largest instance in the full set has 12,230 columns, and
 most have a few hundred, so none of them speaks to the size PS26119 asks about.
 
-Source CSV: `bench/results/scale-eac6f75.csv`  
-Commit `eac6f75` · machine `Windows-AMD64` · 120.0s per solve
+Source CSV: `bench/results/scale-351a558.csv`  
+Commit `351a558` · machine `Windows-AMD64` · 120.0s per solve
 
 PS26119 asks for **thousands to millions of variables**, and this is the section that answers it with a file rather than an adjective. The instances are generated backwards from a primal-dual pair that already satisfies the KKT conditions, from integer data, so the optimum is known EXACTLY before the solver sees the model (`bench/runners/generate_large_lp.py`). A large random instance would prove nothing: nobody would know whether the answer was right.
 
@@ -348,21 +348,21 @@ PS26119 asks for **thousands to millions of variables**, and this is the section
 | 1,000 | `dual-simplex` | optimal | -362 | 3.8e-14 | 3656 | 0.7 |
 | 1,000 | `ipm` | optimal | -361.9999994 | 1.6e-09 | 19 | 0.5 |
 | 1,000 | `pdhg` | optimal | -362 | 6.0e-13 | 71200 | 1.3 |
-| 5,000 | `dual-simplex` | time limit | 27347.20555 | 1.7e+00 | 19762 | 120.2 |
-| 5,000 | `ipm` | time limit | nan | - | 37 | 120.9 |
-| 5,000 | `pdhg` | optimal | 9945 | 1.1e-11 | 410840 | 54.4 |
-| 20,000 | `dual-simplex` | time limit | -214452.2603 | 7.1e+00 | 11304 | 120.5 |
-| 20,000 | `ipm` | overran its limit | - | - | - | 360.1 |
-| 20,000 | `pdhg` | time limit | -26592.00001 | 2.7e-10 | 161481 | 120.1 |
-| 100,000 | `dual-simplex` | time limit | -5790795.054 | 6.9e+01 | 2218 | 121.0 |
-| 100,000 | `ipm` | overran its limit | - | - | - | 360.2 |
-| 100,000 | `pdhg` | time limit | -83110.00862 | 1.0e-07 | 26160 | 120.9 |
+| 5,000 | `dual-simplex` | time limit | 26780.37248 | 1.7e+00 | 17100 | 120.0 |
+| 5,000 | `ipm` | numerical error | - | - | 30 | 120.1 |
+| 5,000 | `pdhg` | optimal | 9945 | 1.1e-11 | 410840 | 62.4 |
+| 20,000 | `dual-simplex` | time limit | -219835.3683 | 7.3e+00 | 10645 | 120.8 |
+| 20,000 | `ipm` | time limit | 27091.64405 | 2.0e+00 | 0 | 124.8 |
+| 20,000 | `pdhg` | time limit | -26592.00005 | 2.0e-09 | 119360 | 120.2 |
+| 100,000 | `dual-simplex` | time limit | -6182077.833 | 7.3e+01 | 1450 | 123.3 |
+| 100,000 | `ipm` | time limit | 166557.9183 | 3.0e+00 | 0 | 150.1 |
+| 100,000 | `pdhg` | time limit | -83110.00455 | 5.5e-08 | 23816 | 121.9 |
 
 **6 of 12** solves reached the analytic optimum to a relative 1e-06.
 
 - `dual-simplex` reached it at **1,000** rows and columns (optimal, 0.7 s).
 - `ipm` reached it at **1,000** rows and columns (optimal, 0.5 s).
-- `pdhg` reached it at **100,000** rows and columns (time limit, 120.9 s).
+- `pdhg` reached it at **100,000** rows and columns (time limit, 121.9 s).
 
 **Reaching the answer and proving it are different things, and at this scale they come apart.** `pdhg` at 20,000, `pdhg` at 100,000 landed on the analytic optimum and still stopped at the limit, because the convergence test had not been satisfied when the clock ran out. Reported as what it is - not `optimal` - and worth knowing: a first-order method is useful long before it can certify itself.
 
@@ -383,7 +383,7 @@ Commit `53cbe16` · machine `Windows-AMD64`
 **This CSV predates #188.** 3 of these rows stopped on the gap target and were recorded `feasible`, so they are counted above as NOT proved: `f2gap40400`, `flugpl`, `p0201`. Since #188 such a stop reports `optimal` - the incumbent is within the tolerance the caller asked for, which is what the word means everywhere else in the field - so a rerun would count them as proved. That is a renamed status, not a better search, and the number above is left as the run measured it.
 Those are different claims and are kept apart deliberately. Branch and bound here finds good incumbents far more often than it finishes the proof: reliability branching (#69) and warm-started dual node LPs (#65) do the searching, and the root cutting planes that exist (#159: Gomory mixed-integer and lifted knapsack cover) are off by default, for the reason measured below. Collapsing the two columns would hide exactly the thing cuts are meant to improve.
 
-**Root cuts, on versus off** (`bench/results/miplib-cuts-off.csv` and `miplib-cuts-on.csv`, both at `adf4f20` on the PR branch, 30 instances, the same time limit): with cuts on, 12 of 30 reach the published optimum and 5 prove it, against 12 and 7 with them off. Over the 28 instances that end the same way either way, the cuts take the total node count to 0.887x (per instance from 0.257x to 1.209x). The outcome changed on 2: `enlight8` optimal -> node limit (stopped at the time limit after 60.00s and 51627 nodes); `f2gap40400` optimal -> feasible (stopped on a relative gap target (2.043e+00 absolute, 9.835e-05 relative) after 321 nodes). A cut row makes every node LP dearer, so at this limit the cuts buy nodes and cost proofs, and a run that reaches the gap target with them stops as `feasible` where the run without them exhausted its tree. That is why `enable_root_cuts` is off by default: a measurement, not caution.
+**Root cuts, on versus off** (`bench/results/miplib-cuts-off.csv` and `miplib-cuts-on.csv`, both at `adf4f20` on the PR branch, 30 instances, the same time limit): with cuts on, 12 of 30 reach the published optimum and 8 prove it, against 12 and 9 with them off. Over the 28 instances that end the same way either way, the cuts take the total node count to 0.887x (per instance from 0.257x to 1.209x). The outcome changed on 2: `enlight8` optimal -> node limit (stopped at the time limit after 60.00s and 51627 nodes); `f2gap40400` optimal -> feasible (stopped on a relative gap target (2.043e+00 absolute, 9.835e-05 relative) after 321 nodes). Both counts above are recomputed under #188, where a search meeting its gap target is optimal; the CSVs predate that and their own `proved_optimal` column would read 7 and 5, which is where the claim that the cuts cost TWO proofs came from. One of those two was only a renamed status: `f2gap40400` met the gap target in 321 nodes with cuts against 509 without, which is the cuts working. The genuine loss is `enlight8`, which proves its optimum in 53.5 s without them and runs out of the 60 s limit with them, because a cut row makes every node LP dearer. That single lost proof, against a node count of 0.887x, is why `enable_root_cuts` is off by default: a measurement, not caution.
 
 **The time limit decides some of these, not the solver.** A row that stops at the limit with a small gap says "needs more time than we gave it", not "cannot"; which side of the limit such a row lands on moves with the machine's speed rather than with anything about the search. The remedy is a longer limit, and the reason this table does not already use one is that the set already adds up to 21 minutes of solve time per run at this one.
 
@@ -555,18 +555,21 @@ Reading the table: the `conditioning` cliff is `kZeroDrop` (`tolerances.hpp`), t
 
 ## 6. What these numbers do not say
 
-- **Nothing here supports a claim about large models.** Section 1d is the evidence at
-  the scale PS26119's "thousands to millions of variables" means, and it is a table of
-  named time limits: the solver reaches Netlib's largest instances and stops there. No
-  pass rate above substitutes for that table. Tracked as part of #54.
+- **The large-model evidence is sections 1d and 1f, and it stops well short of "millions".**
+  1d is Mittelmann's set, a table of named time limits. 1f is generated instances whose
+  optimum is exact by construction, where the first-order engine reaches 100,000 rows and
+  columns and the other two do not. Neither is evidence about a million-variable industrial
+  model, and no pass rate in the Netlib sections above substitutes for either. Tracked as
+  #198 and as part of #54.
 - Wall-clock times at this size are dominated by process start-up and file reading, so
   ratios between solvers are not meaningful until the instances get big enough to matter.
   The comparison in section 4 uses solver-internal time on both sides for that reason.
 - The failures in section 1b are real and are not going to be quietly dropped from a later
   edition of this file. Each one carries the issue tracking it.
-- Two engines named in PS26119 are not measured on this page. The interior-point method
-  (`algorithm=ipm`, #56) is opt-in and produces no basis, so it is not the engine behind any
-  table above; its own Netlib run is committed as `netlib-full-*-ipm.csv` and quoted in
+- One engine named in PS26119 is not measured on this page at all: there is no GPU backend
+  on `main` (#16-#19). The interior-point method (`algorithm=ipm`, #56) is opt-in and
+  produces no basis, so it is not the engine behind any Netlib or MIPLIB table above -
+  section 1f is the exception, where it appears beside the others and does not scale past
+  1,000 rows (#193). Its own Netlib run is committed as `netlib-full-*-ipm.csv` and quoted in
   `docs/PS26119_COVERAGE.md`, not here, because a run made with a non-default option is a
-  measurement of that option rather than the tier's evidence. There is no GPU backend on
-  `main` (#16-#19). `docs/PROVENANCE.md` and issue #54 carry the full accounting.
+  measurement of that option rather than the tier's evidence. `docs/PROVENANCE.md` and issue #54 carry the full accounting.

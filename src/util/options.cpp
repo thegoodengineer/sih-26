@@ -207,11 +207,12 @@ const std::vector<OptionSpec>& Options::registry() {
          "OFF by default, and that is a measurement, not caution: on the 30-instance "
          "MIPLIB set at a 60 s limit the cuts cut the node count to 0.887x over the "
          "28 instances that end the same way - as much as 0.26x on individual ones - "
-         "and still lost two proofs. enlight8 proves its optimum in 73,556 nodes and "
-         "53.5 s without them and hits the 60 s limit at 51,627 nodes with them, because a "
-         "cut row makes every node LP dearer; f2gap40400 exhausts its tree in 509 nodes "
-         "without them and stops on the 1e-4 gap target at 321 nodes with them, which the "
-         "status convention reports as feasible, not optimal. See "
+         "and still cost one proof. That proof is enlight8, which proves its optimum in "
+         "73,556 nodes and 53.5 s without them and hits the 60 s limit at 51,627 nodes with "
+         "them, because a cut row makes every node LP dearer. A second apparent loss was "
+         "not one: f2gap40400 exhausts its tree in 509 nodes without cuts and meets the "
+         "1e-4 gap target in 321 with them, which the pre-#188 convention called feasible "
+         "rather than optimal - that is the cuts working. See "
          "bench/results/miplib-cuts-off.csv and miplib-cuts-on.csv.",
          0.0,
          0.0,
