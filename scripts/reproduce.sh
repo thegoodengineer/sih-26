@@ -192,6 +192,22 @@ run_benchmark "robustness sweep" \
   "$PYTHON" bench/runners/robustness.py --binary "$BIN" \
   ${ROBUST_OUT[@]+"${ROBUST_OUT[@]}"}
 
+# ---- 3b2. Scale, at a size a reproduction can afford ---------------------------------------
+rule "Scale: the same solver on instances whose optimum is exact by construction"
+printf 'PS26119 asks for thousands to millions of variables. The full family in\n'
+printf 'docs/BENCHMARKS.md section 1f goes to 100,000 and takes about half an hour; this runs\n'
+printf 'the small end so that the CHAIN is reproduced here, and names the command for the rest.\n\n'
+# THE CSV GOES OUTSIDE bench/results/, always. This is a reduced run at two sizes, and
+# latest_result.py picks the newest CSV per pattern by git history: a scale-<commit>.csv
+# written here would outrank the real evidence and the generated document would quietly
+# report a two-size run as the project's answer on scale. Same reasoning as the reduced
+# robustness sweep above.
+run_benchmark "scale (reduced)" \
+  "$PYTHON" bench/runners/scale.py --binary "$BIN" --sizes 1000 5000 --time-limit 60 \
+  --out "${TMPDIR:-/tmp}/scale-reduced-$BUILD_TYPE.csv"
+printf '\nThe full family, which is what section 1f reports:\n'
+printf '    python bench/runners/scale.py --binary %s\n' "$BIN"
+
 # ---- 3c. MIPLIB, when asked ----------------------------------------------------------------
 if [ "$RUN_MIPLIB" = 1 ]; then
   rule "MIPLIB 2017: the mixed-integer side, which is the weakest evidence here"

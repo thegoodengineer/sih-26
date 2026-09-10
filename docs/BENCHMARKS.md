@@ -331,6 +331,45 @@ A ratio above 1 means restarts saved iterations on that instance.
 
 ---
 
+### 1f. Scale — how far up this goes
+
+Every tier above is Netlib-sized: the largest instance in the full set has 12,230 columns, and
+most have a few hundred, so none of them speaks to the size PS26119 asks about.
+
+Source CSV: `bench/results/scale-eac6f75.csv`  
+Commit `eac6f75` · machine `Windows-AMD64` · 120.0s per solve
+
+PS26119 asks for **thousands to millions of variables**, and this is the section that answers it with a file rather than an adjective. The instances are generated backwards from a primal-dual pair that already satisfies the KKT conditions, from integer data, so the optimum is known EXACTLY before the solver sees the model (`bench/runners/generate_large_lp.py`). A large random instance would prove nothing: nobody would know whether the answer was right.
+
+**Read the error column before the clock.** Whether an objective is right is a property of the solver. How long it took, and therefore whether the run ended at the limit, is a property of this laptop on this day.
+
+| size (rows x cols) | engine | status | objective | relative error | iterations | seconds |
+|---:|---|---|---:|---:|---:|---:|
+| 1,000 | `dual-simplex` | optimal | -362 | 3.8e-14 | 3656 | 0.7 |
+| 1,000 | `ipm` | optimal | -361.9999994 | 1.6e-09 | 19 | 0.5 |
+| 1,000 | `pdhg` | optimal | -362 | 6.0e-13 | 71200 | 1.3 |
+| 5,000 | `dual-simplex` | time limit | 27347.20555 | 1.7e+00 | 19762 | 120.2 |
+| 5,000 | `ipm` | time limit | nan | - | 37 | 120.9 |
+| 5,000 | `pdhg` | optimal | 9945 | 1.1e-11 | 410840 | 54.4 |
+| 20,000 | `dual-simplex` | time limit | -214452.2603 | 7.1e+00 | 11304 | 120.5 |
+| 20,000 | `ipm` | overran its limit | - | - | - | 360.1 |
+| 20,000 | `pdhg` | time limit | -26592.00001 | 2.7e-10 | 161481 | 120.1 |
+| 100,000 | `dual-simplex` | time limit | -5790795.054 | 6.9e+01 | 2218 | 121.0 |
+| 100,000 | `ipm` | overran its limit | - | - | - | 360.2 |
+| 100,000 | `pdhg` | time limit | -83110.00862 | 1.0e-07 | 26160 | 120.9 |
+
+**6 of 12** solves reached the analytic optimum to a relative 1e-06.
+
+- `dual-simplex` reached it at **1,000** rows and columns (optimal, 0.7 s).
+- `ipm` reached it at **1,000** rows and columns (optimal, 0.5 s).
+- `pdhg` reached it at **100,000** rows and columns (time limit, 120.9 s).
+
+**Reaching the answer and proving it are different things, and at this scale they come apart.** `pdhg` at 20,000, `pdhg` at 100,000 landed on the analytic optimum and still stopped at the limit, because the convergence test had not been satisfied when the clock ran out. Reported as what it is - not `optimal` - and worth knowing: a first-order method is useful long before it can certify itself.
+
+**What this does NOT say.** The largest instance here is 100,000 rows and columns. That is the thousands end of what the problem statement asks for and the low end of the millions; nothing above is evidence about a million-variable model. The instances are also one shape - square, 5000 nonzeros at the smallest size and sparse by construction - so they say nothing about the dense or badly structured models industry also produces. Section 5 is where the structural hazards are pushed instead.
+
+---
+
 ## 2. MIPLIB — the mixed-integer side
 
 The LP tiers above say nothing about the branch and bound. This is the MILP evidence, and it

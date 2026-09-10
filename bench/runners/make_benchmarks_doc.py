@@ -699,6 +699,134 @@ def proved_convention_note(rows: list[dict]) -> str:
             "number above is left as the run measured it.")
 
 
+def scale_section(path: Path | None) -> str:
+    """How far up the solver goes, against optima that are exact by construction (#34).
+
+    This is the one section whose instances nobody published. They are generated backwards
+    from a chosen primal-dual pair satisfying the KKT conditions, out of integer data, so the
+    optimal objective is known before the solver sees the file - which is what makes a
+    generated instance evidence rather than a demonstration.
+
+    Every number below is computed from the CSV. The prose is too: which engine got furthest
+    and where each one stopped are read from the rows, because a sentence about scale that is
+    typed by hand goes stale the first time the solver improves.
+    """
+    if path is None:
+        return chr(10).join([
+            "Not yet run at this commit. Reproduce with:",
+            "",
+            "```",
+            "python bench/runners/scale.py --binary build/sankhya",
+            "```",
+            "",
+        ])
+    rows = read_csv(path)
+    if not rows:
+        return "No scale results recorded yet." + chr(10)
+
+    commit = rows[0].get("git_commit", "unknown")
+    machine = rows[0].get("machine", "unknown")
+    limit = rows[0].get("time_limit", "?")
+    sizes = sorted({int(r["rows"]) for r in rows})
+    engines = sorted({r["engine"] for r in rows})
+
+    def cell(size: int, engine: str, key: str) -> str:
+        for row in rows:
+            if int(row["rows"]) == size and row["engine"] == engine:
+                return row.get(key, "")
+        return ""
+
+    out = [
+        f"Source CSV: `bench/results/{path.name}`  ",
+        f"Commit `{commit}` · machine `{machine}` · {limit}s per solve",
+        "",
+        "PS26119 asks for **thousands to millions of variables**, and this is the section that "
+        "answers it with a file rather than an adjective. The instances are generated "
+        "backwards from a primal-dual pair that already satisfies the KKT conditions, from "
+        "integer data, so the optimum is known EXACTLY before the solver sees the model "
+        "(`bench/runners/generate_large_lp.py`). A large random instance would prove nothing: "
+        "nobody would know whether the answer was right.",
+        "",
+        "**Read the error column before the clock.** Whether an objective is right is a "
+        "property of the solver. How long it took, and therefore whether the run ended at the "
+        "limit, is a property of this laptop on this day.",
+        "",
+        "| size (rows x cols) | engine | status | objective | relative error | iterations | "
+        "seconds |",
+        "|---:|---|---|---:|---:|---:|---:|",
+    ]
+    for size in sizes:
+        for engine in engines:
+            status = cell(size, engine, "status")
+            if not status:
+                continue
+            objective = as_float(
+                next(r for r in rows if int(r["rows"]) == size and r["engine"] == engine),
+                "our_objective")
+            error = as_float(
+                next(r for r in rows if int(r["rows"]) == size and r["engine"] == engine),
+                "relative_error")
+            seconds = as_float(
+                next(r for r in rows if int(r["rows"]) == size and r["engine"] == engine),
+                "wall_seconds")
+            out.append(
+                f"| {size:,} | `{engine}` | {status.replace('_', ' ')} "
+                f"| {'-' if objective is None else f'{objective:.10g}'} "
+                f"| {'-' if error is None else f'{error:.1e}'} "
+                f"| {cell(size, engine, 'iterations') or '-'} "
+                f"| {'-' if seconds is None else f'{seconds:.1f}'} |")
+    out.append("")
+
+    reached = [r for r in rows if r.get("reached_optimum") == "1"]
+    out.append(f"**{len(reached)} of {len(rows)}** solves reached the analytic optimum to a "
+               f"relative 1e-06.")
+    out.append("")
+    if reached:
+        for engine in engines:
+            mine = [int(r["rows"]) for r in reached if r["engine"] == engine]
+            if not mine:
+                out.append(f"- `{engine}` reached it at none of these sizes.")
+                continue
+            largest = max(mine)
+            row = next(r for r in reached
+                       if r["engine"] == engine and int(r["rows"]) == largest)
+            out.append(
+                f"- `{engine}` reached it at **{largest:,}** rows and columns"
+                f" ({row.get('status', '?').replace('_', ' ')}, "
+                f"{as_float(row, 'wall_seconds') or 0.0:.1f} s).")
+        out.append("")
+
+    # The distinction that matters most at this scale, said only when the rows show it.
+    landed_without_certifying = [
+        r for r in rows
+        if r.get("reached_optimum") == "1" and r.get("status") not in ("optimal",)]
+    if landed_without_certifying:
+        names = [f"`{r['engine']}` at {int(r['rows']):,}"
+                 for r in sorted(landed_without_certifying,
+                                 key=lambda row: (int(row["rows"]), row["engine"]))]
+        out += [
+            "**Reaching the answer and proving it are different things, and at this scale "
+            "they come apart.** " + ", ".join(names) + " landed on the analytic optimum and "
+            "still stopped at the limit, because the convergence test had not been satisfied "
+            "when the clock ran out. Reported as what it is - not `optimal` - and worth "
+            "knowing: a first-order method is useful long before it can certify itself.",
+            "",
+        ]
+
+    biggest = max(sizes)
+    out += [
+        f"**What this does NOT say.** The largest instance here is {biggest:,} rows and "
+        f"columns. That is the thousands end of what the problem statement asks for and the "
+        f"low end of the millions; nothing above is evidence about a million-variable model. "
+        f"The instances are also one shape - square, {rows[0].get('nonzeros', '?')} nonzeros "
+        f"at the smallest size and sparse by construction - so they say nothing about the "
+        f"dense or badly structured models industry also produces. Section 5 is where the "
+        f"structural hazards are pushed instead.",
+        "",
+    ]
+    return chr(10).join(out)
+
+
 def milp_section(path: Path | None) -> str:
     """MIPLIB, where TWO questions have to be answered separately.
 
@@ -875,6 +1003,7 @@ def main() -> int:
     compare_medium_csv = newest("compare-highs-medium-*.csv")
     compare_csv = compare_medium_csv or compare_small_csv or newest("compare-highs-*.csv")
     robustness_csv = newest("robustness-*.csv")
+    scale_csv = newest("scale-*.csv")
 
     # Legacy untagged CSVs predate the tier tag; fall back so an old results directory still
     # generates something rather than failing.
@@ -947,6 +1076,14 @@ than one blended number. It is also the engine the GPU work targets, so its CPU 
 the baseline every GPU claim will be measured against.
 
 {pdhg_section(pdhg_csv)}
+---
+
+### 1f. Scale — how far up this goes
+
+Every tier above is Netlib-sized: the largest instance in the full set has 12,230 columns, and
+most have a few hundred, so none of them speaks to the size PS26119 asks about.
+
+{scale_section(scale_csv)}
 ---
 
 ## 2. MIPLIB — the mixed-integer side

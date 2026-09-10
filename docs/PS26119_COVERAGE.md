@@ -61,7 +61,7 @@ way an issue body is not, and every status here was checked against a specific c
 | Ill-conditioned matrices | **done** | 10^22 entry spread, condition number 2.14e+30, objective provably unmoved |
 | Weak LP relaxations | **done** | 33.77% integrality gap closed |
 | Difficult MILP formulations | **partial** | MIPLIB runs (below), but 6 of 30 proved is the honest reading |
-| **Thousands to millions of variables** | **partial — still the biggest single gap** | one generated 5000x5000 LP against an optimum exact by construction. A demonstration, not a benchmark: one instance, generated rather than industrial, nowhere near the "millions" end. |
+| **Thousands to millions of variables** | **partial, and now measured** | #34 via `bench/runners/scale.py`: four sizes from 1,000 to 100,000 rows and columns, three engines, every answer checked against an optimum exact by construction (`bench/results/scale-eac6f75.csv`, `docs/BENCHMARKS.md` section 1f). **6 of 12** solves reached it. The first-order engine reached it at **100,000 x 100,000** to a relative 1.0e-07 in 121 s, without being able to certify it inside the limit; the dual simplex and the interior-point method reached it only at 1,000. Still partial, and honestly so: 100,000 is the low end of "millions", the instances are one generated shape, and nothing here is evidence about an industrial model of that size. |
 
 ## Expected solution
 
