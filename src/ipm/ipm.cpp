@@ -160,21 +160,33 @@ class InteriorPoint {
   // THE BEST ITERATE IS KEPT. Near the optimum the normal equations lose conditioning and
   // an iteration can drift; when the loop then stalls or hits a limit, the point returned
   // is the best one seen by the convergence measures, not the last one computed.
+  // The slacks are part of the iterate. They were not saved at first, so restoring the
+  // best point left it paired with whatever slacks the broken iteration had produced, and
+  // the barrier parameter recomputed from those read NaN beside a point that was fine.
   struct Snapshot {
     double merit = std::numeric_limits<double>::infinity();
-    std::vector<double> x, y, zl, zu;
+    std::vector<double> x, y, zl, zu, sl, su;
   } best_;
   void remember_if_best(double merit);
   void restore_best();
 };
 
 void InteriorPoint::remember_if_best(double merit) {
+  // A NaN ITERATE LOOKS PERFECT. Every violation measure is a running maximum built from
+  // comparisons, and every comparison with NaN is false, so an iterate full of NaN reports
+  // zero infeasibility and zero complementarity - a merit of exactly 0.0, better than any
+  // real point. That is how a converged 20,000-row solve lost its 1e-7 iterate: the NaN
+  // that replaced it scored 0.0 and was remembered as the best. The merit is not enough to
+  // check, since it is the very thing that lies; the iterate itself has to be finite.
+  if (!std::isfinite(merit) || !std::isfinite(mu_) || !std::isfinite(objective_)) return;
   if (!(merit < best_.merit)) return;
   best_.merit = merit;
   best_.x = x_;
   best_.y = y_;
   best_.zl = zl_;
   best_.zu = zu_;
+  best_.sl = sl_;
+  best_.su = su_;
 }
 
 void InteriorPoint::restore_best() {
@@ -183,6 +195,8 @@ void InteriorPoint::restore_best() {
   y_ = best_.y;
   zl_ = best_.zl;
   zu_ = best_.zu;
+  sl_ = best_.sl;
+  su_ = best_.su;
 }
 
 void InteriorPoint::build() {
@@ -560,6 +574,45 @@ Solution InteriorPoint::run() {
                       primal_infeasibility_, dual_infeasibility_, timer.elapsed_seconds());
     const double relative_gap =
         mu_ * static_cast<double>(bound_count_) / (1.0 + std::fabs(objective_));
+
+    // AN ITERATE THAT IS NOT A NUMBER ENDS THE SOLVE, NOW - and before it can be remembered,
+    // compared or logged as anything else. On a 20,000-row staircase model this method
+    // converged normally to a relative gap of 1.0e-07 at iteration 26, the next
+    // factorization broke down as the barrier vanished (5,090 regularized pivots in one
+    // step), and the iterate came back NaN. The loop then ran 270 MORE iterations on NaN:
+    // every guard below is a comparison and every comparison with NaN is false, so the
+    // convergence test could not pass and the stall detector could not trip. Worse, the
+    // NaN iterate's violation measures all read 0.0 for the same reason, so it was
+    // remembered as the best point with merit 0.0, and the real answer was overwritten.
+    //
+    // The best FINITE iterate is the answer. It is restored, re-measured, and reported as
+    // feasible when it meets the feasibility tolerances - never as optimal, which only the
+    // test below may say - or as the numerical failure it is when it does not.
+    if (!std::isfinite(mu_) || !std::isfinite(primal_infeasibility_) ||
+        !std::isfinite(dual_infeasibility_) || !std::isfinite(objective_)) {
+      restore_best();
+      residuals();
+      const double best_gap =
+          mu_ * static_cast<double>(bound_count_) / (1.0 + std::fabs(objective_));
+      const bool usable = best_.merit < std::numeric_limits<double>::infinity() &&
+                          std::isfinite(objective_) && primal_infeasibility_ <= 1e-6 &&
+                          dual_infeasibility_ <= 1e-6;
+      return finish(
+          usable ? SolveStatus::kFeasible : SolveStatus::kNumericalError,
+          fmt::format("the iterate stopped being finite at iteration {}; {}", iterations,
+                      usable ? fmt::format("the best earlier iterate is reported as "
+                                           "a feasible point (relative gap {:.1e}, "
+                                           "infeasibility {:.1e} / {:.1e})",
+                                           best_gap, primal_infeasibility_, dual_infeasibility_)
+                             : fmt::format("the best earlier iterate does not meet "
+                                           "the feasibility tolerances (relative "
+                                           "gap {:.1e}, infeasibility {:.1e} / "
+                                           "{:.1e}, merit {:.1e})",
+                                           best_gap, primal_infeasibility_, dual_infeasibility_,
+                                           best_.merit)),
+          iterations, timer.elapsed_seconds());
+    }
+
     remember_if_best(
         std::max({primal_infeasibility_, dual_infeasibility_, relative_gap, max_product_}));
     logger_.verbose(
