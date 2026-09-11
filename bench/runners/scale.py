@@ -135,6 +135,15 @@ def solve(binary: Path, instance: Path, engine: str, time_limit: float,
             wall = time.perf_counter() - started
             return {"status": "overran_its_limit", "objective": None, "iterations": "",
                     "wall": wall, "solver": ""}
+        except OSError as error:
+            # A binary that is missing, or that this machine refuses to execute - Windows
+            # Smart App Control blocks freshly linked unsigned executables, which is the
+            # usual cause here. Recorded as a row and reported in the exit code, rather than
+            # a traceback that loses every measurement already made.
+            print(f"  cannot run the solver: {error}", flush=True)
+            wall = time.perf_counter() - started
+            return {"status": "no_output", "objective": None, "iterations": "",
+                    "wall": wall, "solver": ""}
         wall = time.perf_counter() - started
         if not stats.exists():
             return {"status": "no_output", "objective": None, "iterations": "",
@@ -263,6 +272,14 @@ def main() -> int:
     out = args.out or (RESULTS_DIR / f"scale-{commit}.csv")
     write_csv(out, rows)
 
+    # AN ENGINE THAT DOES NOT REACH THE OPTIMUM IS A RESULT. A solve that produced nothing
+    # is not: it means the harness could not run, and scripts/reproduce.sh distinguishes the
+    # two by this exit code - a non-zero exit that still wrote a CSV is reported as "ran with
+    # failures", and one that wrote nothing as a step that could not run. Returning 0 for
+    # everything, as this did, let a run in which every solve crashed be summarised as
+    # "Nothing was skipped".
+    broken = [r for r in rows if r["status"] in ("no_output", "crashed")]
+
     reached = [r for r in rows if r["reached_optimum"] == 1]
     print(f"\n{len(reached)} of {len(rows)} solves reached the analytic optimum to a relative "
           f"{MATCH_RELATIVE_TOLERANCE:g}.")
@@ -276,6 +293,10 @@ def main() -> int:
         # --out may point outside the repository, which is what a trial run should do.
         shown_path = out
     print(f"wrote {shown_path}")
+    if broken:
+        print(f"\n{len(broken)} solve(s) produced no output at all: "
+              + ", ".join(f"{r['engine']} at {int(r['rows']):,}" for r in broken))
+        return 1
     return 0
 
 

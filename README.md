@@ -150,7 +150,8 @@ ctest --test-dir build --output-on-failure
 `scripts/configure.sh` picks a C++20-capable compiler rather than trusting PATH order,
 which matters on Windows boxes carrying an old MinGW. It also reuses dependency sources
 from any build tree already on disk, so a second build directory costs seconds rather than
-re-cloning 200 MB. 285 tests, all passing.
+re-cloning 200 MB. 447 tests, all passing - `ctest --test-dir build` is the check, and
+the number is worth reading with a command beside it rather than taken on trust.
 
 ## Use
 
