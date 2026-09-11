@@ -51,7 +51,7 @@ CSV_COLUMNS = [
     "instance", "instance_sha256", "rows", "columns", "nonzeros", "analytic_optimum",
     "engine", "status", "our_objective", "absolute_error", "relative_error",
     "reached_optimum", "iterations", "wall_seconds", "solver_seconds", "time_limit",
-    "iteration_limit", "git_commit", "machine", "timestamp_utc", "solver_options",
+    "iteration_limit", "structure", "git_commit", "machine", "timestamp_utc", "solver_options",
 ]
 
 # An objective this close to one known exactly by construction is the right answer; the
@@ -90,12 +90,14 @@ def default_binary() -> Path:
     raise SystemExit("no solver binary found; pass --binary")
 
 
-def generate(size: int, nnz_per_col: int, seed: int, directory: Path) -> tuple[Path, float]:
+def generate(size: int, nnz_per_col: int, seed: int, directory: Path,
+             structure: str = "random") -> tuple[Path, float]:
     """Write the instance and return its path and the optimum that is true by construction."""
-    path = directory / f"scale-{size}.mps"
+    path = directory / f"scale-{structure}-{size}.mps"
     result = subprocess.run(
         [sys.executable, str(GENERATOR), "--rows", str(size), "--cols", str(size),
-         "--nnz-per-col", str(nnz_per_col), "--seed", str(seed), "--out", str(path)],
+         "--nnz-per-col", str(nnz_per_col), "--seed", str(seed), "--out", str(path),
+         "--structure", structure],
         capture_output=True, text=True, check=True)
     optimum = None
     for line in result.stdout.splitlines():
@@ -175,6 +177,12 @@ def main() -> int:
                         help="square instances of this many rows and columns")
     parser.add_argument("--engines", nargs="+", default=DEFAULT_ENGINES)
     parser.add_argument("--nnz-per-col", type=int, default=5)
+    parser.add_argument("--structure", choices=("random", "staircase"), default="random",
+                        help="which sparsity pattern the generator uses (#198). random is an "
+                             "expander graph and the worst case for a direct method; "
+                             "staircase is the shape of a multi-period planning model. The "
+                             "CSV is named scale-<structure>-<commit>.csv for any shape but "
+                             "random, so the two families never overwrite each other.")
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--time-limit", type=float, default=120.0)
     parser.add_argument("--iteration-limit", type=int, default=0, metavar="N",
@@ -219,7 +227,8 @@ def main() -> int:
         directory = args.keep or Path(tmp)
         directory.mkdir(parents=True, exist_ok=True)
         for size in args.sizes:
-            instance, optimum = generate(size, args.nnz_per_col, args.seed, directory)
+            instance, optimum = generate(size, args.nnz_per_col, args.seed, directory,
+                                         args.structure)
             digest = sha256(instance)
             nonzeros = size * args.nnz_per_col
             for engine in args.engines:
@@ -252,6 +261,7 @@ def main() -> int:
                     "solver_seconds": result["solver"],
                     "time_limit": args.time_limit,
                     "iteration_limit": args.iteration_limit or "",
+                    "structure": args.structure,
                     "git_commit": commit,
                     "machine": machine,
                     "timestamp_utc": timestamp,
@@ -262,14 +272,16 @@ def main() -> int:
                 # hour and one solve can overrun badly; a runner that only writes at the end
                 # loses every measurement it already made the first time something has to be
                 # stopped. Rewriting the file each time costs nothing at this row count.
-                write_csv(args.out or (RESULTS_DIR / f"scale-{commit}.csv"), rows)
+                write_csv(args.out or (RESULTS_DIR / (f"scale-{commit}.csv" if args.structure == "random"
+                                  else f"scale-{args.structure}-{commit}.csv")), rows)
                 shown = "-" if objective is None or not claims_a_point else f"{objective:.10g}"
                 error = "-" if relative is None else f"{relative:.1e}"
                 print(f"{size:>8}  {engine:<13}{result['status']:<13}{shown:>18}{error:>10}"
                       f"{str(result['iterations']):>10}{result['wall']:>8.1f}s", flush=True)
             print("-" * 82, flush=True)
 
-    out = args.out or (RESULTS_DIR / f"scale-{commit}.csv")
+    out = args.out or (RESULTS_DIR / (f"scale-{commit}.csv" if args.structure == "random"
+                                  else f"scale-{args.structure}-{commit}.csv"))
     write_csv(out, rows)
 
     # AN ENGINE THAT DOES NOT REACH THE OPTIMUM IS A RESULT. A solve that produced nothing
