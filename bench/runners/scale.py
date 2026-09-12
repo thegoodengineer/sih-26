@@ -52,6 +52,10 @@ CSV_COLUMNS = [
     "engine", "status", "our_objective", "absolute_error", "relative_error",
     "reached_optimum", "iterations", "wall_seconds", "solver_seconds", "time_limit",
     "iteration_limit", "structure", "git_commit", "machine", "timestamp_utc", "solver_options",
+    # #229: a pdhg row may have been finished by the interior point. algorithm_used is what
+    # the solver says ran ("pdhg" or "pdhg+ipm"); polish_iterations is the second phase's
+    # share of the iterations column.
+    "algorithm_used", "polish_iterations",
 ]
 
 # An objective this close to one known exactly by construction is the right answer; the
@@ -123,8 +127,14 @@ def solve(binary: Path, instance: Path, engine: str, time_limit: float,
         stats = Path(tmp) / "stats.json"
         command = [str(binary), "solve", str(instance), "--stats", str(stats),
                    "--time-limit", str(time_limit),
-                   "--option", "log_to_console=false",
-                   "--option", f"algorithm={engine}"]
+                   "--option", "log_to_console=false"]
+        # "pdhg-raw" is PDHG without the interior-point polish that finishes its answer by
+        # default (#229): the same first-order method, reported as it stands. Both labels
+        # in one CSV put the polished error next to the unpolished one, size by size.
+        if engine == "pdhg-raw":
+            command += ["--option", "algorithm=pdhg", "--option", "pdhg_polish=false"]
+        else:
+            command += ["--option", f"algorithm={engine}"]
         if iteration_limit > 0:
             command += ["--option", f"iteration_limit={iteration_limit}"]
         for option in extra:
@@ -157,6 +167,8 @@ def solve(binary: Path, instance: Path, engine: str, time_limit: float,
             "status": result.get("status", "unknown"),
             "objective": None if objective is None else float(objective),
             "iterations": blob.get("effort", {}).get("iterations", ""),
+            "algorithm_used": result.get("algorithm", ""),
+            "polish_iterations": blob.get("effort", {}).get("polish_iterations", ""),
             "solver": blob.get("effort", {}).get("solve_seconds", ""),
             "wall": wall,
         }
@@ -257,6 +269,8 @@ def main() -> int:
                     "relative_error": "" if relative is None else repr(relative),
                     "reached_optimum": int(matched),
                     "iterations": result["iterations"],
+                    "algorithm_used": result.get("algorithm_used", ""),
+                    "polish_iterations": result.get("polish_iterations", ""),
                     "wall_seconds": f"{result['wall']:.6f}",
                     "solver_seconds": result["solver"],
                     "time_limit": args.time_limit,

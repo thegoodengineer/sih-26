@@ -29,6 +29,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <limits>
 #include <string>
 #include <vector>
@@ -84,13 +85,15 @@ constexpr int kRuizIterations = 10;
 
 class InteriorPoint {
  public:
-  InteriorPoint(const Model& model, const Options& options, Logger& logger)
-      : model_(model), options_(options), logger_(logger) {}
+  InteriorPoint(const Model& model, const Options& options, Logger& logger,
+                const WarmStart* warm = nullptr)
+      : model_(model), options_(options), logger_(logger), warm_(warm) {}
 
   Solution run();
 
  private:
   void build();
+  void apply_warm_start();
   void residuals();
   [[nodiscard]] bool factorize();
 
@@ -122,6 +125,11 @@ class InteriorPoint {
   const Model& model_;
   const Options& options_;
   Logger& logger_;
+  const WarmStart* warm_ = nullptr;
+  /// With a warm start only: the factor the ordering predicts is compared with
+  /// polish_max_factor_nonzeros, and factorize() sets this instead of building it.
+  std::int64_t max_factor_nonzeros_ = -1;
+  bool factor_too_large_ = false;
 
   Index n_ = 0;
   Index m_ = 0;
@@ -294,6 +302,7 @@ void InteriorPoint::build() {
     }
   }
   y_.assign(static_cast<std::size_t>(m_), 0.0);
+  if (warm_ != nullptr) apply_warm_start();
   const auto alloc = [&](std::vector<double>& v, Index size) {
     v.assign(static_cast<std::size_t>(size), 0.0);
   };
@@ -329,6 +338,75 @@ void InteriorPoint::constraint_transpose_times(const std::vector<double>& w,
   model_.matrix.transpose_multiply_add(w.data(), out->data());
   for (Index i = 0; i < m_; ++i) {
     (*out)[static_cast<std::size_t>(n_ + i)] = -w[static_cast<std::size_t>(i)];
+  }
+}
+
+// A WARM START REPLACES THE POINT, NOT THE FLOORS. The caller's x is projected into its
+// box and kept; the logicals are set to A x so r_b starts at zero exactly as the cold start
+// arranges; y is the caller's row duals in minimisation sense; and each multiplier pair is
+// read off the caller's reduced cost, z_l - z_u = d. What a first-order point cannot
+// supply is an interior: its slacks and multipliers are within 1e-6 of zero on every
+// active bound, and a Newton step from there is cut to nothing by the fraction-to-boundary
+// rule. So the slacks and multipliers are floored at polish_start_margin and r_l, r_u, r_c
+// absorb the inconsistency, as they do for the cold start's floor of 1 - the floor is what
+// the method has left to remove. The margin was measured, not chosen: on the staircase
+// family 0.1 polishes the 1,000- and 5,000-row instances in 7 and 12 iterations against a
+// cold start's 18 and 24, while 0.01, 0.001 and 0.0001 start so close to the boundary that
+// the barrier vanishes before the residuals do and the factorization breaks down at the
+// end (the failure #205 made survivable). Closer is not better here.
+//
+// A logical's column of Abar = [A -I] is -e_i, so its reduced cost is y_i itself.
+
+void InteriorPoint::apply_warm_start() {
+  const WarmStart& w = *warm_;
+  const double kWarmFloor = options_.get_double("polish_start_margin");
+  if (static_cast<Index>(w.col_value.size()) != n_ ||
+      static_cast<Index>(w.row_dual.size()) != m_ ||
+      static_cast<Index>(w.col_dual.size()) != n_) {
+    warm_ = nullptr;
+    return;
+  }
+  for (const std::vector<double>* v : {&w.col_value, &w.row_dual, &w.col_dual}) {
+    for (const double value : *v) {
+      if (!std::isfinite(value)) {
+        warm_ = nullptr;
+        return;
+      }
+    }
+  }
+  const double sense = model_.sense_multiplier();
+  for (Index j = 0; j < n_; ++j) {
+    const auto u = static_cast<std::size_t>(j);
+    if (fixed_[u]) continue;
+    double x = w.col_value[u];
+    if (has_lower_[u]) x = std::max(x, lower_[u]);
+    if (has_upper_[u]) x = std::min(x, upper_[u]);
+    x_[u] = x;
+  }
+  if (m_ > 0) {
+    std::vector<double> activity(static_cast<std::size_t>(m_), 0.0);
+    model_.matrix.multiply_add(x_.data(), activity.data());
+    for (Index i = 0; i < m_; ++i) {
+      const auto u = static_cast<std::size_t>(n_ + i);
+      if (!fixed_[u]) x_[u] = activity[static_cast<std::size_t>(i)];
+    }
+  }
+  for (Index i = 0; i < m_; ++i) {
+    const auto u = static_cast<std::size_t>(i);
+    y_[u] = sense * w.row_dual[u];
+  }
+  for (Index k = 0; k < total_; ++k) {
+    const auto u = static_cast<std::size_t>(k);
+    if (fixed_[u]) continue;
+    const double d = k < n_ ? sense * w.col_dual[u] : y_[static_cast<std::size_t>(k - n_)];
+    if (has_lower_[u]) {
+      sl_[u] = std::max(x_[u] - lower_[u], kWarmFloor);
+      zl_[u] = std::max(d, kWarmFloor);
+    }
+    if (has_upper_[u]) {
+      su_[u] = std::max(upper_[u] - x_[u], kWarmFloor);
+      zu_[u] = std::max(-d, kWarmFloor);
+    }
   }
 }
 
@@ -396,6 +474,15 @@ bool InteriorPoint::factorize() {
   if (!analyzed_) {
     if (!ldl_.analyze(normal_lower_, should_stop_)) return false;
     analyzed_ = true;
+    // The ordering knows the factor's size before a single entry of it exists. A polish
+    // that would need a 9-million-nonzero factor for a 7,000-row random-family model (#193)
+    // is not a polish, and the caller has a perfectly good first-order answer to keep.
+    if (warm_ != nullptr && max_factor_nonzeros_ >= 0 &&
+        static_cast<std::int64_t>(ldl_.factor_nonzeros() + ldl_.dimension()) >
+            max_factor_nonzeros_) {
+      factor_too_large_ = true;
+      return false;
+    }
   }
   if (!ldl_.factorize(normal_lower_, kDualRegularization, should_stop_)) return false;
   ++factorizations_;
@@ -559,6 +646,7 @@ Solution InteriorPoint::run() {
     should_stop_ = [&timer, time_limit] { return timer.elapsed_seconds() > time_limit; };
   }
   const std::int64_t iteration_limit = options_.get_int("iteration_limit");
+  if (warm_ != nullptr) max_factor_nonzeros_ = options_.get_int("polish_max_factor_nonzeros");
   build();
   logger_.info("Interior point: {} rows, {} columns, {} nonzeros", m_, n_,
                model_.num_nonzeros());
@@ -640,6 +728,14 @@ Solution InteriorPoint::run() {
                     timer.elapsed_seconds());
     }
     if (!factorize()) {
+      if (factor_too_large_) {
+        return finish(
+            SolveStatus::kNotSolved,
+            fmt::format("declined: the factor would hold {} nonzeros, above "
+                        "polish_max_factor_nonzeros = {}",
+                        ldl_.factor_nonzeros() + ldl_.dimension(), max_factor_nonzeros_),
+            iterations, timer.elapsed_seconds());
+      }
       // Told to stop rather than unable to: the difference matters to a reader, and to the
       // status guard. Neither is a point, but only one of them is a failure.
       if (ldl_.stopped_early()) {
@@ -730,9 +826,10 @@ Solution InteriorPoint::run() {
 /// Scaled solve: Ruiz + Pock-Chambolle equilibration, exactly as the simplex entry point
 /// applies it, then the point, the row duals and the reduced costs are mapped back:
 /// x = Dc xhat, y = Dr yhat, d = Dc^-1 dhat (la/scaling.hpp).
-Solution solve_scaled(const Model& model, const Options& options, Logger& logger) {
+Solution solve_scaled(const Model& model, const Options& options, Logger& logger,
+                      const WarmStart* warm) {
   if (!options.get_bool("scaling")) {
-    InteriorPoint engine(model, options, logger);
+    InteriorPoint engine(model, options, logger, warm);
     return engine.run();
   }
   const Scaling scaling = build_scaling(model, model.col_cost, kRuizIterations);
@@ -757,7 +854,25 @@ Solution solve_scaled(const Model& model, const Options& options, Logger& logger
     scaled.row_upper[u] =
         is_finite_bound(model.row_upper[u]) ? model.row_upper[u] * dr : model.row_upper[u];
   }
-  InteriorPoint engine(scaled, options, logger);
+  // The warm start lives in the original units and is mapped the way the answer is mapped
+  // back below, inverted: xhat = x / Dc, yhat = y / Dr, dhat = d * Dc.
+  WarmStart scaled_warm;
+  if (warm != nullptr && static_cast<Index>(warm->col_value.size()) == n &&
+      static_cast<Index>(warm->row_dual.size()) == m &&
+      static_cast<Index>(warm->col_dual.size()) == n) {
+    scaled_warm = *warm;
+    for (Index j = 0; j < n; ++j) {
+      const auto u = static_cast<std::size_t>(j);
+      scaled_warm.col_value[u] /= scaling.column[u];
+      scaled_warm.col_dual[u] *= scaling.column[u];
+    }
+    for (Index i = 0; i < m; ++i) {
+      const auto u = static_cast<std::size_t>(i);
+      scaled_warm.row_dual[u] /= scaling.row[u];
+    }
+    warm = &scaled_warm;
+  }
+  InteriorPoint engine(scaled, options, logger, warm);
   Solution solution = engine.run();
   for (Index j = 0; j < n; ++j) {
     const auto u = static_cast<std::size_t>(j);
@@ -779,7 +894,12 @@ Solution solve_scaled(const Model& model, const Options& options, Logger& logger
 }  // namespace
 
 Solution solve_ipm(const Model& model, const Options& options, Logger& logger) {
-  return solve_scaled(model, options, logger);
+  return solve_scaled(model, options, logger, nullptr);
+}
+
+Solution solve_ipm(const Model& model, const Options& options, Logger& logger,
+                   const WarmStart* warm) {
+  return solve_scaled(model, options, logger, warm);
 }
 
 }  // namespace sankhya::ipm

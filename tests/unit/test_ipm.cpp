@@ -202,5 +202,41 @@ TEST(InteriorPoint, ReportsRatherThanClaimsOnAnInfeasibleModel) {
   EXPECT_NE(ipm.status, SolveStatus::kOptimal) << ipm.message;
 }
 
+TEST(InteriorPoint, AWarmStartFromTheAnswerTakesFewerIterationsThanACold) {
+  // The polish's premise (#229): started from a point near the optimum with its row duals
+  // and reduced costs, the method has less to do. The cold solve is the control, and the
+  // warm start is the cold solve's own answer - the best case, and the one that must hold
+  // before any weaker one can.
+  const Model model = make_lp(
+      {{1.0, 0.0}, {0.0, 2.0}, {3.0, 2.0}}, {-kInfinity, -kInfinity, -kInfinity},
+      {4.0, 12.0, 18.0}, {3.0, 5.0}, {0.0, 0.0}, {kInfinity, kInfinity}, ObjSense::kMaximize);
+  Options options = with_algorithm("ipm");
+  options.set_bool("presolve", false);  // the engine itself, not the reduced model
+  Logger quiet(stdout, LogLevel::kOff);
+  const Solution cold = ipm::solve_ipm(model, options, quiet);
+  ASSERT_EQ(cold.status, SolveStatus::kOptimal) << cold.message;
+
+  const ipm::WarmStart warm{cold.col_value, cold.row_dual, cold.col_dual};
+  const Solution warmed = ipm::solve_ipm(model, options, quiet, &warm);
+  ASSERT_EQ(warmed.status, SolveStatus::kOptimal) << warmed.message;
+  EXPECT_NEAR(warmed.objective, 36.0, 1e-6);
+  EXPECT_LT(warmed.iterations, cold.iterations)
+      << "warm " << warmed.iterations << " vs cold " << cold.iterations;
+  EXPECT_LE(warmed.dual_infeasibility_scaled, tol::kDualFeasibility) << warmed.message;
+}
+
+TEST(InteriorPoint, AWarmStartOfTheWrongLengthIsIgnoredAndTheSolveIsCold) {
+  const Model model = make_lp(
+      {{1.0, 0.0}, {0.0, 2.0}, {3.0, 2.0}}, {-kInfinity, -kInfinity, -kInfinity},
+      {4.0, 12.0, 18.0}, {3.0, 5.0}, {0.0, 0.0}, {kInfinity, kInfinity}, ObjSense::kMaximize);
+  Options options = with_algorithm("ipm");
+  options.set_bool("presolve", false);
+  Logger quiet(stdout, LogLevel::kOff);
+  const ipm::WarmStart wrong{{1.0}, {}, {}};
+  const Solution solved = ipm::solve_ipm(model, options, quiet, &wrong);
+  ASSERT_EQ(solved.status, SolveStatus::kOptimal) << solved.message;
+  EXPECT_NEAR(solved.objective, 36.0, 1e-6);
+}
+
 }  // namespace
 }  // namespace sankhya

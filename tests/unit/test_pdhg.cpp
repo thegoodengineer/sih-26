@@ -52,6 +52,9 @@ Options pdhg_options(double tolerance) {
   options.set_string("algorithm", "pdhg");
   options.set_double("pdhg_tolerance", tolerance);
   options.set_int("iteration_limit", 200000);
+  // These tests are about the first-order method itself; the interior-point polish (#229)
+  // that finishes its answer by default has its own tests below.
+  options.set_bool("pdhg_polish", false);
   return options;
 }
 
@@ -538,6 +541,7 @@ TEST(SolveStatusGuard, ANonClaimingStatusIsLeftAlone) {
   options.set_bool("log_to_console", false);
   options.set_string("algorithm", "pdhg");
   options.set_int("iteration_limit", 5);
+  options.set_bool("pdhg_polish", false);  // the guard is under test, not the polish (#229)
 
   const Solution solution = solve(model, options);
   EXPECT_EQ(solution.status, SolveStatus::kIterationLimit) << solution.message;
@@ -618,6 +622,65 @@ TEST(Pdhg, ProgressStreamReportsTheSameObjectiveAsTheResultUnderPresolve) {
         << "presolve=" << presolve << ": the progress stream and the reported objective "
         << "disagree by " << std::fabs(last_objective - solution.objective);
   }
+}
+
+// ---- The polish (#229) ---------------------------------------------------------------------
+//
+// A first-order point stopped at a limit is a rough answer; handed to the interior point as
+// a starting point it becomes an exact one. The same LP three ways: polished, unpolished,
+// and polish declined because the factor cap says so.
+
+Options polish_options(bool polish) {
+  Options options;
+  options.set_bool("log_to_console", false);
+  options.set_string("algorithm", "pdhg");
+  options.set_int("iteration_limit", 20);  // PDHG stops short, on purpose
+  options.set_bool("pdhg_polish", polish);
+  return options;
+}
+
+TEST(Pdhg, PolishFinishesAnIterationLimitedPointToTheStandard) {
+  // min -3x - 5y  s.t.  x <= 4, 2y <= 12, 3x + 2y <= 18: optimum -36 at (2, 6).
+  const Model model =
+      make_lp({{1.0, 0.0}, {0.0, 2.0}, {3.0, 2.0}}, {-kInfinity, -kInfinity, -kInfinity},
+              {4.0, 12.0, 18.0}, {-3.0, -5.0});
+  const Solution polished = solve(model, polish_options(true));
+  ASSERT_EQ(polished.status, SolveStatus::kOptimal) << polished.message;
+  EXPECT_EQ(polished.algorithm, "pdhg-cpu+ipm");
+  EXPECT_NEAR(polished.objective, -36.0, 1e-6);
+  EXPECT_NEAR(polished.col_value[0], 2.0, 1e-5);
+  EXPECT_NEAR(polished.col_value[1], 6.0, 1e-5);
+  EXPECT_GT(polished.polish_iterations, 0);
+  // The count is the SUM of both phases, so it cannot be read as a PDHG count.
+  EXPECT_EQ(polished.iterations, 20 + polished.polish_iterations);
+  EXPECT_LE(polished.primal_infeasibility, tol::kPrimalFeasibility);
+  EXPECT_LE(polished.dual_infeasibility_scaled, tol::kDualFeasibility) << polished.message;
+  EXPECT_NE(polished.message.find("polished by the interior point"), std::string::npos)
+      << polished.message;
+}
+
+TEST(Pdhg, WithoutThePolishTheLimitedPointIsReportedAsWhatItIs) {
+  const Model model =
+      make_lp({{1.0, 0.0}, {0.0, 2.0}, {3.0, 2.0}}, {-kInfinity, -kInfinity, -kInfinity},
+              {4.0, 12.0, 18.0}, {-3.0, -5.0});
+  const Solution rough = solve(model, polish_options(false));
+  EXPECT_EQ(rough.status, SolveStatus::kIterationLimit) << rough.message;
+  EXPECT_EQ(rough.algorithm, "pdhg-cpu");
+  EXPECT_EQ(rough.iterations, 20);
+  EXPECT_EQ(rough.polish_iterations, 0);
+}
+
+TEST(Pdhg, PolishDeclinesWhenTheFactorCapSaysSoAndTheFirstOrderAnswerStands) {
+  const Model model =
+      make_lp({{1.0, 0.0}, {0.0, 2.0}, {3.0, 2.0}}, {-kInfinity, -kInfinity, -kInfinity},
+              {4.0, 12.0, 18.0}, {-3.0, -5.0});
+  Options capped = polish_options(true);
+  capped.set_int("polish_max_factor_nonzeros", 0);  // no factor is this small
+  const Solution rough = solve(model, capped);
+  EXPECT_EQ(rough.status, SolveStatus::kIterationLimit) << rough.message;
+  EXPECT_EQ(rough.algorithm, "pdhg-cpu");
+  EXPECT_EQ(rough.iterations, 20);
+  EXPECT_NE(rough.message.find("declined"), std::string::npos) << rough.message;
 }
 
 }  // namespace

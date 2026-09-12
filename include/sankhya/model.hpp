@@ -348,6 +348,9 @@ class Solution {
   Count iterations = 0;  ///< simplex/IPM/PDHG iterations
   Count nodes = 0;       ///< branch-and-cut nodes
   Count cuts_applied = 0;
+  /// Of `iterations`, those spent by the interior-point polish of a PDHG answer (#229);
+  /// zero when no polish ran. A benchmark row can then say which phase did what.
+  Count polish_iterations = 0;
   double solve_seconds = 0.0;
 
   /// Which engine produced this: "simplex-primal", "pdhg-cpu", "branch-and-cut", ...

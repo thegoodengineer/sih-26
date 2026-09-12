@@ -898,21 +898,77 @@ def per_iteration_section(path: Path | None) -> str:
         "what is left is a property of the algorithm.",
         "",
         "| size (rows x cols) | engine | objective | analytic optimum | relative error | "
-        "seconds |",
-        "|---:|---|---:|---:|---:|---:|",
+        "polish iterations | seconds |",
+        "|---:|---|---:|---:|---:|---:|---:|",
     ]
     for row in rows:
         objective = as_float(row, "our_objective")
         optimum = as_float(row, "analytic_optimum")
         error = as_float(row, "relative_error")
         seconds = as_float(row, "wall_seconds")
+        polish = row.get("polish_iterations") or ""
         out.append(
             f"| {int(row['rows']):,} | `{row['engine']}` "
             f"| {'-' if objective is None else f'{objective:.10g}'} "
             f"| {'-' if optimum is None else f'{optimum:.10g}'} "
             f"| {'-' if error is None else f'{error:.1e}'} "
+            f"| {polish if polish not in ('', '0') else '-'} "
             f"| {'-' if seconds is None else f'{seconds:.1f}'} |")
     out.append("")
+
+    # THE POLISH, SIZE BY SIZE (#229). `pdhg-raw` is the first-order method as it stands
+    # after the budget; `pdhg` is the same run finished by the interior point from that
+    # point. When the CSV carries both, the pairing is the measurement: how many more
+    # decimals the polish buys, and how many second-order iterations it costs. The error
+    # ratio is computed, the iteration counts are read off, and nothing is asserted about
+    # a size the CSV does not hold.
+    by_size_engine = {(int(r["rows"]), r["engine"]): r for r in rows}
+    pairs = [(size, by_size_engine[(size, "pdhg-raw")], by_size_engine[(size, "pdhg")])
+             for size in sorted({int(r["rows"]) for r in rows})
+             if (size, "pdhg-raw") in by_size_engine and (size, "pdhg") in by_size_engine]
+    if pairs:
+        out += ["| size | unpolished error | polished error | polish iterations | "
+                "polished status |",
+                "|---:|---:|---:|---:|---|"]
+        gains = []
+        for size, raw_row, polished_row in pairs:
+            raw_error = as_float(raw_row, "relative_error")
+            polished_error = as_float(polished_row, "relative_error")
+            polish_iterations = polished_row.get("polish_iterations") or "-"
+            out.append(f"| {size:,} | {'-' if raw_error is None else f'{raw_error:.1e}'} "
+                       f"| {'-' if polished_error is None else f'{polished_error:.1e}'} "
+                       f"| {polish_iterations} "
+                       f"| {polished_row.get('status', '').replace('_', ' ')} |")
+            ran = polish_iterations not in ("-", "", "0")
+            if ran and raw_error and polished_error and polished_error > 0:
+                gains.append((size, raw_error / polished_error))
+        out.append("")
+        declined = [size for size, _, polished_row in pairs
+                    if (polished_row.get("polish_iterations") or "0") in ("", "0")]
+        if gains:
+            sizes_ran = ", ".join(f"{size:,}" for size, _ in gains)
+            ratios = [g for _, g in gains]
+            out += [
+                f"**The polish is where the accuracy comes from, where it can run.** On the "
+                f"{'size' if len(gains) == 1 else 'sizes'} where it ran ({sizes_ran} rows) the "
+                f"same {budget} first-order iterations, finished by the interior point from "
+                f"the point they reached, land "
+                + (f"{ratios[0]:,.0f}x" if len(ratios) == 1
+                   else f"{min(ratios):,.0f}x to {max(ratios):,.0f}x")
+                + f" closer to the optimum, at the cost of the polish-iteration column - each "
+                f"of those is a factorization, and the answer's iteration count is the sum of "
+                f"both phases. A first-order method converges linearly with a rate that "
+                f"flattens near the optimum; a second-order method started there converges "
+                f"quadratically."
+                + (f" At {', '.join(f'{s:,}' for s in declined)} rows the polish was declined "
+                   f"- its factor, or the ordering that sizes it, did not fit "
+                   f"`polish_max_factor_nonzeros` / `polish_max_seconds` - and the "
+                   f"first-order answer stands unchanged, which is what the table shows."
+                   if declined else "")
+                + " The polish is on by default (`pdhg_polish`) and is measured here so that "
+                f"the unpolished number stays on the page beside it.",
+                "",
+            ]
 
     errors = [as_float(r, "relative_error") for r in rows]
     errors = [e for e in errors if e is not None]
@@ -928,9 +984,10 @@ def per_iteration_section(path: Path | None) -> str:
             f"iteration, not how many are required.",
             "",
         ]
-    if len(engines) == 1:
+    first_order_only = all(e in ("pdhg", "pdhg-raw") for e in engines)
+    if first_order_only:
         out += [
-            f"Only `{engines[0]}` is measured here, and deliberately. The simplex and the "
+            f"Only the first-order method is measured here, and deliberately. The simplex and the "
             f"interior point are not iterative in the same sense - a simplex iteration is a "
             f"pivot and an interior-point iteration is a factorization, so the same count "
             f"means something different for each, and section 1f already shows both running "
