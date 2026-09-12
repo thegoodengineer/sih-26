@@ -291,11 +291,11 @@ accuracy asked of it - which is why this section reports two tolerances separate
 than one blended number. It is also the engine the GPU work targets, so its CPU behaviour is
 the baseline every GPU claim will be measured against.
 
-Source CSV: `bench/results/pdhg-53cbe16.csv`  
-Commit `53cbe16` · machine `Windows-AMD64` · 9 instances, the ones committed to the repository
+Source CSV: `bench/results/pdhg-79ec7f7.csv`  
+Commit `79ec7f7` · machine `Windows-AMD64` · 9 instances, the ones committed to the repository
 
-- **8 of 9** reach `optimal` at a requested 0.0001 with restarts on.
-- **8 of 9** reach `optimal` at a requested 1e-08 with restarts on, **7 of 9** with restarts off.
+- **9 of 9** reach `optimal` at a requested 0.0001 with restarts on.
+- **9 of 9** reach `optimal` at a requested 1e-08 with restarts on, **9 of 9** with restarts off.
 
 `optimal` here means what it means everywhere else in this document: the point also survives the project's absolute tolerances, not merely the relative ones the first-order loop converges on. That distinction is the whole of #179 - the loop used to stop on the relative measure and the report then downgraded the point it stopped on, so the engine gave up early and handed back the weaker answer.
 
@@ -310,7 +310,7 @@ Commit `53cbe16` · machine `Windows-AMD64` · 9 instances, the ones committed t
 | `sc105` | -52.20206121 | -52.20206122 / 61440 | -52.20206122 / 61440 |
 | `sc50a` | -64.57507706 | -64.57507705 / 7680 | -64.57507705 / 7680 |
 | `sc50b` | -70 | -69.99999999 / 8360 | -69.99999999 / 8360 |
-| `share2b` | -415.7322407 | -415.7322735 / 1000000 (iteration_limit) | -415.7322735 / 1000000 (iteration_limit) |
+| `share2b` | -415.7322407 | -415.7322407 / 1000009 | -415.7322407 / 1000009 |
 | `stocfor1` | -41131.97622 | -41131.97619 / 321000 | -41131.97619 / 321000 |
 
 **Restarts, measured at 1e-08.** The claim that restarting the averaging helps is checked rather than repeated:
@@ -320,11 +320,11 @@ Commit `53cbe16` · machine `Windows-AMD64` · 9 instances, the ones committed t
 | `adlittle` | 192080 | 207040 | 1.08x |
 | `afiro` | 1040 | 2800 | 2.69x |
 | `blend` | 44520 | 76400 | 1.72x |
-| `israel` | 368720 | 1000000 | 2.71x |
+| `israel` | 368720 | 1000005 | 2.71x |
 | `sc105` | 61440 | 291200 | 4.74x |
 | `sc50a` | 7680 | 28280 | 3.68x |
 | `sc50b` | 8360 | 33200 | 3.97x |
-| `share2b` | 1000000 | 1000000 | 1.00x |
+| `share2b` | 1000009 | 1000009 | 1.00x |
 | `stocfor1` | 321000 | 496320 | 1.55x |
 
 A ratio above 1 means restarts saved iterations on that instance.
@@ -370,45 +370,62 @@ PS26119 asks for **thousands to millions of variables**, and this is the section
 
 #### 1f.1 The same question without the clock
 
-Source CSV: `bench/results/scale-iterations-8e830bb.csv`  
-Commit `8e830bb` · machine `Windows-AMD64` · **1000 iterations per solve**, not a clock
+Source CSV: `bench/results/scale-iterations-79ec7f7.csv`  
+Commit `79ec7f7` · machine `Windows-AMD64` · **1000 iterations per solve**, not a clock
 
 **This is the one measurement on this page another machine reproduces exactly.** Every other timing here is partly a property of this laptop: a machine at half speed does half the iterations inside a time limit and lands further from the optimum, so the same solver looks worse. Fixing the iteration count removes the machine, and what is left is a property of the algorithm.
 
 | size (rows x cols) | engine | objective | analytic optimum | relative error | polish iterations | seconds |
 |---:|---|---:|---:|---:|---:|---:|
-| 1,000 | `pdhg` | -361.7805711 | -362 | 6.1e-04 | - | 0.0 |
-| 5,000 | `pdhg` | 9944.617973 | 9945 | 3.8e-05 | - | 0.2 |
-| 20,000 | `pdhg` | -26591.57153 | -26592 | 1.6e-05 | - | 0.8 |
-| 100,000 | `pdhg` | -83110.56935 | -83110 | 6.9e-06 | - | 8.3 |
-| 500,000 | `pdhg` | 87564.13601 | 87565 | 9.9e-06 | - | 51.0 |
-| 1,000,000 | `pdhg` | 208841.722 | 208845 | 1.6e-05 | - | 137.0 |
+| 1,000 | `pdhg-raw` | -361.7805711 | -362 | 6.1e-04 | - | 0.1 |
+| 1,000 | `pdhg` | -361.9999999 | -362 | 1.9e-10 | 7 | 0.4 |
+| 5,000 | `pdhg-raw` | 9944.617973 | 9945 | 3.8e-05 | - | 0.3 |
+| 5,000 | `pdhg` | 9944.617973 | 9945 | 3.8e-05 | 2 | 30.3 |
+| 20,000 | `pdhg-raw` | -26591.57153 | -26592 | 1.6e-05 | - | 1.4 |
+| 20,000 | `pdhg` | -26591.57153 | -26592 | 1.6e-05 | - | 32.6 |
+| 100,000 | `pdhg-raw` | -83110.56935 | -83110 | 6.9e-06 | - | 7.9 |
+| 100,000 | `pdhg` | -83110.56935 | -83110 | 6.9e-06 | - | 44.7 |
+| 500,000 | `pdhg-raw` | 87564.13601 | 87565 | 9.9e-06 | - | 81.9 |
+| 500,000 | `pdhg` | 87564.13601 | 87565 | 9.9e-06 | - | 172.6 |
+| 1,000,000 | `pdhg-raw` | 208841.722 | 208845 | 1.6e-05 | - | 261.9 |
+| 1,000,000 | `pdhg` | 208841.722 | 208845 | 1.6e-05 | - | 301.4 |
 
-**The accuracy does not degrade with the model.** Across sizes from 1,000 to 1,000,000 rows and columns, the same 1000 iterations land between 6.9e-06 and 6.1e-04 of an optimum known exactly by construction. The number of iterations a first-order method needs is a property of the problem's conditioning, not of its size, and on this family that shows: what grows with the model is the cost of one iteration, not how many are required.
+| size | unpolished error | polished error | polish iterations | polished status |
+|---:|---:|---:|---:|---|
+| 1,000 | 6.1e-04 | 1.9e-10 | 7 | optimal |
+| 5,000 | 3.8e-05 | 3.8e-05 | 2 | iteration limit |
+| 20,000 | 1.6e-05 | 1.6e-05 | 0 | iteration limit |
+| 100,000 | 6.9e-06 | 6.9e-06 | 0 | iteration limit |
+| 500,000 | 9.9e-06 | 9.9e-06 | 0 | iteration limit |
+| 1,000,000 | 1.6e-05 | 1.6e-05 | 0 | iteration limit |
+
+**The polish is where the accuracy comes from, where it can run.** On the size where it ran (1,000 rows) the same 1000 first-order iterations, finished by the interior point from the point they reached, land 3,166,852x closer to the optimum, at the cost of the polish-iteration column - each of those is a factorization, and the answer's iteration count is the sum of both phases. A first-order method converges linearly with a rate that flattens near the optimum; a second-order method started there converges quadratically. At 5,000, 20,000, 100,000, 500,000, 1,000,000 rows the polish did not improve the answer - its factor, or the ordering that sizes it, did not fit `polish_max_factor_nonzeros` / `polish_max_seconds` (a nonzero polish-iteration count there is what it managed before the clock) - and the first-order answer stands unchanged, which is what the table shows. The seconds column carries the cost of finding that out. The polish is on by default (`pdhg_polish`) and is measured here so that the unpolished number stays on the page beside it.
+
+**The accuracy does not degrade with the model.** Across sizes from 1,000 to 1,000,000 rows and columns, the same 1000 iterations land between 1.9e-10 and 6.1e-04 of an optimum known exactly by construction. The number of iterations a first-order method needs is a property of the problem's conditioning, not of its size, and on this family that shows: what grows with the model is the cost of one iteration, not how many are required.
 
 Only the first-order method is measured here, and deliberately. The simplex and the interior point are not iterative in the same sense - a simplex iteration is a pivot and an interior-point iteration is a factorization, so the same count means something different for each, and section 1f already shows both running out of time well below these sizes.
 
 #### 1f.2 The same sizes on a second shape
 
-Source CSV: `bench/results/scale-staircase-6503800.csv`  
-Commit `6503800` · machine `Windows-AMD64` · 120.0s per solve · staircase structure
+Source CSV: `bench/results/scale-staircase-79ec7f7.csv`  
+Commit `79ec7f7` · machine `Windows-AMD64` · 120.0s per solve · staircase structure
 
 **Same construction, same sizes, same nonzeros per column, different pattern.** The random family above draws each column's rows uniformly, which makes an expander graph: no small separators, so every elimination ordering fills catastrophically. That is the worst case for a method that factorizes and it looks nothing like an industrial model. This family is a staircase, each column in its own period with one coupling into the next - a multi-period planning model, which is the shape PS26119's own domain produces. The optimum is exact by construction either way.
 
 | size (rows x cols) | engine | status | objective | relative error | iterations | seconds |
 |---:|---|---|---:|---:|---:|---:|
-| 1,000 | `dual-simplex` | optimal | -5821 | 0.0e+00 | 5149 | 2.8 |
-| 1,000 | `ipm` | feasible | -5820.999999 | 1.3e-10 | 18 | 0.7 |
-| 1,000 | `pdhg` | optimal | -5821 | 4.1e-11 | 76560 | 4.0 |
-| 5,000 | `dual-simplex` | time limit | -16519.99374 | 1.8e-01 | 12439 | 121.1 |
-| 5,000 | `ipm` | optimal | -14008 | 1.1e-10 | 24 | 15.9 |
-| 5,000 | `pdhg` | optimal | -14008 | 7.8e-12 | 155280 | 79.3 |
-| 20,000 | `dual-simplex` | time limit | -325395.3801 | 4.5e+01 | 4469 | 120.8 |
-| 20,000 | `ipm` | feasible | 7459.000306 | 4.1e-08 | 27 | 44.3 |
-| 20,000 | `pdhg` | time limit | 7458.99882 | 1.6e-07 | 36895 | 120.9 |
-| 100,000 | `dual-simplex` | time limit | -6687847.232 | 6.9e+01 | 426 | 130.9 |
-| 100,000 | `ipm` | time limit | 274164.9593 | 1.8e+00 | 0 | 125.6 |
-| 100,000 | `pdhg` | time limit | 98413.94894 | 5.2e-07 | 7492 | 122.3 |
+| 1,000 | `dual-simplex` | optimal | -5821 | 0.0e+00 | 5149 | 1.4 |
+| 1,000 | `ipm` | optimal | -5820.999999 | 1.3e-10 | 18 | 0.4 |
+| 1,000 | `pdhg` | optimal | -5821 | 4.1e-11 | 76560 | 2.3 |
+| 5,000 | `dual-simplex` | time limit | -16459.54389 | 1.8e-01 | 12662 | 120.3 |
+| 5,000 | `ipm` | optimal | -14008 | 1.1e-10 | 24 | 11.0 |
+| 5,000 | `pdhg` | optimal | -14008 | 1.5e-10 | 83944 (of which 12 polish) | 90.6 |
+| 20,000 | `dual-simplex` | time limit | -216739.1005 | 3.0e+01 | 7430 | 120.7 |
+| 20,000 | `ipm` | feasible | 7459.000306 | 4.1e-08 | 27 | 42.1 |
+| 20,000 | `pdhg` | time limit | 7458.99846 | 2.1e-07 | 60545 (of which 11 polish) | 114.5 |
+| 100,000 | `dual-simplex` | time limit | -6014008.262 | 6.2e+01 | 1450 | 123.3 |
+| 100,000 | `ipm` | time limit | 123257.3768 | 2.5e-01 | 12 | 121.1 |
+| 100,000 | `pdhg` | time limit | 98413.91379 | 8.8e-07 | 15430 | 115.1 |
 
 **8 of 12** solves reached the analytic optimum to a relative 1e-06 on this shape.
 
@@ -418,7 +435,7 @@ Commit `6503800` · machine `Windows-AMD64` · 120.0s per solve · staircase str
 | `ipm` | 1,000 | 20,000 |
 | `pdhg` | 100,000 | 100,000 |
 
-**Structure is what a direct method needs, and the table shows it:** `ipm` from 1,000 to 20,000. The two families were measured at different commits - random at `351a558`, staircase at `6503800` - so the solver is not identical between them; each table stands on its own commit, and the comparison is of shapes, not of versions. What changed between the shapes is whether the matrix has small separators, and the measurements behind that - the ordering time and the fill in the factor at the same size on both shapes - are in #193. The lesson for the section above is that its random family is a fair test of the first-order engine and an unfair one of the other two.
+**Structure is what a direct method needs, and the table shows it:** `ipm` from 1,000 to 20,000. The two families were measured at different commits - random at `351a558`, staircase at `79ec7f7` - so the solver is not identical between them; each table stands on its own commit, and the comparison is of shapes, not of versions. What changed between the shapes is whether the matrix has small separators, and the measurements behind that - the ordering time and the fill in the factor at the same size on both shapes - are in #193. The lesson for the section above is that its random family is a fair test of the first-order engine and an unfair one of the other two.
 
 The 20,000-row `ipm` row is the one to read against the first measurement of this family, `bench/results/scale-staircase-bb4eefa.csv`, where it was a numerical failure after 300 iterations. Running that row is what found the defect fixed in #205 - the method had converged to a relative gap of 1e-7 and then iterated on a NaN that overwrote the answer - and here it reports feasible at a relative error of 4.1e-08 in 27 iterations. Same instance, same hash; the stopping rule is what changed.
 

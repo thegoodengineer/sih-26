@@ -939,12 +939,19 @@ def per_iteration_section(path: Path | None) -> str:
                        f"| {'-' if polished_error is None else f'{polished_error:.1e}'} "
                        f"| {polish_iterations} "
                        f"| {polished_row.get('status', '').replace('_', ' ')} |")
-            ran = polish_iterations not in ("-", "", "0")
-            if ran and raw_error and polished_error and polished_error > 0:
+            # A gain is a smaller error, not a polish that started. At 5,000 random rows
+            # the polish ran two iterations before its clock and the first-order answer
+            # stood; that row is a decline with a cost, not a 1x improvement.
+            improved = (raw_error is not None and polished_error is not None and
+                        polished_error > 0 and polished_error < raw_error)
+            if improved:
                 gains.append((size, raw_error / polished_error))
         out.append("")
-        declined = [size for size, _, polished_row in pairs
-                    if (polished_row.get("polish_iterations") or "0") in ("", "0")]
+        declined = [size for size, raw_row, polished_row in pairs
+                    if not (as_float(raw_row, "relative_error") is not None and
+                            as_float(polished_row, "relative_error") is not None and
+                            as_float(polished_row, "relative_error") <
+                            as_float(raw_row, "relative_error"))]
         if gains:
             sizes_ran = ", ".join(f"{size:,}" for size, _ in gains)
             ratios = [g for _, g in gains]
@@ -960,10 +967,12 @@ def per_iteration_section(path: Path | None) -> str:
                 f"both phases. A first-order method converges linearly with a rate that "
                 f"flattens near the optimum; a second-order method started there converges "
                 f"quadratically."
-                + (f" At {', '.join(f'{s:,}' for s in declined)} rows the polish was declined "
-                   f"- its factor, or the ordering that sizes it, did not fit "
-                   f"`polish_max_factor_nonzeros` / `polish_max_seconds` - and the "
-                   f"first-order answer stands unchanged, which is what the table shows."
+                + (f" At {', '.join(f'{s:,}' for s in declined)} rows the polish did not "
+                   f"improve the answer - its factor, or the ordering that sizes it, did not "
+                   f"fit `polish_max_factor_nonzeros` / `polish_max_seconds` (a nonzero "
+                   f"polish-iteration count there is what it managed before the clock) - and "
+                   f"the first-order answer stands unchanged, which is what the table shows. "
+                   f"The seconds column carries the cost of finding that out."
                    if declined else "")
                 + " The polish is on by default (`pdhg_polish`) and is measured here so that "
                 f"the unpolished number stays on the page beside it.",
@@ -1058,11 +1067,17 @@ def structured_scale_section(random_path: Path | None, staircase_path: Path | No
             objective = as_float(r, "our_objective")
             error = as_float(r, "relative_error")
             seconds = as_float(r, "wall_seconds")
+            polish = r.get("polish_iterations") or ""
+            iterations = r.get("iterations") or "-"
+            # A pdhg row finished by the interior point (#229) says so in its count: the
+            # total is both phases, and the polish's share is the number in brackets.
+            if polish not in ("", "0"):
+                iterations = f"{iterations} (of which {polish} polish)"
             out.append(
                 f"| {size:,} | `{engine}` | {status.replace('_', ' ')} "
                 f"| {'-' if objective is None or not answered else f'{objective:.10g}'} "
                 f"| {'-' if error is None or not answered else f'{error:.1e}'} "
-                f"| {r.get('iterations') or '-'} "
+                f"| {iterations} "
                 f"| {'-' if seconds is None else f'{seconds:.1f}'} |")
     out.append("")
 

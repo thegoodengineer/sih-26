@@ -121,6 +121,22 @@ def generate(size: int, nnz_per_col: int, seed: int, directory: Path,
 OVERRUN_FACTOR = 3.0
 
 
+def default_out(commit: str, args) -> Path:
+    """Where a run lands when --out is not given, and the document's globs depend on it.
+
+    scale-<commit>.csv is the timed random family and scale-<structure>-<commit>.csv the timed
+    structured one; a FIXED-ITERATION run is a different measurement and must not be mistaken
+    for either. The first re-measurement after #229 wrote its 1,000-iteration rows to
+    scale-79ec7f7.csv, which the generator would have rendered as the 120-second table. So
+    an iteration-limited run is named scale-iterations-..., which is the glob section 1f.1
+    reads, with the structure in the name when it is not random.
+    """
+    prefix = "scale-iterations" if args.iteration_limit > 0 else "scale"
+    if args.structure == "random":
+        return RESULTS_DIR / f"{prefix}-{commit}.csv"
+    return RESULTS_DIR / f"{prefix}-{args.structure}-{commit}.csv"
+
+
 def solve(binary: Path, instance: Path, engine: str, time_limit: float,
           extra: list[str], iteration_limit: int = 0) -> dict:
     with tempfile.TemporaryDirectory() as tmp:
@@ -286,16 +302,14 @@ def main() -> int:
                 # hour and one solve can overrun badly; a runner that only writes at the end
                 # loses every measurement it already made the first time something has to be
                 # stopped. Rewriting the file each time costs nothing at this row count.
-                write_csv(args.out or (RESULTS_DIR / (f"scale-{commit}.csv" if args.structure == "random"
-                                  else f"scale-{args.structure}-{commit}.csv")), rows)
+                write_csv(args.out or default_out(commit, args), rows)
                 shown = "-" if objective is None or not claims_a_point else f"{objective:.10g}"
                 error = "-" if relative is None else f"{relative:.1e}"
                 print(f"{size:>8}  {engine:<13}{result['status']:<13}{shown:>18}{error:>10}"
                       f"{str(result['iterations']):>10}{result['wall']:>8.1f}s", flush=True)
             print("-" * 82, flush=True)
 
-    out = args.out or (RESULTS_DIR / (f"scale-{commit}.csv" if args.structure == "random"
-                                  else f"scale-{args.structure}-{commit}.csv"))
+    out = args.out or default_out(commit, args)
     write_csv(out, rows)
 
     # AN ENGINE THAT DOES NOT REACH THE OPTIMUM IS A RESULT. A solve that produced nothing
