@@ -1040,16 +1040,44 @@ def structured_scale_section(random_path: Path | None, staircase_path: Path | No
             if s_best > r_best:
                 improved.append(f"`{engine}` from {r_best:,} to {s_best:,}")
         if improved:
+            random_commit = rand[0].get("git_commit", "unknown")
+            same_commit = random_commit == commit
             out += [
                 "**Structure is what a direct method needs, and the table shows it:** "
-                + "; ".join(improved) + ". Nothing about the solver changed between the two "
-                "families. What changed is whether the matrix has small separators, and the "
-                "measurements behind that - the ordering time and the fill in the factor at "
-                "the same size on both shapes - are in #193. The lesson for the section above "
-                "is that its random family is a fair test of the first-order engine and an "
-                "unfair one of the other two.",
+                + "; ".join(improved) + ". "
+                + ("Nothing about the solver changed between the two families. "
+                   if same_commit else
+                   f"The two families were measured at different commits - random at "
+                   f"`{random_commit}`, staircase at `{commit}` - so the solver is not "
+                   f"identical between them; each table stands on its own commit, and the "
+                   f"comparison is of shapes, not of versions. ")
+                + "What changed between the shapes is whether the matrix has small "
+                "separators, and the measurements behind that - the ordering time and the "
+                "fill in the factor at the same size on both shapes - are in #193. The lesson "
+                "for the section above is that its random family is a fair test of the "
+                "first-order engine and an unfair one of the other two.",
                 "",
             ]
+    # The row that found a defect. The first measurement of this family, committed as
+    # scale-staircase-bb4eefa.csv and kept, reported the 20,000-row interior-point solve as
+    # a numerical failure after 300 iterations. Running it is what found the defect fixed in
+    # #205: the method had converged to a relative gap of 1e-7, the next factorization broke
+    # down as the barrier vanished, and the loop then ran on a NaN iterate that had
+    # overwritten the answer. The re-measurement after the fix is the CSV rendered above,
+    # where that row reports the point it had in fact reached.
+    twenty_k = row_for(stair, 20000, "ipm")
+    if twenty_k is not None and staircase_path.name != "scale-staircase-bb4eefa.csv":
+        out += [
+            f"The 20,000-row `ipm` row is the one to read against the first measurement of "
+            f"this family, `bench/results/scale-staircase-bb4eefa.csv`, where it was a "
+            f"numerical failure after 300 iterations. Running that row is what found the "
+            f"defect fixed in #205 - the method had converged to a relative gap of 1e-7 and "
+            f"then iterated on a NaN that overwrote the answer - and here it reports "
+            f"{twenty_k.get('status', '').replace('_', ' ')} at a relative error of "
+            f"{as_float(twenty_k, 'relative_error'):.1e} in {twenty_k.get('iterations')} "
+            f"iterations. Same instance, same hash; the stopping rule is what changed.",
+            "",
+        ]
     return chr(10).join(out)
 
 
