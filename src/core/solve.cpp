@@ -158,6 +158,89 @@ void keep_only_a_proved_certificate(Solution* solution, const Model& model, Logg
   }
 }
 
+/// PDHG's answer, finished by the interior point (#229).
+///
+/// A first-order method converges linearly, with a rate that flattens as the iterate nears
+/// the optimum and a floor set by floating-point noise in the step: on the scale families it
+/// stops between 1e-5 and 1e-7 relative, and a million iterations do not move it (#198). A
+/// second-order method started from that point converges quadratically. So when PDHG stops
+/// short of the standard - at a limit, or at its own tolerance without meeting the absolute
+/// one - its point, row duals and reduced costs are handed to the interior point as a
+/// starting point, with a small iteration budget and whatever time the caller has left.
+///
+/// The polish is not free and does not pretend to be: the merged answer's iteration count is
+/// the SUM of both phases, its algorithm reads "pdhg+ipm", and the polish's own count is kept
+/// in polish_iterations so a benchmark row can say which phase did what. The factor is the
+/// cost that can be prohibitive - the random scale family fills 17% of n^2 (#193) - and the
+/// interior point measures it from the ordering before building it: above
+/// polish_max_factor_nonzeros it declines, PDHG's answer stands, and the message says why.
+///
+/// A polished answer replaces PDHG's only when it is better - optimal, or feasible with
+/// smaller scaled violations - so the polish cannot make the answer worse.
+void polish_with_the_interior_point(Solution* first, const Model& model, const Options& options,
+                                    Logger& logger, const Timer& timer) {
+  if (!options.get_bool("pdhg_polish")) return;
+  if (first->status == SolveStatus::kOptimal || !claims_a_point(first->status)) return;
+  const auto n = static_cast<std::size_t>(model.num_cols());
+  const auto m = static_cast<std::size_t>(model.num_rows());
+  if (first->col_value.size() != n || first->row_dual.size() != m ||
+      first->col_dual.size() != n) {
+    return;
+  }
+
+  Options polish = options;
+  polish.set_int("iteration_limit", options.get_int("polish_iteration_limit"));
+  // THE POLISH HAS A CLOCK OF ITS OWN. The factor cap above catches a factor the ordering
+  // has already sized, but on the random scale family at 20,000 rows the ORDERING is the
+  // cost: it ran for the whole 1,200 s limit before it could report a factor too large to
+  // build, and PDHG's 1,000 iterations had taken 1.8 s. A polish that costs a thousand
+  // times the solve it finishes is not a polish. So the interior point gets the smaller of
+  // the time the limit has left and polish_max_seconds, and #197's deadline - which reaches
+  // inside the ordering - is what enforces it. A model whose factor is affordable (the
+  // staircase family) finishes in seconds; one whose factor is not is declined in
+  // polish_max_seconds and the first-order answer stands, which is the honest outcome.
+  double budget = options.get_double("polish_max_seconds");
+  const double time_limit = options.get_double("time_limit");
+  if (time_limit > 0.0 && std::isfinite(time_limit)) {
+    const double remaining = time_limit - timer.elapsed_seconds();
+    if (remaining <= 0.0) {
+      first->message += "; no time left for the interior-point polish";
+      return;
+    }
+    budget = std::min(budget, remaining);
+  }
+  polish.set_double("time_limit", budget);
+  logger.info("Polish: handing PDHG's point to the interior point, {} iterations at most",
+              polish.get_int("iteration_limit"));
+  const ipm::WarmStart warm{first->col_value, first->row_dual, first->col_dual};
+  Solution polished = ipm::solve_ipm(model, polish, logger, &warm);
+
+  const auto worst = [](const Solution& s) {
+    return std::max(s.primal_infeasibility_scaled, s.dual_infeasibility_scaled);
+  };
+  const bool better =
+      polished.status == SolveStatus::kOptimal ||
+      (polished.status == SolveStatus::kFeasible && worst(polished) < worst(*first));
+  if (!better) {
+    first->polish_iterations = polished.iterations;
+    first->message += fmt::format(
+        "; the interior-point polish did not improve it ({} after {} iterations: {})",
+        to_string(polished.status), polished.iterations, polished.message);
+    return;
+  }
+  polished.polish_iterations = polished.iterations;
+  polished.iterations += first->iterations;
+  polished.algorithm = first->algorithm + "+ipm";  // "pdhg-cpu+ipm"
+  polished.message =
+      fmt::format("{}; polished by the interior point in {} iterations{}", first->message,
+                  polished.polish_iterations,
+                  polished.message.empty() ? std::string() : " (" + polished.message + ")");
+  *first = std::move(polished);
+}
+
+/// PDHG's share of a finite time limit when a polish is to follow; the rest is the polish's.
+constexpr double kPdhgShareOfTheTimeLimit = 0.7;
+
 void reconcile_status_with_measurement(Solution* solution, const Options& options,
                                        Logger& logger, bool check_dual) {
   const bool claims_a_point =
@@ -265,6 +348,23 @@ Solution solve(const Model& model, const Options& options) {
     const bool want_pdhg = requested == "pdhg";
     const bool want_ipm = requested == "ipm";
     const bool want_dual = requested == "dual-simplex" || requested == "auto";
+    // One place runs the engine on whichever model - reduced or original - is being solved,
+    // so the polish of a PDHG answer happens before postsolve in both cases.
+    const auto run_lp_engine = [&](const Model& target) -> Solution {
+      if (want_pdhg) {
+        Options first_pass = options;
+        const double time_limit = options.get_double("time_limit");
+        if (options.get_bool("pdhg_polish") && time_limit > 0.0 && std::isfinite(time_limit)) {
+          first_pass.set_double("time_limit", time_limit * kPdhgShareOfTheTimeLimit);
+        }
+        Solution first = pdhg::solve_pdhg(target, first_pass, logger);
+        polish_with_the_interior_point(&first, target, options, logger, timer);
+        return first;
+      }
+      return want_ipm    ? ipm::solve_ipm(target, options, logger)
+             : want_dual ? solve_dual_simplex(target, options, logger)
+                         : solve_primal_simplex(target, options, logger);
+    };
     if (requested != "auto" && requested != "simplex" && !want_pdhg && !want_dual &&
         !want_ipm) {
       solution.status = SolveStatus::kNotSolved;
@@ -310,17 +410,11 @@ Solution solve(const Model& model, const Options& options) {
                     solution.solve_seconds);
         return solution;
       }
-      Solution inner = want_pdhg   ? pdhg::solve_pdhg(reduced.model, options, logger)
-                       : want_ipm  ? ipm::solve_ipm(reduced.model, options, logger)
-                       : want_dual ? solve_dual_simplex(reduced.model, options, logger)
-                                   : solve_primal_simplex(reduced.model, options, logger);
+      Solution inner = run_lp_engine(reduced.model);
       solution = presolve::postsolve(reduced, model, inner);
       solution.solve_seconds = timer.elapsed_seconds();
     } else {
-      solution = want_pdhg   ? pdhg::solve_pdhg(model, options, logger)
-                 : want_ipm  ? ipm::solve_ipm(model, options, logger)
-                 : want_dual ? solve_dual_simplex(model, options, logger)
-                             : solve_primal_simplex(model, options, logger);
+      solution = run_lp_engine(model);
     }
     reconcile_status_with_measurement(&solution, options, logger, /*check_dual=*/true);
     refuse_a_non_finite_answer(&solution, logger);

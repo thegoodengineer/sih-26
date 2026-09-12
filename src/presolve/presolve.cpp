@@ -817,6 +817,7 @@ Solution postsolve(const Result& result, const Model& original, const Solution& 
   solution.algorithm = reduced.algorithm;
   solution.message = reduced.message;
   solution.iterations = reduced.iterations;
+  solution.polish_iterations = reduced.polish_iterations;
   solution.nodes = reduced.nodes;
   solution.solve_seconds = reduced.solve_seconds;
 

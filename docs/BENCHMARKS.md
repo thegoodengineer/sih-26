@@ -375,18 +375,18 @@ Commit `8e830bb` · machine `Windows-AMD64` · **1000 iterations per solve**, no
 
 **This is the one measurement on this page another machine reproduces exactly.** Every other timing here is partly a property of this laptop: a machine at half speed does half the iterations inside a time limit and lands further from the optimum, so the same solver looks worse. Fixing the iteration count removes the machine, and what is left is a property of the algorithm.
 
-| size (rows x cols) | engine | objective | analytic optimum | relative error | seconds |
-|---:|---|---:|---:|---:|---:|
-| 1,000 | `pdhg` | -361.7805711 | -362 | 6.1e-04 | 0.0 |
-| 5,000 | `pdhg` | 9944.617973 | 9945 | 3.8e-05 | 0.2 |
-| 20,000 | `pdhg` | -26591.57153 | -26592 | 1.6e-05 | 0.8 |
-| 100,000 | `pdhg` | -83110.56935 | -83110 | 6.9e-06 | 8.3 |
-| 500,000 | `pdhg` | 87564.13601 | 87565 | 9.9e-06 | 51.0 |
-| 1,000,000 | `pdhg` | 208841.722 | 208845 | 1.6e-05 | 137.0 |
+| size (rows x cols) | engine | objective | analytic optimum | relative error | polish iterations | seconds |
+|---:|---|---:|---:|---:|---:|---:|
+| 1,000 | `pdhg` | -361.7805711 | -362 | 6.1e-04 | - | 0.0 |
+| 5,000 | `pdhg` | 9944.617973 | 9945 | 3.8e-05 | - | 0.2 |
+| 20,000 | `pdhg` | -26591.57153 | -26592 | 1.6e-05 | - | 0.8 |
+| 100,000 | `pdhg` | -83110.56935 | -83110 | 6.9e-06 | - | 8.3 |
+| 500,000 | `pdhg` | 87564.13601 | 87565 | 9.9e-06 | - | 51.0 |
+| 1,000,000 | `pdhg` | 208841.722 | 208845 | 1.6e-05 | - | 137.0 |
 
 **The accuracy does not degrade with the model.** Across sizes from 1,000 to 1,000,000 rows and columns, the same 1000 iterations land between 6.9e-06 and 6.1e-04 of an optimum known exactly by construction. The number of iterations a first-order method needs is a property of the problem's conditioning, not of its size, and on this family that shows: what grows with the model is the cost of one iteration, not how many are required.
 
-Only `pdhg` is measured here, and deliberately. The simplex and the interior point are not iterative in the same sense - a simplex iteration is a pivot and an interior-point iteration is a factorization, so the same count means something different for each, and section 1f already shows both running out of time well below these sizes.
+Only the first-order method is measured here, and deliberately. The simplex and the interior point are not iterative in the same sense - a simplex iteration is a pivot and an interior-point iteration is a factorization, so the same count means something different for each, and section 1f already shows both running out of time well below these sizes.
 
 #### 1f.2 The same sizes on a second shape
 

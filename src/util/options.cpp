@@ -303,6 +303,59 @@ const std::vector<OptionSpec>& Options::registry() {
                  1e-14,
                  0.1,
                  {}});
+    s.push_back({"pdhg_polish",
+                 OptionType::Bool,
+                 true,
+                 "Finish PDHG's point with the interior point when PDHG stops short of the "
+                 "standard (#229): its point, row duals and reduced costs become the interior "
+                 "point's starting point, with polish_iteration_limit iterations and whatever "
+                 "the time limit has left - PDHG is given 70% of a finite time_limit so that "
+                 "there is some. The answer's iteration count is the SUM of both phases, its "
+                 "algorithm reads pdhg+ipm, and polish_iterations records the second phase. "
+                 "false is the unpolished first-order answer.",
+                 0.0,
+                 0.0,
+                 {}});
+    s.push_back({"polish_iteration_limit",
+                 OptionType::Int,
+                 std::int64_t{50},
+                 "Interior-point iterations the polish may spend (#229).",
+                 1.0,
+                 kNoLimit,
+                 {}});
+    s.push_back({"polish_start_margin",
+                 OptionType::Double,
+                 1e-1,
+                 "The interior point's warm start floors every slack and multiplier at this "
+                 "value (in the scaled model's units) so its first iterate is interior; the "
+                 "residuals absorb the difference and the method removes it. A cold start "
+                 "uses 1. Measured on the staircase family at 1,000 and 5,000 rows: 0.1 "
+                 "polishes in 7 and 12 iterations against a cold 18 and 24; 0.01 and below "
+                 "start too close to the boundary and break the factorization near the end.",
+                 1e-8,
+                 1.0,
+                 {}});
+    s.push_back({"polish_max_seconds",
+                 OptionType::Double,
+                 30.0,
+                 "Wall-clock the polish may spend, ordering included; the smaller of this and "
+                 "what time_limit has left. On the random scale family at 20,000 rows the "
+                 "ordering alone ran for 1,200 s before it could size the factor, for a PDHG "
+                 "phase of 1.8 s: past this many seconds the polish is declined and the "
+                 "first-order answer stands.",
+                 0.1,
+                 kNoLimit,
+                 {}});
+    s.push_back({"polish_max_factor_nonzeros",
+                 OptionType::Int,
+                 std::int64_t{50000000},
+                 "The polish declines when the interior point's factor would hold more "
+                 "nonzeros than this - the ordering says so before anything is built; 5e7 "
+                 "doubles is 400 MB - and PDHG's answer stands, with the reason in the "
+                 "message. -1 for no cap.",
+                 -1.0,
+                 kNoLimit,
+                 {}});
     s.push_back({"pdhg_tolerance",
                  OptionType::Double,
                  tol::kPdhgLoose,
