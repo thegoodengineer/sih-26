@@ -366,7 +366,7 @@ PS26119 asks for **thousands to millions of variables**, and this is the section
 
 **Reaching the answer and proving it are different things, and at this scale they come apart.** `pdhg` at 20,000, `pdhg` at 100,000 landed on the analytic optimum and still stopped at the limit, because the convergence test had not been satisfied when the clock ran out. Reported as what it is - not `optimal` - and worth knowing: a first-order method is useful long before it can certify itself.
 
-**What this does NOT say.** The largest instance here is 100,000 rows and columns. That is the thousands end of what the problem statement asks for and the low end of the millions; nothing above is evidence about a million-variable model. The instances are also one shape - square, 5000 nonzeros at the smallest size and sparse by construction - so they say nothing about the dense or badly structured models industry also produces. Section 5 is where the structural hazards are pushed instead.
+**What this does NOT say.** The largest instance here is 100,000 rows and columns. That is the thousands end of what the problem statement asks for and the low end of the millions; nothing above is evidence about a million-variable model. The instances in this table are also one shape - square, 5000 nonzeros at the smallest size, with nonzeros placed at random - which is an expander graph, the worst case for anything that factorizes, and nothing like a refinery. Section 1f.2 runs the same sizes on a shape a planning model has; section 5 is where the structural hazards are pushed.
 
 #### 1f.1 The same question without the clock
 
@@ -387,6 +387,38 @@ Commit `8e830bb` · machine `Windows-AMD64` · **1000 iterations per solve**, no
 **The accuracy does not degrade with the model.** Across sizes from 1,000 to 1,000,000 rows and columns, the same 1000 iterations land between 6.9e-06 and 6.1e-04 of an optimum known exactly by construction. The number of iterations a first-order method needs is a property of the problem's conditioning, not of its size, and on this family that shows: what grows with the model is the cost of one iteration, not how many are required.
 
 Only `pdhg` is measured here, and deliberately. The simplex and the interior point are not iterative in the same sense - a simplex iteration is a pivot and an interior-point iteration is a factorization, so the same count means something different for each, and section 1f already shows both running out of time well below these sizes.
+
+#### 1f.2 The same sizes on a second shape
+
+Source CSV: `bench/results/scale-staircase-bb4eefa.csv`  
+Commit `bb4eefa` · machine `Windows-AMD64` · 120.0s per solve · staircase structure
+
+**Same construction, same sizes, same nonzeros per column, different pattern.** The random family above draws each column's rows uniformly, which makes an expander graph: no small separators, so every elimination ordering fills catastrophically. That is the worst case for a method that factorizes and it looks nothing like an industrial model. This family is a staircase, each column in its own period with one coupling into the next - a multi-period planning model, which is the shape PS26119's own domain produces. The optimum is exact by construction either way.
+
+| size (rows x cols) | engine | status | objective | relative error | iterations | seconds |
+|---:|---|---|---:|---:|---:|---:|
+| 1,000 | `dual-simplex` | optimal | -5821 | 0.0e+00 | 5149 | 1.3 |
+| 1,000 | `ipm` | feasible | -5820.999999 | 1.3e-10 | 18 | 0.4 |
+| 1,000 | `pdhg` | optimal | -5821 | 4.1e-11 | 76560 | 2.0 |
+| 5,000 | `dual-simplex` | time limit | -3537.344803 | 7.5e-01 | 13928 | 120.1 |
+| 5,000 | `ipm` | optimal | -14008 | 1.1e-10 | 24 | 3.2 |
+| 5,000 | `pdhg` | optimal | -14008 | 7.8e-12 | 155280 | 23.9 |
+| 20,000 | `dual-simplex` | time limit | -217490.7934 | 3.0e+01 | 9020 | 120.5 |
+| 20,000 | `ipm` | numerical error | - | - | 123 | 120.2 |
+| 20,000 | `pdhg` | time limit | 7458.999814 | 2.5e-08 | 109766 | 120.2 |
+| 100,000 | `dual-simplex` | time limit | -6139202.872 | 6.3e+01 | 1321 | 122.0 |
+| 100,000 | `ipm` | time limit | 391621.4617 | 3.0e+00 | 3 | 121.0 |
+| 100,000 | `pdhg` | time limit | 98413.91107 | 9.0e-07 | 12093 | 120.8 |
+
+**7 of 12** solves reached the analytic optimum to a relative 1e-06 on this shape.
+
+| engine | largest size reached, random | largest size reached, staircase |
+|---|---:|---:|
+| `dual-simplex` | 1,000 | 1,000 |
+| `ipm` | 1,000 | 5,000 |
+| `pdhg` | 100,000 | 100,000 |
+
+**Structure is what a direct method needs, and the table shows it:** `ipm` from 1,000 to 5,000. Nothing about the solver changed between the two families. What changed is whether the matrix has small separators, and the measurements behind that - the ordering time and the fill in the factor at the same size on both shapes - are in #193. The lesson for the section above is that its random family is a fair test of the first-order engine and an unfair one of the other two.
 
 ---
 

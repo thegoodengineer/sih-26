@@ -46,18 +46,65 @@ BOUND_SLACK = 3  # upper_j = x*_j + [0, this]
 ACTIVE_PROBABILITY = 0.5  # fraction of rows made tight at x*
 
 
-def build(rows: int, cols: int, nnz_per_col: int, seed: int) -> dict:
+def build(rows: int, cols: int, nnz_per_col: int, seed: int, structure: str = "random",
+          periods: int = 0) -> dict:
     """Build the instance. Returns MPS line list plus the numbers the caller needs to report
-    and verify: the analytic optimum, and the actual (row, col) nonzero count achieved."""
+    and verify: the analytic optimum, and the actual (row, col) nonzero count achieved.
+
+    WHERE THE NONZEROS GO IS THE ONLY CHOICE THIS CONSTRUCTION LEAVES OPEN, and it decides
+    what the instance can and cannot say (#198).
+
+    `random` places each column's entries in rows drawn uniformly. That is the worst possible
+    shape for any method that factorizes: a random sparse graph is an expander, with no small
+    separators, so every elimination ordering fills catastrophically. Measured on the
+    interior point: 17 percent of n^2 nonzeros in L from a matrix with five per column, at
+    two sizes, whatever the ordering. It is a fair stress test of a first-order method and an
+    unfair one of a direct method, and it looks nothing like a refinery.
+
+    `staircase` places each column's entries in its own period's rows plus one in the next
+    period's, which is the shape of a multi-period planning model: today's production meets
+    today's balance and carries stock into tomorrow's. That is the structure PS26119's own
+    domain produces - refinery scheduling, production planning, unit commitment - and it is
+    the structure a direct method can exploit, because the graph is a band of width one
+    period. Same construction, same exact optimum, different sparsity pattern; the
+    comparison between the two families is the point.
+    """
     rng = random.Random(seed)
     nnz_per_col = min(nnz_per_col, rows)  # cannot sample more distinct rows than exist
+    if structure not in ("random", "staircase"):
+        raise ValueError(f"unknown structure {structure!r}")
+    if structure == "staircase":
+        periods = periods or max(2, min(rows, cols) // 200)
+        periods = max(2, min(periods, rows, cols))
+    rows_per_period = rows // periods if structure == "staircase" else rows
+    cols_per_period = cols // periods if structure == "staircase" else cols
+
+    def rows_for_column(j: int) -> list[int]:
+        if structure == "random":
+            return rng.sample(range(rows), nnz_per_col)
+        # The column belongs to period t. Most of its entries sit in period t's rows; one
+        # couples forward into period t+1, and the last period couples to itself.
+        t = min(j // cols_per_period, periods - 1)
+        own_start = t * rows_per_period
+        own_end = rows if t == periods - 1 else (t + 1) * rows_per_period
+        next_start = own_end if t < periods - 1 else own_start
+        next_end = rows if t >= periods - 2 else (t + 2) * rows_per_period
+        own = list(range(own_start, own_end))
+        forward = list(range(next_start, next_end))
+        want_own = min(max(nnz_per_col - 1, 1), len(own))
+        chosen = rng.sample(own, want_own)
+        if nnz_per_col > want_own and forward:
+            extra = rng.sample([r for r in forward if r not in chosen],
+                               min(nnz_per_col - want_own, len(forward)))
+            chosen.extend(extra)
+        return chosen
 
     # ---- the sparse matrix, one column at a time -----------------------------------------
     # entries[j] = list of (row, value) for column j.
     entries: list[list[tuple[int, int]]] = []
     row_has_entry = [False] * rows
-    for _ in range(cols):
-        chosen_rows = rng.sample(range(rows), nnz_per_col)
+    for j in range(cols):
+        chosen_rows = rows_for_column(j)
         col_entries = []
         for i in chosen_rows:
             value = rng.randint(1, COEFFICIENT_RANGE)
@@ -113,6 +160,9 @@ def build(rows: int, cols: int, nnz_per_col: int, seed: int) -> dict:
         f"* generate_large_lp.py docstring, same construction as tests/oracles/lp_generator",
         f"* .cpp's kkt_lp). Reproduce with the seed above; analytic optimum below is exact.",
         f"* analytic optimum = {optimal_objective}",
+        # Only named when it is not the default, so the random family stays byte-identical to
+        # every instance the committed CSVs record a sha256 for.
+        *([f"* structure = staircase, {periods} periods"] if structure == "staircase" else []),
         "NAME          LARGELP",
         "ROWS",
         " N  COST",
@@ -151,6 +201,8 @@ def build(rows: int, cols: int, nnz_per_col: int, seed: int) -> dict:
         "nonzeros": nonzeros,
         "optimal_objective": optimal_objective,
         "seed": seed,
+        "structure": structure,
+        "periods": periods if structure == "staircase" else 0,
     }
 
 
@@ -163,6 +215,14 @@ def main() -> int:
                         help="distinct rows sampled per column")
     parser.add_argument("--seed", type=int, required=True)
     parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--structure", choices=("random", "staircase"), default="random",
+                        help="where the nonzeros go. random: rows drawn uniformly, an expander "
+                             "graph, the worst case for a direct method. staircase: each "
+                             "column in its own period plus one coupling into the next, the "
+                             "shape of a multi-period planning model (#198)")
+    parser.add_argument("--periods", type=int, default=0,
+                        help="periods for --structure staircase; default about one per 200 "
+                             "rows")
     args = parser.parse_args()
 
     if args.rows <= 0 or args.cols <= 0:
@@ -170,7 +230,8 @@ def main() -> int:
     if args.nnz_per_col <= 0:
         parser.error("--nnz-per-col must be positive")
 
-    result = build(args.rows, args.cols, args.nnz_per_col, args.seed)
+    result = build(args.rows, args.cols, args.nnz_per_col, args.seed, args.structure,
+                   args.periods)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text("\n".join(result["lines"]) + "\n", encoding="utf-8", newline="\n")
 
@@ -179,6 +240,8 @@ def main() -> int:
     print(f"  {args.rows} rows, {args.cols} columns, {result['nonzeros']} nonzeros "
           f"({density:.4f}% dense), seed {args.seed}")
     print(f"  analytic optimum: {result['optimal_objective']}")
+    if result["structure"] == "staircase":
+        print(f"  structure: staircase, {result['periods']} periods")
     return 0
 
 

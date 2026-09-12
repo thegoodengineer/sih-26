@@ -849,10 +849,11 @@ def scale_section(path: Path | None) -> str:
         f"**What this does NOT say.** The largest instance here is {biggest:,} rows and "
         f"columns. That is the thousands end of what the problem statement asks for and the "
         f"low end of the millions; nothing above is evidence about a million-variable model. "
-        f"The instances are also one shape - square, {rows[0].get('nonzeros', '?')} nonzeros "
-        f"at the smallest size and sparse by construction - so they say nothing about the "
-        f"dense or badly structured models industry also produces. Section 5 is where the "
-        f"structural hazards are pushed instead.",
+        f"The instances in this table are also one shape - square, {rows[0].get('nonzeros', '?')} nonzeros "
+        f"at the smallest size, with nonzeros placed at random - which is an expander graph, "
+        f"the worst case for anything that factorizes, and nothing like a refinery. Section "
+        f"1f.2 runs the same sizes on a shape a planning model has; section 5 is where the "
+        f"structural hazards are pushed.",
         "",
     ]
     return chr(10).join(out)
@@ -936,6 +937,119 @@ def per_iteration_section(path: Path | None) -> str:
             f"out of time well below these sizes.",
             "",
         ]
+    return chr(10).join(out)
+
+
+def structured_scale_section(random_path: Path | None, staircase_path: Path | None) -> str:
+    """The same sizes on a second shape, and what changes (#198).
+
+    The first scale family places its nonzeros at random, and a random sparse graph is an
+    expander: no small separators, so every elimination ordering fills catastrophically. That
+    is a fair stress test of a first-order method and an unfair one of a direct method, and it
+    looks nothing like a refinery. The staircase family is the shape of a multi-period
+    planning model - each column in its own period plus one coupling into the next - which is
+    the structure PS26119's own domain produces and the structure a direct method exploits.
+
+    Everything below is computed from the two CSVs. The fill measurements that explain the
+    difference were produced with instrumented builds and live in #193, quoted there as
+    terminal output; they are not typed into this document.
+    """
+    if staircase_path is None:
+        return ("_No `scale-staircase-*.csv` in `bench/results/`. Produce one with_ "
+                "`python bench/runners/scale.py --structure staircase`.\n")
+    stair = read_csv(staircase_path)
+    if not stair:
+        return "No structured scale results recorded yet." + chr(10)
+    rand = read_csv(random_path) if random_path is not None else []
+
+    commit = stair[0].get("git_commit", "unknown")
+    machine = stair[0].get("machine", "unknown")
+    limit = stair[0].get("time_limit", "?")
+    sizes = sorted({int(r["rows"]) for r in stair})
+    engines = sorted({r["engine"] for r in stair})
+
+    def row_for(rows_: list[dict], size: int, engine: str) -> dict | None:
+        for r in rows_:
+            if int(r["rows"]) == size and r["engine"] == engine:
+                return r
+        return None
+
+    with_a_point = ("optimal", "feasible", "iteration_limit", "time_limit")
+    out = [
+        f"Source CSV: `bench/results/{staircase_path.name}`  ",
+        f"Commit `{commit}` · machine `{machine}` · {limit}s per solve · staircase structure",
+        "",
+        "**Same construction, same sizes, same nonzeros per column, different pattern.** The "
+        "random family above draws each column's rows uniformly, which makes an expander "
+        "graph: no small separators, so every elimination ordering fills catastrophically. "
+        "That is the worst case for a method that factorizes and it looks nothing like an "
+        "industrial model. This family is a staircase, each column in its own period with one "
+        "coupling into the next - a multi-period planning model, which is the shape "
+        "PS26119's own domain produces. The optimum is exact by construction either way.",
+        "",
+        "| size (rows x cols) | engine | status | objective | relative error | iterations | "
+        "seconds |",
+        "|---:|---|---|---:|---:|---:|---:|",
+    ]
+    for size in sizes:
+        for engine in engines:
+            r = row_for(stair, size, engine)
+            if r is None:
+                continue
+            status = r.get("status", "")
+            answered = status in with_a_point
+            objective = as_float(r, "our_objective")
+            error = as_float(r, "relative_error")
+            seconds = as_float(r, "wall_seconds")
+            out.append(
+                f"| {size:,} | `{engine}` | {status.replace('_', ' ')} "
+                f"| {'-' if objective is None or not answered else f'{objective:.10g}'} "
+                f"| {'-' if error is None or not answered else f'{error:.1e}'} "
+                f"| {r.get('iterations') or '-'} "
+                f"| {'-' if seconds is None else f'{seconds:.1f}'} |")
+    out.append("")
+
+    reached = [r for r in stair if r.get("reached_optimum") == "1"]
+    out.append(f"**{len(reached)} of {len(stair)}** solves reached the analytic optimum to a "
+               f"relative 1e-06 on this shape.")
+    out.append("")
+
+    # The comparison that is the point: per engine, the largest size reached on each shape.
+    if rand:
+        out += ["| engine | largest size reached, random | largest size reached, staircase |",
+                "|---|---:|---:|"]
+        for engine in engines:
+            r_sizes = [int(r["rows"]) for r in rand
+                       if r["engine"] == engine and r.get("reached_optimum") == "1"]
+            s_sizes = [int(r["rows"]) for r in stair
+                       if r["engine"] == engine and r.get("reached_optimum") == "1"]
+            out.append(f"| `{engine}` | {max(r_sizes):,} | {max(s_sizes):,} |"
+                       if r_sizes and s_sizes else
+                       f"| `{engine}` | {max(r_sizes):,} | none |" if r_sizes else
+                       f"| `{engine}` | none | {max(s_sizes):,} |" if s_sizes else
+                       f"| `{engine}` | none | none |")
+        out.append("")
+        improved = []
+        for engine in engines:
+            r_best = max([int(r["rows"]) for r in rand
+                          if r["engine"] == engine and r.get("reached_optimum") == "1"],
+                         default=0)
+            s_best = max([int(r["rows"]) for r in stair
+                          if r["engine"] == engine and r.get("reached_optimum") == "1"],
+                         default=0)
+            if s_best > r_best:
+                improved.append(f"`{engine}` from {r_best:,} to {s_best:,}")
+        if improved:
+            out += [
+                "**Structure is what a direct method needs, and the table shows it:** "
+                + "; ".join(improved) + ". Nothing about the solver changed between the two "
+                "families. What changed is whether the matrix has small separators, and the "
+                "measurements behind that - the ordering time and the fill in the factor at "
+                "the same size on both shapes - are in #193. The lesson for the section above "
+                "is that its random family is a fair test of the first-order engine and an "
+                "unfair one of the other two.",
+                "",
+            ]
     return chr(10).join(out)
 
 
@@ -1117,6 +1231,7 @@ def main() -> int:
     robustness_csv = newest("robustness-*.csv")
     scale_csv = newest("scale-[0-9a-f]*.csv")
     per_iteration_csv = newest("scale-iterations-*.csv")
+    staircase_csv = newest("scale-staircase-*.csv")
 
     # Legacy untagged CSVs predate the tier tag; fall back so an old results directory still
     # generates something rather than failing.
@@ -1200,6 +1315,9 @@ most have a few hundred, so none of them speaks to the size PS26119 asks about.
 #### 1f.1 The same question without the clock
 
 {per_iteration_section(per_iteration_csv)}
+#### 1f.2 The same sizes on a second shape
+
+{structured_scale_section(scale_csv, staircase_csv)}
 ---
 
 ## 2. MIPLIB — the mixed-integer side
