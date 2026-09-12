@@ -22,9 +22,9 @@ Petrochemicals Limited.
 | 1 | Foundations: model, options, sparse linear algebra, CI | **done** |
 | 2 | MPS/LP readers, revised primal simplex, CLI | **done** |
 | 3 | Verification spine: rational oracle, independent checker, Netlib harness | **done** |
-| 4 | Restarted PDHG — **CPU done**, CUDA backend not started (no GPU available) | partial |
+| 4 | Restarted PDHG — **CPU done**, its answer finished by the interior point by default since #229; CUDA backend not started (no GPU available) | partial |
 | 5 | Branch & bound → MILP | **done** (MIPLIB benchmarked; root cuts landed in #159 and are off by default, see below) |
-| 6–10 | Performance, branch & cut, IPM/QP, robustness, packaging | convex QP **done** (Phase 8, `src/qp/`); interior point **done, opt-in** (`src/ipm/`, no basis); robustness sweep **done** (`bench/runners/robustness.py`); root cuts **done, off by default** (#159, `src/mip/cuts.cpp`); packaging **done** apart from the human items on #73 |
+| 6–10 | Performance, branch & cut, IPM/QP, robustness, packaging | convex QP **done** (Phase 8, `src/qp/`); interior point **done, opt-in** (`src/ipm/`, no basis); robustness sweep **done** (`bench/runners/robustness.py`); root cuts **done, off by default** (#159, `src/mip/cuts.cpp`); machine-checkable certificates for infeasible and unbounded models **done** (#192, `src/core/certificate.cpp`, checked by `tools/verify_solution.py`); MIP gap targets **done** (#188); packaging **done** apart from the human items on #73 |
 
 LP is solved by a bounded-variable revised primal simplex (or restarted PDHG), MILP by
 branch and bound, and convex QP by a Condat-Vu primal-dual method — and MIQP by branch and
@@ -95,7 +95,8 @@ point (#162), and the FTRAN went hyper-sparse (#169): between them the full set 
 (`bench/results/netlib-full-53cbe16.csv`).
 
 That is a better class of problem to have, and a different roadmap: speed on the three
-largest instances rather than robustness. Tracked in #198.
+largest instances rather than robustness. Tracked in #214 (the four non-passes that are
+ours to fix) and #210 (the dual simplex's iteration rate at size).
 
 MIPLIB 2017 is benchmarked too: **13 of 30** easy instances reach the published optimum,
 **6 of 30** also prove it (`bench/results/miplib-53cbe16.csv`, 60 s) —
@@ -176,6 +177,20 @@ Beyond the objective, the solution file carries the **shadow price of every row*
 blending model those are the numbers a refinery planner acts on: what one more unit of
 diesel commitment costs, and what the sulphur specification is worth.
 
+A verdict of *infeasible* or *unbounded* is not taken on trust either. Since #192 the
+solution file carries a **certificate** with it - a Farkas vector for an infeasible model, a
+ray for an unbounded one - and `tools/verify_solution.py`, which shares no code with the
+solver, checks the certificate against the original model the same way it checks an
+optimal point. The header says `certificate farkas`, `ray` or `none`, so a verdict that
+arrives without one (a model presolve proved infeasible, say) is visible as such.
+
+A MILP stopped by a gap target (`--option mip_relative_gap=0.01`) reports *optimal within
+the gap* and the file records the gap it was asked for (#188); a run that stops on a limit
+reports the incumbent as what it is. Time limits reach inside the sparse LDL^T factorization
+(#197), so an interior-point solve on a model whose factor is too large stops on time
+rather than when the factorization happens to finish; the sparse LU used by the simplex
+does not yet honour it the same way (#208).
+
 `--progress-out` appends one JSON line per logged iteration or node to a file as the solve
 runs, flushed immediately - an operator can `tail -f` it during a long solve to watch the
 bound close in on the answer without waiting for the final report.
@@ -200,13 +215,14 @@ Microsoft Store stub; `scripts/preflight.sh` tells you whether it is.
 include/sankhya/  public headers — Model, Solution, Options, tolerances, sparse containers
                   plus sankhya.h, the C API
 src/api           C API — an FFI-safe surface over the core, no C++ types crossing
-src/core          Model/Solution implementation and the solve() dispatcher
+src/core          Model/Solution implementation, the solve() dispatcher, certificates (#192)
 src/util          logging, timers, arena allocator, option registry
 src/io            MPS + LP readers (including QPS QUADOBJ), solution and JSON writers
 src/presolve      reductions + postsolve               (on by default)
 src/simplex       primal and dual revised simplex (the dual is the branch-and-bound node engine)
 src/la            sparse containers, sparse Markowitz LU (hyper-sparse FTRAN), sparse LDL^T, dense LU (test oracle only)
-src/pdhg          restarted PDHG, CPU                  (CUDA backend: not started)
+src/pdhg          restarted PDHG, CPU; its answer is finished by the interior point (#229)
+                                                       (CUDA backend: not started)
 src/mip           branch and bound + diving heuristic + root cuts (cuts off by default, #159)
 src/qp            convex QP, Condat-Vu primal-dual     (done)
 src/ipm           Mehrotra interior point, sparse LDL^T (opt-in: algorithm=ipm, no basis)
@@ -224,8 +240,8 @@ tracks every PS26119 requirement against what exists on `main`; section 6 of
 | not implemented | note |
 |---|---|
 | **GPU acceleration** | The first-order method it needs exists and runs on CPU - restarted PDHG, `--option algorithm=pdhg`, 8 of 9 committed instances to `optimal` at 1e-8 (`docs/BENCHMARKS.md` section 1e); since #229 its answer is finished by the interior point by default (`pdhg_polish`), which is what turns a first-order point at 1e-6 into one at 1e-9 - measured, size by size, in section 1f.1. The CUDA backend is unwritten (#16-#19); `--gpu` warns and falls back. No speed-up is claimed. |
-| **Scale** | Measured to a million, and the answer depends on the engine (#198, `docs/BENCHMARKS.md` sections 1f and 1f.1). On generated instances whose optimum is exact by construction: under a 120 s clock the first-order engine reaches the optimum at **100,000 x 100,000** to 5.5e-08 without certifying it, while the dual simplex and the interior point reach it only at 1,000. Given a fixed 1,000 iterations instead of a clock - the one accuracy claim here another machine reproduces exactly - the error stays between 6.9e-06 and 6.1e-04 all the way to **1,000,000 x 1,000,000**, so what grows with the model is the cost per iteration, not the number needed. On real models: the largest Netlib instance solved is `fit2d`, 25x10500 with 129018 nonzeros, in 0.3 s, and on Mittelmann's eight smallest LPs, 6,330 to 376,500 rows, the result is 0 of 8 inside 300 s. No industrial model of that size has been run. |
-| **Interior point as a default** | An interior-point method exists (#56, `--option algorithm=ipm`, Mehrotra predictor-corrector over a from-scratch sparse LDL^T) and is opt-in: it produces no basis, so it cannot warm-start branch and bound and cannot certify infeasibility, and on the full Netlib set it verifies fewer instances than the dual simplex (`docs/PS26119_COVERAGE.md`). The default continuous engine is the simplex. |
+| **Scale** | Measured to a million, and the answer depends on the engine (#198, `docs/BENCHMARKS.md` sections 1f and 1f.1). On generated instances whose optimum is exact by construction: under a 120 s clock the first-order engine reaches the optimum at **100,000 x 100,000** to 5.5e-08 without certifying it, while the dual simplex and the interior point reach it only at 1,000. Given a fixed 1,000 iterations instead of a clock - the one accuracy claim here another machine reproduces exactly - the error stays between 6.9e-06 and 6.1e-04 all the way to **1,000,000 x 1,000,000**, so what grows with the model is the cost per iteration, not the number needed. Those are the random family's numbers, and a random sparse matrix is the worst case for anything that factorizes; on a second family shaped like a multi-period planning model (#198, section 1f.2, `bench/results/scale-staircase-6503800.csv`) the interior point reaches the optimum at **20,000** rows instead of 1,000 and 8 of 12 solves reach it against 6 of 12. The polish that finishes PDHG's answer (#229) is not yet in a committed scale CSV; section 1f.1 will carry the unpolished and polished error side by side once it is re-measured on `main`. On real models: the largest Netlib instance solved is `fit2d`, 25x10500 with 129018 nonzeros, in 0.3 s, and on Mittelmann's eight smallest LPs, 6,330 to 376,500 rows, the result is 0 of 8 inside 300 s. No industrial model of that size has been run. |
+| **Interior point as a default** | An interior-point method exists (#56, `--option algorithm=ipm`, Mehrotra predictor-corrector over a from-scratch sparse LDL^T) and is opt-in: it produces no basis, so it cannot warm-start branch and bound and cannot certify infeasibility, and on the full Netlib set it verifies fewer instances than the dual simplex (`docs/PS26119_COVERAGE.md`). The default continuous engine is the simplex. It does two things by default now that it did not: it stops the moment its iterate is not a number and returns the best finite one (#205, found on the 20,000-row staircase model), and it finishes PDHG's answers from PDHG's own point (#229), declining within `polish_max_seconds` when the factor is not affordable. |
 | **Cutting planes by default** | Root Gomory mixed-integer and lifted knapsack cover cuts exist (#159, `--option enable_root_cuts=true`) and are off by default: on the 30-instance MIPLIB set at 60 s they take the node count to 0.887x over the instances that end the same way and cost one proof (`enlight8`, which runs out of the limit with them), because a cut row makes every node LP dearer (`bench/results/miplib-cuts-{off,on}.csv`; `docs/BENCHMARKS.md` section 2). No MIR cuts, and none below the root. Branch and bound itself has reliability branching (#69) and warm-started dual node LPs (#65). This is why MIPLIB proves few optima. |
 | **Non-convex QP** | Refused deliberately, with an LDL^T certificate. A local optimum reported as a global one is not something this solver will do. |
 | **MIQP bound quality** | MIQP is implemented, but its node bound comes from a first-order method and is only accurate to the tolerance it converged to, so pruning is deliberately kept on the conservative side and costs nodes. With root cuts off by default too, expect incumbents more often than proofs. |
