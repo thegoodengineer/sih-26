@@ -111,6 +111,29 @@ TEST(Presolve, SingletonRowBecomesABoundAndKeepsItsDual) {
   expect_agrees_with_unpresolved(model);
 }
 
+TEST(Presolve, SingletonRowIsPricedFromAnInteriorPointThatOnlyNearlyTouchesIt) {
+  // The simplex lands ON a bound; the interior point lands within its relative tolerance of
+  // one. Postsolve asked "is this row active" with an absolute 1e-7, which at a right-hand
+  // side of 4,900 an interior point misses by 5e-5 - so the row was left unpriced, the price
+  // stayed in the column's reduced cost, and a point the verifier accepts as optimal was
+  // reported feasible. The 1,000-row staircase family (#198) found it at a right-hand side
+  // of 49: relative error 1e-10, status feasible, reduced cost -0.009 on a column interior
+  // by three.
+  //   min -8*x0 - x1  s.t.  -7*x0 >= -4900 (a singleton row),  x0 + x1 <= 1000
+  //   -> x0 = 700, x1 = 300, objective -5900; the singleton row's dual is 1.
+  const Model model =
+      make_lp({{-7.0, 0.0}, {1.0, 1.0}}, {-4900.0, -kInfinity}, {kInfinity, 1000.0},
+              {-8.0, -1.0}, {0.0, 0.0}, {10000.0, 10000.0});
+  Options interior = with_presolve(true);
+  interior.set_string("algorithm", "ipm");
+  const Solution on = solve(model, interior);
+  ASSERT_EQ(on.status, SolveStatus::kOptimal) << on.message;
+  EXPECT_NEAR(on.objective, -5900.0, 1e-5);
+  EXPECT_NEAR(on.row_dual[0], 1.0, 1e-6) << "the removed row must be priced";
+  EXPECT_LE(on.dual_infeasibility_scaled, tol::kDualFeasibility) << on.message;
+  expect_agrees_with_unpresolved(model);
+}
+
 TEST(Presolve, TwoOpposingSingletonRowsPriceTheAdmissibleOne) {
   // A column pinned between `6*x1 >= 24` and `-3*x1 >= -12` - both hold with equality at
   // x1 = 4. Only one can carry the price: in minimise space a >= row active at its lower
