@@ -86,6 +86,25 @@ struct Workspace {
   return std::fabs(v) < kInfinity;
 }
 
+/// Is `value` sitting on `bound`, to the precision a solver can be asked for AT THAT SCALE?
+///
+/// Postsolve's every "is this column at its bound / is this row active" question used to be
+/// asked absolutely, |value - bound| <= 1e-7. That is a vertex test: the simplex lands on a
+/// bound exactly, and 1e-7 is slack for rounding. An interior-point method never lands
+/// exactly - it converges to within its RELATIVE tolerance of the bound, so on a row
+/// `-7*x >= -49` its activity is -48.99999953, off by 4.7e-7 absolute and 1e-8 relative.
+/// Asked absolutely, the row is "not active", the price that belongs on it is left in the
+/// column's reduced cost, and a point the independent verifier accepts as optimal comes back
+/// `feasible` with a reduced cost of -0.009 on a column that is interior by three. Found on
+/// the 1,000-row staircase family (#198), where the interior point reported feasible at a
+/// relative error of 1e-10 for exactly this reason; the same test at 49,000 would miss by
+/// 4.7e-4. Relative to the bound's own magnitude, as primal_infeasibility_scaled measures
+/// violations, is the question that has one answer for both engines.
+[[nodiscard]] bool at_bound(double value, double bound) {
+  return finite(bound) &&
+         std::fabs(value - bound) <= tol::kPrimalFeasibility * std::max(1.0, std::fabs(bound));
+}
+
 /// Round a derived bound INWARD for an integer column.
 ///
 /// Outward would be the dangerous direction: widening an integer variable's box cannot make
@@ -1223,8 +1242,8 @@ Solution postsolve(const Result& result, const Model& original, const Solution& 
     const double x = solution.col_value[c];
     const double lo = original.col_lower[c];
     const double hi = original.col_upper[c];
-    const bool at_lower = finite(lo) && std::fabs(x - lo) <= tol::kPrimalFeasibility;
-    const bool at_upper = finite(hi) && std::fabs(x - hi) <= tol::kPrimalFeasibility;
+    const bool at_lower = at_bound(x, lo);
+    const bool at_upper = at_bound(x, hi);
 
     const double d = reduced_cost_of(it.column);
     const double signed_d = sense * d;
@@ -1261,10 +1280,8 @@ Solution postsolve(const Result& result, const Model& original, const Solution& 
     // instances where the optimum existed and the solver returned merely `feasible`; this
     // was all of them.
     const double activity = it.coefficient * x;
-    const bool row_at_lower =
-        finite(it.row_lower) && std::fabs(activity - it.row_lower) <= tol::kPrimalFeasibility;
-    const bool row_at_upper =
-        finite(it.row_upper) && std::fabs(activity - it.row_upper) <= tol::kPrimalFeasibility;
+    const bool row_at_lower = at_bound(activity, it.row_lower);
+    const bool row_at_upper = at_bound(activity, it.row_upper);
     if (!row_at_lower && !row_at_upper) {
       if (!dual_finalized[c] && !is_doubleton_participant[c]) {
         solution.col_dual[c] = d;
@@ -1444,8 +1461,8 @@ Solution postsolve(const Result& result, const Model& original, const Solution& 
           const double v = solution.col_value[u];
           const double clo = original.col_lower[u];
           const double chi = original.col_upper[u];
-          const bool at_lo = finite(clo) && std::fabs(v - clo) <= tol::kPrimalFeasibility;
-          const bool at_hi = finite(chi) && std::fabs(v - chi) <= tol::kPrimalFeasibility;
+          const bool at_lo = at_bound(v, clo);
+          const bool at_hi = at_bound(v, chi);
           return std::pair<bool, bool>(at_lo, at_hi);
         };
         const auto [elim_at_lo, elim_at_hi] = status_of(record.column);
@@ -1546,8 +1563,8 @@ Solution postsolve(const Result& result, const Model& original, const Solution& 
       const double x = solution.col_value[c];
       const double lo = original.col_lower[c];
       const double hi = original.col_upper[c];
-      const bool at_lower = finite(lo) && std::fabs(x - lo) <= tol::kPrimalFeasibility;
-      const bool at_upper = finite(hi) && std::fabs(x - hi) <= tol::kPrimalFeasibility;
+      const bool at_lower = at_bound(x, lo);
+      const bool at_upper = at_bound(x, hi);
 
       const double d = reduced_cost_of(record.column);
       const double signed_d = sense * d;
