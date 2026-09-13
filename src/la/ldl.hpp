@@ -9,7 +9,9 @@
 //   Liu, J.W.H., "The role of elimination trees in sparse factorization", SIAM J. Matrix
 //     Anal. Appl. 11 (1990) - the tree and why the symbolic step is done once.
 //   Tinney & Walker, "Direct solutions of sparse network equations by optimally ordered
-//     triangular factorization", Proc. IEEE 55 (1967) - minimum degree ordering.
+//     triangular factorization", Proc. IEEE 55 (1967) - the minimum degree rule.
+//   Amestoy, Davis & Duff, "An approximate minimum degree ordering algorithm", SIAM J.
+//     Matrix Anal. Appl. 17 (1996) - the quotient graph the ordering runs on (#193).
 //   Altman & Gondzio, "Regularized symmetric indefinite systems in interior point methods
 //     for linear and quadratic optimization", Optim. Methods Softw. 11 (1999) - the
 //     diagonal regularization that keeps a near-singular pivot from destroying the factors.
@@ -54,10 +56,10 @@ class SparseLdl {
   using ShouldStop = std::function<bool()>;
 
   /// Symbolic analysis of the lower triangle of a symmetric matrix (entries with
-  /// row >= col) in CSC form; entries above the diagonal are ignored. Computes a minimum
-  /// degree ordering, the elimination tree of the permuted matrix and the pattern of L.
-  /// Returns false on an empty or non-square input, or if `should_stop` asked it to give up.
-  /// O(n^2) worst case in the ordering.
+  /// row >= col) in CSC form; entries above the diagonal are ignored. Computes an
+  /// approximate minimum degree ordering on the quotient graph (AMD), the elimination tree
+  /// of the permuted matrix and the pattern of L. Returns false on an empty or non-square
+  /// input, or if `should_stop` asked it to give up.
   [[nodiscard]] bool analyze(const SparseMatrix& lower, const ShouldStop& should_stop = {});
 
   /// True when the last analyze() or factorize() returned false because the deadline was
