@@ -9,7 +9,9 @@
 // bench/ branch on it, and a script that has to grep stdout to find out whether the solve
 // succeeded will eventually mis-parse and quietly record a wrong result.
 
+#include <atomic>
 #include <cmath>
+#include <csignal>
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -21,9 +23,32 @@
 #include "sankhya/logging.hpp"
 #include "sankhya/model.hpp"
 #include "sankhya/options.hpp"
+#include "sankhya/solve_control.hpp"
 #include "sankhya/version.hpp"
 
 namespace {
+
+// ---- SIGINT (#223) -----------------------------------------------------------------------
+//
+// The judges will press Ctrl-C on a solve that is taking too long, and today that kills the
+// process and throws away the incumbent branch-and-bound was carrying.
+//
+// A signal handler is only guaranteed safe to call functions the standard calls
+// async-signal-safe, which SolveControl::interrupt() is not SPECIFIED to be - but what it
+// DOES is exactly what a handler may safely do: one relaxed store to a lock-free
+// std::atomic<bool> (SolveControl::is_interrupted()'s type), nothing else, no lock, no
+// allocation. `std::atomic<bool>` is lock-free on every platform this project targets
+// (checked once, below, rather than assumed), so calling it here is sound in the same sense
+// a `volatile sig_atomic_t` would be, and it lets sankhya_model_interrupt()'s contract - "any
+// thread, at any time" - cover the signal handler too, instead of this file inventing a
+// second, poorer mechanism beside it.
+sankhya::SolveControl* g_solve_control_for_sigint = nullptr;
+static_assert(std::atomic<bool>::is_always_lock_free,
+             "SolveControl::interrupt() must be a plain atomic store to be signal-safe here");
+
+extern "C" void record_sigint(int /*signal*/) {
+  if (g_solve_control_for_sigint != nullptr) g_solve_control_for_sigint->interrupt();
+}
 
 /// Apply repeated --option name=value pairs. Returns false after printing the first error.
 bool apply_options(const std::vector<std::string>& assignments, sankhya::Options* options) {
@@ -247,7 +272,12 @@ int main(int argc, char** argv) {
     if (!load_model(model_path, options, &model)) return 3;
     if (!progress_out_path.empty()) options.set_string("progress_out", progress_out_path);
 
-    const sankhya::Solution solution = sankhya::solve(model, options);
+    sankhya::SolveControl control;
+    g_solve_control_for_sigint = &control;
+    void (*previous_handler)(int) = std::signal(SIGINT, record_sigint);
+    const sankhya::Solution solution = sankhya::solve(model, options, &control);
+    std::signal(SIGINT, previous_handler);
+    g_solve_control_for_sigint = nullptr;
 
     fmt::print("\n{:<22}{}\n", "status", sankhya::to_string(solution.status));
     if (solution.has_primal_values()) {

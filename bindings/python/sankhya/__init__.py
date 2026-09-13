@@ -31,11 +31,13 @@ are also context managers if you would rather be explicit about it.
 from __future__ import annotations
 
 import ctypes
-from typing import Iterable, Mapping, Sequence
+import signal
+import threading
+from typing import Callable, Iterable, Mapping, Sequence
 
-from ._library import SankhyaError, load
+from ._library import PROGRESS_CALLBACK, SankhyaError, load
 
-__all__ = ["Model", "Options", "Result", "SankhyaError", "INFINITY", "version"]
+__all__ = ["Model", "Options", "Progress", "Result", "SankhyaError", "INFINITY", "version"]
 
 _lib = None
 
@@ -109,7 +111,37 @@ _STATUS_NAMES = {
     8: "numerical_error",
     9: "model_error",
     10: "infeasible_or_unbounded",
+    11: "interrupted",
 }
+
+_PHASE_NAMES = {0: "presolve", 1: "lp", 2: "tree"}
+
+
+class Progress:
+    """One progress snapshot, handed to a ``solve(callback=...)`` callable (#223).
+
+    Mirrors ``sankhya::Progress`` / ``sankhya_progress`` field for field. Fields that do not
+    apply to whichever engine is reporting are left at 0 / 0.0 rather than omitted, so a
+    callback written against one engine does not have to special-case every other one.
+    """
+
+    __slots__ = ("phase", "iterations", "nodes", "open_nodes", "objective", "best_bound",
+                "gap", "elapsed_seconds")
+
+    def __init__(self, c_progress) -> None:
+        self.phase: str = _PHASE_NAMES.get(c_progress.phase, "unknown")
+        self.iterations: int = c_progress.iterations
+        self.nodes: int = c_progress.nodes
+        self.open_nodes: int = c_progress.open_nodes
+        self.objective: float = c_progress.objective
+        self.best_bound: float = c_progress.best_bound
+        self.gap: float = c_progress.gap
+        self.elapsed_seconds: float = c_progress.elapsed_seconds
+
+    def __repr__(self) -> str:
+        return (f"<sankhya.Progress {self.phase} iterations={self.iterations} "
+                f"nodes={self.nodes} objective={self.objective:.10g} "
+                f"elapsed={self.elapsed_seconds:.2f}s>")
 
 
 class Options:
@@ -361,25 +393,97 @@ class Model:
         """Raise SankhyaError if the model is not internally consistent."""
         _check(_library().sankhya_model_validate(self._handle), "validating the model")
 
+    def interrupt(self) -> None:
+        """Ask a ``solve()`` of this model running on ANOTHER THREAD to stop (#223).
+
+        Thread-safe and not throttled the way a progress callback is: the solving thread
+        sees it the next time it checks, which is at least as often as it already checks
+        its time limit. Safe to call whether or not a solve is currently running - it is a
+        request to stop the CURRENT solve, not a standing instruction, so calling this
+        before or after a solve has no effect on the next one.
+        """
+        _check(_library().sankhya_model_interrupt(self._handle), "requesting an interrupt")
+
     # ---- Solving --------------------------------------------------------------------------------
 
-    def solve(self, options: Options | None = None, **overrides: object) -> Result:
+    def solve(self, options: Options | None = None,
+             callback: Callable[[Progress], object] | None = None,
+             **overrides: object) -> Result:
         """Solve, returning a Result.
 
         Options may be passed as an Options object, as keyword arguments, or both - keywords
         are applied on top. The return value describes what the SOLVER concluded; a failure
         of the CALL raises instead, so an infeasible model returns normally with
         ``status == "infeasible"`` rather than raising.
+
+        ``callback``, if given, is called with a :class:`Progress` at a bounded rate (by
+        iteration/node count and to at most roughly every 100 ms) - a slow or chatty
+        callback cannot materially slow the solve down. Returning a truthy value asks the
+        solve to stop, reported back as ``status == "interrupted"`` with whatever point
+        (the incumbent, or the last feasible iterate) the engine was carrying.
+
+        Ctrl-C (#223): a progress callback is ALWAYS installed internally, whether or not
+        one is given, so that a KeyboardInterrupt raised inside it - which is where Python
+        actually gets to run its own SIGINT handler during an otherwise-blocking call into
+        the C library - asks the solve to stop the same way a callback returning ``True``
+        does. The result is that Ctrl-C during ``solve()`` returns the incumbent, exactly
+        as SIGINT does for the CLI, instead of the raw KeyboardInterrupt that would
+        otherwise surface only once the (by then finished, or still running) call returns
+        and discard whatever the solve had found. An exception other than
+        KeyboardInterrupt raised by `callback` is re-raised from this call once the solve
+        has actually stopped.
         """
         if overrides:
             options = options or Options()
             for name, value in overrides.items():
                 options.set(name, value)
 
-        handle = ctypes.c_void_p()
-        _check(_library().sankhya_solve(
-            self._handle, options._handle if options else None, ctypes.byref(handle)),
-            "solving")
+        lib = _library()
+        callback_error: list[BaseException] = []
+
+        def _on_progress(progress_ptr, _user_data: int) -> int:
+            try:
+                if callback is not None and callback(Progress(progress_ptr.contents)):
+                    return 1
+                return 0
+            except KeyboardInterrupt:
+                # Swallowed deliberately: the C side is told to stop, solve() below returns
+                # normally with the incumbent, and status == "interrupted" is the caller's
+                # signal that this happened - see the docstring.
+                return 1
+            except BaseException as error:  # noqa: BLE001 - re-raised below, not here
+                callback_error.append(error)
+                return 1
+
+        # A ctypes callback thunk must be kept alive for exactly as long as C might still
+        # call it - assigning it to a local that outlives sankhya_solve below is what does
+        # that; letting it be garbage collected first is a use-after-free of the trampoline.
+        c_callback = PROGRESS_CALLBACK(_on_progress)
+        _check(lib.sankhya_set_callback(self._handle, c_callback, None),
+               "installing the progress callback")
+
+        # signal.signal() raises outside the main thread of the main interpreter - a solve
+        # kicked off from a worker thread just does not get Ctrl-C handling, silently,
+        # rather than failing the solve over a convenience feature.
+        previous_sigint = None
+        if threading.current_thread() is threading.main_thread():
+            def _request_interrupt(_signum: int, _frame: object) -> None:
+                lib.sankhya_model_interrupt(self._handle)
+
+            previous_sigint = signal.signal(signal.SIGINT, _request_interrupt)
+
+        try:
+            handle = ctypes.c_void_p()
+            _check(lib.sankhya_solve(
+                self._handle, options._handle if options else None, ctypes.byref(handle)),
+                "solving")
+        finally:
+            if previous_sigint is not None:
+                signal.signal(signal.SIGINT, previous_sigint)
+            lib.sankhya_set_callback(self._handle, PROGRESS_CALLBACK(), None)
+
+        if callback_error:
+            raise callback_error[0]
         return Result(handle.value, self.num_cols, self.num_rows)
 
     def __repr__(self) -> str:

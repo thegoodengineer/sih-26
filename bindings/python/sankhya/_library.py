@@ -32,6 +32,35 @@ class SankhyaError(RuntimeError):
 
 _LIBRARY_NAMES = ("libsankhya.dll", "sankhya.dll", "libsankhya.so", "libsankhya.dylib")
 
+
+class CProgress(ctypes.Structure):
+    """Mirrors ``sankhya_progress`` from sankhya.h (#223) field for field.
+
+    A ctypes.Structure so a callback receives it with zero conversion cost - the C side
+    fills these bytes directly. ``sankhya.Progress`` (in ``__init__.py``) is the friendlier
+    read-only wrapper a callback actually sees; this class exists only to describe the
+    memory layout to ctypes.
+    """
+
+    _fields_ = [
+        ("phase", ctypes.c_int),
+        ("iterations", ctypes.c_long),
+        ("nodes", ctypes.c_long),
+        ("open_nodes", ctypes.c_long),
+        ("objective", ctypes.c_double),
+        ("best_bound", ctypes.c_double),
+        ("gap", ctypes.c_double),
+        ("elapsed_seconds", ctypes.c_double),
+    ]
+
+
+# CFUNCTYPE, not WINFUNCTYPE: sankhya_progress_callback is declared with plain C linkage
+# (cdecl) in sankhya.h on every platform this project targets, Windows included - it is not
+# a stdcall Windows API callback. A CFUNCTYPE instance must be kept alive (assigned to a
+# variable) for as long as the C side might still call it; letting it be garbage collected
+# while a solve is running is a use-after-free of the trampoline ctypes generates.
+PROGRESS_CALLBACK = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.POINTER(CProgress), ctypes.c_void_p)
+
 # Searched in order. The build directories come first because a developer running from a
 # checkout means the one they just built, not one installed elsewhere on the machine.
 _SEARCH_DIRECTORIES = ("build", "build-release", "build-fresh", "cmake-build-release", ".")
@@ -143,6 +172,11 @@ def _declare(lib: ctypes.CDLL) -> None:
         getattr(lib, name).restype = ctypes.c_int
     lib.sankhya_model_validate.argtypes = [model_p]
     lib.sankhya_model_validate.restype = ctypes.c_int
+
+    lib.sankhya_set_callback.argtypes = [model_p, PROGRESS_CALLBACK, ctypes.c_void_p]
+    lib.sankhya_set_callback.restype = ctypes.c_int
+    lib.sankhya_model_interrupt.argtypes = [model_p]
+    lib.sankhya_model_interrupt.restype = ctypes.c_int
 
     lib.sankhya_options_create.argtypes = []
     lib.sankhya_options_create.restype = options_p

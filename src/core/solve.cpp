@@ -96,11 +96,20 @@ const char* class_name(ProblemClass c) {
 /// right. Downgrading is the honest outcome: the solve failed numerically, and saying so is
 /// worth more than a plausible-looking row.
 void refuse_a_non_finite_answer(Solution* solution, Logger& logger) {
+  // kNodeLimit and kInterrupted are deliberately absent from this list when they come from
+  // branch and bound with NO incumbent: that path reports the worst representable objective
+  // as a considered "nothing found" (see the MILP call site below), not a broken number, and
+  // this guard would otherwise "fix" an honest infinity into a numerical-error downgrade
+  // that clears a point which was never claimed in the first place. An LP-origin
+  // kInterrupted, which always carries a genuine iterate, is still caught by this guard via
+  // kTimeLimit's sibling case below whenever its objective is actually broken - it is only
+  // the MIP "nothing found" convention this list declines to second-guess.
   const bool claims_a_point = solution->status == SolveStatus::kOptimal ||
                               solution->status == SolveStatus::kFeasible ||
                               solution->status == SolveStatus::kIterationLimit ||
                               solution->status == SolveStatus::kTimeLimit ||
-                              solution->status == SolveStatus::kInterrupted;
+                              (solution->status == SolveStatus::kInterrupted &&
+                               solution->algorithm != "branch-and-bound");
   if (!claims_a_point) return;
 
   const bool finite = std::isfinite(solution->objective) &&

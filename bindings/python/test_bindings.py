@@ -18,6 +18,7 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
+import threading
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -198,6 +199,110 @@ def test_handles_are_released() -> None:
             check(near(result.objective, 1.0), "context managers work",
                   f"{result.objective}")
     check(True, "2000 create/destroy cycles completed")
+
+
+def test_progress_callback_reports_fields() -> None:
+    # #223. Every solve installs an internal callback (for Ctrl-C) regardless of whether
+    # the caller supplies one, and SolveControl always fires at least once (its own first
+    # call is never throttled) - so even this one-iteration LP is enough to see a snapshot.
+    model = sankhya.Model(maximize=True)
+    x = model.add_column(cost=3.0, upper=3.0, name="x")
+    y = model.add_column(cost=2.0, name="y")
+    model.add_row({x: 1.0, y: 1.0}, upper=4.0)
+    model.add_row({x: 1.0, y: 3.0}, upper=6.0)
+
+    seen: list[sankhya.Progress] = []
+    result = model.solve(log_to_console=False, callback=lambda p: seen.append(p) and False)
+    check(result.status == "optimal", "the solve still finished normally", result.status)
+    check(len(seen) >= 1, "the callback was called at least once", str(len(seen)))
+    progress = seen[0]
+    check(isinstance(progress, sankhya.Progress), "the callback receives a Progress")
+    check(progress.phase in ("presolve", "lp", "tree"), "phase is one of the known names",
+          progress.phase)
+    check(progress.elapsed_seconds >= 0.0, "elapsed_seconds is non-negative",
+          str(progress.elapsed_seconds))
+    check(progress.iterations >= 0, "iterations is non-negative", str(progress.iterations))
+    check(repr(progress).startswith("<sankhya.Progress"), "Progress has a readable repr",
+          repr(progress))
+
+
+def test_callback_returning_true_interrupts_the_solve() -> None:
+    # A callback that stops on its very first call is deterministic regardless of machine
+    # speed or how many nodes/iterations the problem would otherwise take, because
+    # SolveControl's own first call is never throttled (#223).
+    model = sankhya.Model(maximize=True)
+    x = model.add_column(cost=1.0, upper=1.0, integer=True, name="x")
+    y = model.add_column(cost=1.0, upper=1.0, integer=True, name="y")
+    model.add_row({x: 2.0, y: 2.0}, upper=3.0)
+
+    calls = []
+    result = model.solve(log_to_console=False, callback=lambda p: calls.append(p) or True)
+    check(len(calls) >= 1, "the callback fired before the solve stopped", str(len(calls)))
+    check(result.status == "interrupted", "status is interrupted", result.status)
+    # kInterrupted claims a point (model.hpp's claims_a_point): the incumbent, or the last
+    # feasible iterate, comes back sized like a normal answer rather than an empty vector.
+    check(len(result.x) == model.num_cols, "the interrupted result still carries a point",
+          str(result.x))
+
+
+def test_callback_exception_propagates() -> None:
+    # A bug in the CALLER's callback is not a KeyboardInterrupt and must not be swallowed
+    # the way that is - it has to reach the caller as the exception it actually was.
+    #
+    # presolve=False: x >= 1 (minimise x) is small enough that presolve alone could fix the
+    # column and hand the simplex an empty 0x0 reduced model, which solves without ever
+    # running an iteration - and so without ever calling the callback this test is about.
+    # Forcing the raw model through the simplex loop is what makes this deterministic.
+    model = sankhya.Model()
+    x = model.add_column(cost=1.0, name="x")
+    model.add_row({x: 1.0}, lower=1.0)
+
+    def bad_callback(_progress: sankhya.Progress) -> bool:
+        raise ValueError("boom")
+
+    raised = False
+    try:
+        model.solve(log_to_console=False, presolve=False, callback=bad_callback)
+    except ValueError as error:
+        raised = str(error) == "boom"
+    check(raised, "an exception raised by the callback propagates out of solve()")
+
+
+def test_interrupt_from_another_thread() -> None:
+    # model.interrupt() (#223) is meant to be called from a thread OTHER than the one
+    # running solve() - the whole point, since the solving thread is by definition busy.
+    # The callback signals (via a threading.Event, set on its first call, before it sleeps)
+    # that the solve is under way; the main thread waits for that and then interrupts. The
+    # deliberate sleep inside the callback - not a race against how fast the machine solves
+    # the model - is what keeps this deterministic: interrupt() lands somewhere in the
+    # first callback's sleep or the next poll() right after, never after the solve has
+    # already finished on its own.
+    model = sankhya.Model(maximize=True)
+    x = model.add_column(cost=1.0, upper=1.0, integer=True, name="x")
+    y = model.add_column(cost=1.0, upper=1.0, integer=True, name="y")
+    model.add_row({x: 2.0, y: 2.0}, upper=3.0)
+
+    started = threading.Event()
+    result_box: list[sankhya.Result] = []
+
+    def slow_callback(_progress: sankhya.Progress) -> bool:
+        started.set()
+        threading.Event().wait(0.2)  # give the main thread time to call interrupt()
+        return False
+
+    def run() -> None:
+        result_box.append(model.solve(log_to_console=False, callback=slow_callback))
+
+    thread = threading.Thread(target=run)
+    thread.start()
+    check(started.wait(timeout=5.0), "the solving thread reported it had started")
+    model.interrupt()
+    thread.join(timeout=10.0)
+    check(not thread.is_alive(), "the solving thread finished")
+    check(len(result_box) == 1, "the solve returned a result")
+    if result_box:
+        check(result_box[0].status == "interrupted", "status is interrupted",
+              result_box[0].status)
 
 
 def main() -> int:
