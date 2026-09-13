@@ -86,8 +86,8 @@ constexpr int kRuizIterations = 10;
 class InteriorPoint {
  public:
   InteriorPoint(const Model& model, const Options& options, Logger& logger,
-                const WarmStart* warm = nullptr)
-      : model_(model), options_(options), logger_(logger), warm_(warm) {}
+                const WarmStart* warm = nullptr, const Timer* clock = nullptr)
+      : model_(model), options_(options), logger_(logger), warm_(warm), clock_(clock) {}
 
   Solution run();
 
@@ -100,6 +100,10 @@ class InteriorPoint {
   /// The deadline handed down to the linear algebra, so a time limit is not defeated by one
   /// very long ordering or factorization (#193). Empty when there is no limit.
   SparseLdl::ShouldStop should_stop_;
+  /// Set when the deadline fired inside normal_equations_lower(), which the factorization
+  /// never got to see - run() reads it beside ldl_.stopped_early() to report a time limit
+  /// rather than a numerical failure (#232).
+  bool assembly_stopped_ = false;
   void newton_direction();
   [[nodiscard]] double step_length(const std::vector<double>& s, const std::vector<double>& ds,
                                    const std::vector<double>& t,
@@ -126,6 +130,10 @@ class InteriorPoint {
   const Options& options_;
   Logger& logger_;
   const WarmStart* warm_ = nullptr;
+  /// The clock the time limit is measured on. solve_scaled() starts it BEFORE scaling and
+  /// copying the model, which on a 500,000-row polish is tens of seconds that run()'s own
+  /// timer never saw (#232); null means run() keeps its own.
+  const Timer* clock_ = nullptr;
   /// With a warm start only: the factor the ordering predicts is compared with
   /// polish_max_factor_nonzeros, and factorize() sets this instead of building it.
   std::int64_t max_factor_nonzeros_ = -1;
@@ -469,10 +477,22 @@ bool InteriorPoint::factorize() {
       row_shift[static_cast<std::size_t>(k - n_)] = theta_[u];
     }
   }
-  normal_equations_lower(model_.matrix, theta_x, row_shift, kDualRegularization,
-                         &normal_lower_);
+  if (!normal_equations_lower(model_.matrix, theta_x, row_shift, kDualRegularization,
+                              &normal_lower_, should_stop_)) {
+    assembly_stopped_ = true;
+    return false;
+  }
   if (!analyzed_) {
+    logger_.verbose("interior point: normal equations assembled ({} nonzeros) at {:.2f}s",
+                    normal_lower_.num_nonzeros(),
+                    clock_ != nullptr ? clock_->elapsed_seconds() : -1.0);
+    Timer ordering_clock;
     if (!ldl_.analyze(normal_lower_, should_stop_)) return false;
+    logger_.verbose(
+        "interior point: normal equations {} nonzeros, ordered and analysed in "
+        "{:.2f}s, factor {} nonzeros",
+        normal_lower_.num_nonzeros(), ordering_clock.elapsed_seconds(),
+        ldl_.factor_nonzeros() + ldl_.dimension());
     analyzed_ = true;
     // The ordering knows the factor's size before a single entry of it exists. A polish
     // that would need a 9-million-nonzero factor for a 7,000-row random-family model (#193)
@@ -638,7 +658,8 @@ Solution InteriorPoint::finish(SolveStatus status, const std::string& message, C
 }
 
 Solution InteriorPoint::run() {
-  Timer timer;
+  Timer own_clock;
+  const Timer& timer = clock_ != nullptr ? *clock_ : own_clock;
   const double time_limit = options_.get_double("time_limit");
   // Handed to the linear algebra so the clock is not only consulted between iterations.
   // Captured by reference to the local timer, which outlives every call that uses it.
@@ -648,6 +669,16 @@ Solution InteriorPoint::run() {
   const std::int64_t iteration_limit = options_.get_int("iteration_limit");
   if (warm_ != nullptr) max_factor_nonzeros_ = options_.get_int("polish_max_factor_nonzeros");
   build();
+  logger_.verbose("interior point: built in {:.2f}s from the start of the solve",
+                  timer.elapsed_seconds());
+  // A polish arrives with most of its budget spent by the first-order phase; a build that
+  // already used the rest must not go on to assemble and order for nothing (#232).
+  if (should_stop_ && should_stop_()) {
+    return finish(
+        SolveStatus::kTimeLimit,
+        fmt::format("time limit {:g}s reached before the first iteration", time_limit), 0,
+        timer.elapsed_seconds());
+  }
   logger_.info("Interior point: {} rows, {} columns, {} nonzeros", m_, n_,
                model_.num_nonzeros());
   logger_.begin_iteration_table();
@@ -738,13 +769,14 @@ Solution InteriorPoint::run() {
       }
       // Told to stop rather than unable to: the difference matters to a reader, and to the
       // status guard. Neither is a point, but only one of them is a failure.
-      if (ldl_.stopped_early()) {
+      if (ldl_.stopped_early() || assembly_stopped_) {
         restore_best();
-        return finish(SolveStatus::kTimeLimit,
-                      fmt::format("time limit {:g}s reached inside the factorization, which "
-                                  "was abandoned",
-                                  time_limit),
-                      iterations, timer.elapsed_seconds());
+        return finish(
+            SolveStatus::kTimeLimit,
+            fmt::format(
+                "time limit {:g}s reached inside the {}, which was abandoned", time_limit,
+                assembly_stopped_ ? "assembly of the normal equations" : "factorization"),
+            iterations, timer.elapsed_seconds());
       }
       return finish(SolveStatus::kNumericalError,
                     "the normal equations could not be factorized", iterations,
@@ -828,11 +860,15 @@ Solution InteriorPoint::run() {
 /// x = Dc xhat, y = Dr yhat, d = Dc^-1 dhat (la/scaling.hpp).
 Solution solve_scaled(const Model& model, const Options& options, Logger& logger,
                       const WarmStart* warm) {
+  // The clock the time limit runs on starts HERE. Scaling a 500,000-row model and copying
+  // it are tens of seconds, and a polish's budget of 30 used to begin only after them.
+  Timer clock;
   if (!options.get_bool("scaling")) {
-    InteriorPoint engine(model, options, logger, warm);
+    InteriorPoint engine(model, options, logger, warm, &clock);
     return engine.run();
   }
   const Scaling scaling = build_scaling(model, model.col_cost, kRuizIterations);
+  logger.verbose("interior point: scaled in {:.2f}s", clock.elapsed_seconds());
   Model scaled = model;
   scaled.matrix = scaling.matrix;
   scaled.col_cost = scaling.cost;
@@ -872,7 +908,9 @@ Solution solve_scaled(const Model& model, const Options& options, Logger& logger
     }
     warm = &scaled_warm;
   }
-  InteriorPoint engine(scaled, options, logger, warm);
+  logger.verbose("interior point: scaled model and warm start ready at {:.2f}s",
+                 clock.elapsed_seconds());
+  InteriorPoint engine(scaled, options, logger, warm, &clock);
   Solution solution = engine.run();
   for (Index j = 0; j < n; ++j) {
     const auto u = static_cast<std::size_t>(j);
