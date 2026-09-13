@@ -357,4 +357,169 @@ TEST(CApi, AModelCanBeExtendedAndResolvedWithoutBeingFrozenByTheFirstSolve) {
   EXPECT_NEAR(sankhya_solution_objective(second.handle), 0.5, 1e-9);
 }
 
+// =========================================================================================
+// Progress callback and interruption (#223)
+// =========================================================================================
+
+TEST(CApi, ProgressCallbackReceivesSnapshotsAndUserData) {
+  // min -x - y  s.t.  x + y <= 100, x, y >= 0. What matters is not the answer but that the
+  // callback is reached at all, carries a sane snapshot, and gets its user_data back
+  // unchanged - the three things a C caller cannot get any other way than by calling it.
+  ModelHandle model;
+  int x = -1;
+  int y = -1;
+  ASSERT_EQ(sankhya_model_add_column(model, -1.0, 0.0, sankhya_infinity(), 0, "x", &x),
+            SANKHYA_OK);
+  ASSERT_EQ(sankhya_model_add_column(model, -1.0, 0.0, sankhya_infinity(), 0, "y", &y),
+            SANKHYA_OK);
+  int row = -1;
+  ASSERT_EQ(sankhya_model_add_row(model, -sankhya_infinity(), 100.0, "cap", &row), SANKHYA_OK);
+  ASSERT_EQ(sankhya_model_set_coefficient(model, row, x, 1.0), SANKHYA_OK);
+  ASSERT_EQ(sankhya_model_set_coefficient(model, row, y, 1.0), SANKHYA_OK);
+
+  struct UserData {
+    int calls = 0;
+    void* self = nullptr;  ///< set from inside the callback, to the pointer IT was given
+  } user_data;
+
+  const auto callback = [](const sankhya_progress* progress, void* raw) -> int {
+    auto* data = static_cast<UserData*>(raw);
+    ++data->calls;
+    data->self = raw;
+    EXPECT_GE(progress->elapsed_seconds, 0.0);
+    return 0;  // do not stop
+  };
+
+  ASSERT_EQ(sankhya_set_callback(model, callback, &user_data), SANKHYA_OK);
+
+  SolutionHandle solution;
+  ASSERT_EQ(sankhya_solve(model, nullptr, &solution.handle), SANKHYA_OK) << sankhya_last_error();
+  ASSERT_EQ(sankhya_solution_status(solution.handle), SANKHYA_OPTIMAL);
+  EXPECT_GE(user_data.calls, 1);
+  // user_data round-trips as the SAME pointer, not a copy passed through by value somewhere
+  // in the C++/C boundary - a wrapper bug that swapped in a different pointer would fail
+  // this even though the calls above still "worked" by writing through the wrong address.
+  EXPECT_EQ(user_data.self, &user_data);
+}
+
+TEST(CApi, ANonZeroCallbackReturnStopsTheSolveWithInterrupted) {
+  // Two columns, not one: a single-column "x <= 100" model is exactly the shape presolve
+  // fixes outright, reducing it to a 0x0 LP that the simplex solves without ever running a
+  // loop iteration - and so without ever calling poll(). Two columns sharing one row is not
+  // individually fixable, so the model reaches the real engine.
+  ModelHandle model;
+  int x = -1;
+  int y = -1;
+  ASSERT_EQ(sankhya_model_add_column(model, -1.0, 0.0, sankhya_infinity(), 0, "x", &x),
+            SANKHYA_OK);
+  ASSERT_EQ(sankhya_model_add_column(model, -1.0, 0.0, sankhya_infinity(), 0, "y", &y),
+            SANKHYA_OK);
+  int row = -1;
+  ASSERT_EQ(sankhya_model_add_row(model, -sankhya_infinity(), 100.0, "cap", &row), SANKHYA_OK);
+  ASSERT_EQ(sankhya_model_set_coefficient(model, row, x, 1.0), SANKHYA_OK);
+  ASSERT_EQ(sankhya_model_set_coefficient(model, row, y, 1.0), SANKHYA_OK);
+
+  const auto stop_immediately = [](const sankhya_progress*, void*) -> int { return 1; };
+  ASSERT_EQ(sankhya_set_callback(model, stop_immediately, nullptr), SANKHYA_OK);
+
+  SolutionHandle solution;
+  ASSERT_EQ(sankhya_solve(model, nullptr, &solution.handle), SANKHYA_OK) << sankhya_last_error();
+  EXPECT_EQ(sankhya_solution_status(solution.handle), SANKHYA_INTERRUPTED);
+
+  std::vector<double> values(2, -1.0);
+  EXPECT_EQ(sankhya_solution_col_values(solution.handle, values.data(), 2), SANKHYA_OK)
+      << "kInterrupted claims a point, same as a limit does";
+}
+
+TEST(CApi, ClearingTheCallbackWithNullStopsItBeingCalled) {
+  ModelHandle model;
+  int x = -1;
+  ASSERT_EQ(sankhya_model_add_column(model, -1.0, 0.0, sankhya_infinity(), 0, "x", &x),
+            SANKHYA_OK);
+  int row = -1;
+  ASSERT_EQ(sankhya_model_add_row(model, -sankhya_infinity(), 100.0, "cap", &row), SANKHYA_OK);
+  ASSERT_EQ(sankhya_model_set_coefficient(model, row, x, 1.0), SANKHYA_OK);
+
+  int calls = 0;
+  const auto counting = [](const sankhya_progress*, void* raw) -> int {
+    ++*static_cast<int*>(raw);
+    return 0;
+  };
+  ASSERT_EQ(sankhya_set_callback(model, counting, &calls), SANKHYA_OK);
+  ASSERT_EQ(sankhya_set_callback(model, nullptr, nullptr), SANKHYA_OK);
+
+  SolutionHandle solution;
+  ASSERT_EQ(sankhya_solve(model, nullptr, &solution.handle), SANKHYA_OK) << sankhya_last_error();
+  ASSERT_EQ(sankhya_solution_status(solution.handle), SANKHYA_OPTIMAL);
+  EXPECT_EQ(calls, 0);
+}
+
+TEST(CApi, PreSolveInterruptHasNoEffectOnThatSolve) {
+  // sankhya_solve() clears the interrupt flag before it does anything else (see
+  // sankhya_solve's own comment: "each solve starts with a clear flag ... an interrupt()
+  // called before or after a solve has no effect on the next one"). This is what keeps a
+  // handle reused for a LATER, unrelated solve from being silently poisoned by an interrupt
+  // nobody ever cleared - the real, intended use is interrupt() called WHILE a solve is
+  // running (from another thread; see the Python bindings' cross-thread test, which drives
+  // this exact entry point), not before it starts.
+  ModelHandle model;
+  int x = -1;
+  int y = -1;
+  ASSERT_EQ(sankhya_model_add_column(model, -1.0, 0.0, sankhya_infinity(), 0, "x", &x),
+            SANKHYA_OK);
+  ASSERT_EQ(sankhya_model_add_column(model, -1.0, 0.0, sankhya_infinity(), 0, "y", &y),
+            SANKHYA_OK);
+  int row = -1;
+  ASSERT_EQ(sankhya_model_add_row(model, -sankhya_infinity(), 100.0, "cap", &row), SANKHYA_OK);
+  ASSERT_EQ(sankhya_model_set_coefficient(model, row, x, 1.0), SANKHYA_OK);
+  ASSERT_EQ(sankhya_model_set_coefficient(model, row, y, 1.0), SANKHYA_OK);
+
+  ASSERT_EQ(sankhya_model_interrupt(model), SANKHYA_OK);
+
+  SolutionHandle solution;
+  ASSERT_EQ(sankhya_solve(model, nullptr, &solution.handle), SANKHYA_OK) << sankhya_last_error();
+  EXPECT_EQ(sankhya_solution_status(solution.handle), SANKHYA_OPTIMAL);
+}
+
+TEST(CApi, AnInterruptedSolveDoesNotPoisonTheNextOne) {
+  // The callback is what actually interrupts solve 1 here (deterministic, no race) - once,
+  // via a flag in user_data, so it does not also interrupt solve 2. What is under test is
+  // that sankhya_solve's own reset() genuinely clears SolveControl's state between calls:
+  // solve 2 is unaffected by solve 1 having been interrupted.
+  ModelHandle model;
+  int x = -1;
+  int y = -1;
+  ASSERT_EQ(sankhya_model_add_column(model, -1.0, 0.0, sankhya_infinity(), 0, "x", &x),
+            SANKHYA_OK);
+  ASSERT_EQ(sankhya_model_add_column(model, -1.0, 0.0, sankhya_infinity(), 0, "y", &y),
+            SANKHYA_OK);
+  int row = -1;
+  ASSERT_EQ(sankhya_model_add_row(model, -sankhya_infinity(), 100.0, "cap", &row), SANKHYA_OK);
+  ASSERT_EQ(sankhya_model_set_coefficient(model, row, x, 1.0), SANKHYA_OK);
+  ASSERT_EQ(sankhya_model_set_coefficient(model, row, y, 1.0), SANKHYA_OK);
+
+  bool already_stopped_once = false;
+  const auto stop_only_the_first_time = [](const sankhya_progress*, void* raw) -> int {
+    auto* flag = static_cast<bool*>(raw);
+    if (*flag) return 0;
+    *flag = true;
+    return 1;
+  };
+  ASSERT_EQ(sankhya_set_callback(model, stop_only_the_first_time, &already_stopped_once),
+            SANKHYA_OK);
+
+  SolutionHandle first;
+  ASSERT_EQ(sankhya_solve(model, nullptr, &first.handle), SANKHYA_OK) << sankhya_last_error();
+  ASSERT_EQ(sankhya_solution_status(first.handle), SANKHYA_INTERRUPTED);
+
+  SolutionHandle second;
+  ASSERT_EQ(sankhya_solve(model, nullptr, &second.handle), SANKHYA_OK) << sankhya_last_error();
+  EXPECT_EQ(sankhya_solution_status(second.handle), SANKHYA_OPTIMAL);
+}
+
+TEST(CApi, InterruptFromNullModelIsAnArgumentError) {
+  EXPECT_EQ(sankhya_model_interrupt(nullptr), SANKHYA_ERROR_ARGUMENT);
+  EXPECT_EQ(sankhya_set_callback(nullptr, nullptr, nullptr), SANKHYA_ERROR_ARGUMENT);
+}
+
 }  // namespace
