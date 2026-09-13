@@ -14,77 +14,187 @@
 namespace sankhya {
 
 // -----------------------------------------------------------------------------------------
-// Ordering: minimum degree on the explicit elimination graph (Tinney & Walker 1967)
+// Ordering: approximate minimum degree on the quotient graph (Amestoy, Davis & Duff 1996)
 // -----------------------------------------------------------------------------------------
 //
-// The exact rule, not the approximate one production codes use: at each step eliminate the
-// vertex of smallest degree, add the clique its neighbours form, and repeat. Kept simple
-// deliberately - the elimination graph is stored explicitly as sorted neighbour lists, so
-// the cost is proportional to the fill it creates, which is fine for the row counts this
-// solver reaches today and is the part to replace (by AMD's quotient graph) when it is not.
-// Ties go to the lowest index, so the ordering is deterministic.
+// The first version of this was exact minimum degree on an explicit elimination graph: at
+// each step eliminate the vertex of smallest degree and merge its neighbours into a clique
+// by set union. That is Tinney & Walker, and it is correct, and it is what #193 measured:
+// on a 7,338-row normal-equations matrix from the random scale family the ordering took
+// 66 s and was 99.7% of analyze(), growing as n^2.35, because every elimination step pays
+// for the clique it creates, and the clique is the fill. The staircase family, with small
+// separators, ordered the same size in 2.3 s. The graph representation was the cost, not
+// the rule.
+//
+// AMD never forms a clique. An eliminated vertex becomes an ELEMENT, and the clique its
+// neighbours would form is represented by the element itself: a variable's neighbourhood
+// is its list of variables (A_i) plus its list of elements (E_i), and two variables that
+// share an element are adjacent without either storing the other. Eliminating p forms
+// L_p = A_p union (the members of every element in E_p) - those elements are absorbed into
+// p and disappear - and the only per-step work is over L_p and the lists of its members.
+// The degree is then APPROXIMATE: for i in L_p it is the smallest of three upper bounds,
+//     n - k - 1,   d_i + |L_p \ i|,   |A_i \ L_p| + |L_p \ i| + sum over e in E_i of |L_e
+//     \ L_p|,
+// where |L_e \ L_p| is computed for every element touching L_p in one pass (w[e] starts at
+// |L_e| and is decremented once for each member of L_p that lists e), which is the trick
+// that makes the whole step linear in the lists it reads. An element with |L_e \ L_p| = 0
+// is a subset of the new one and is absorbed at once (aggressive absorption). Variables
+// wait in degree buckets, so choosing the next pivot is a scan from the current minimum
+// upward rather than over every vertex.
+//
+// Not implemented, deliberately: supervariable detection (indistinguishable nodes merged
+// and eliminated together) and dense-row postponement. Both matter on graphs with many
+// identical rows and neither is what the two scale families exercise; they are the next
+// step if a structured industrial model (#211) shows the need.
+//
+// Ties go to the most recently inserted vertex of the minimum degree, and every list is
+// built in index order, so the ordering is deterministic: the same matrix gives the same
+// permutation on every machine.
 bool SparseLdl::minimum_degree(const SparseMatrix& lower, const ShouldStop& should_stop) {
   const Index n = n_;
-  std::vector<std::vector<Index>> adjacency(static_cast<std::size_t>(n));
+  const auto un = static_cast<std::size_t>(n);
+  const auto at = [](Index i) { return static_cast<std::size_t>(i); };
+
+  // The quotient graph. adjacent[i] is A_i, elements[i] is E_i, members[e] is L_e; an
+  // element reuses the index of the pivot that created it.
+  std::vector<std::vector<Index>> adjacent(un);
+  std::vector<std::vector<Index>> elements(un);
+  std::vector<std::vector<Index>> members(un);
   for (Index c = 0; c < n; ++c) {
     const ColumnView column = lower.column(c);
     for (Index p = 0; p < column.size; ++p) {
       const Index r = column.rows[p];
       if (r <= c) continue;  // the strict lower triangle defines the graph
-      adjacency[static_cast<std::size_t>(r)].push_back(c);
-      adjacency[static_cast<std::size_t>(c)].push_back(r);
+      adjacent[at(r)].push_back(c);
+      adjacent[at(c)].push_back(r);
     }
   }
-  for (auto& list : adjacency) {
+  for (auto& list : adjacent) {
     std::sort(list.begin(), list.end());
     list.erase(std::unique(list.begin(), list.end()), list.end());
   }
 
-  std::vector<bool> eliminated(static_cast<std::size_t>(n), false);
+  enum class Status : std::uint8_t { kVariable, kElement, kAbsorbed };
+  std::vector<Status> status(un, Status::kVariable);
+  std::vector<Index> degree(un, 0);
+  for (Index i = 0; i < n; ++i) degree[at(i)] = static_cast<Index>(adjacent[at(i)].size());
+
+  // Degree buckets: doubly linked lists, one per degree, head insertion.
+  std::vector<Index> head(un + 1, -1);
+  std::vector<Index> next(un, -1);
+  std::vector<Index> prev(un, -1);
+  const auto insert = [&](Index i) {
+    const auto d = at(degree[at(i)]);
+    next[at(i)] = head[d];
+    prev[at(i)] = -1;
+    if (head[d] >= 0) prev[at(head[d])] = i;
+    head[d] = i;
+  };
+  const auto remove = [&](Index i) {
+    const auto d = at(degree[at(i)]);
+    if (prev[at(i)] >= 0) {
+      next[at(prev[at(i)])] = next[at(i)];
+    } else {
+      head[d] = next[at(i)];
+    }
+    if (next[at(i)] >= 0) prev[at(next[at(i)])] = prev[at(i)];
+  };
+  for (Index i = 0; i < n; ++i) insert(i);
+  Index min_degree = 0;
+
+  std::vector<Index> in_lp(un, -1);  // stamp: in_lp[i] == k means i is in L_p at step k
+  std::vector<Index> w(un, 0);       // |L_e \ L_p| for elements touching L_p
+  std::vector<Index> w_stamp(un, -1);
+  std::vector<Index> lp;
   perm_.clear();
-  perm_.reserve(static_cast<std::size_t>(n));
-  std::vector<Index> merged;
-  for (Index step = 0; step < n; ++step) {
-    // ASKED EVERY STEP. A coarser granularity was tried first and is not good enough: the
-    // cost of one elimination step grows as fill accumulates, and on a 20,000-row model a
-    // single batch of 64 steps ran for 48 seconds past a 10 second limit. One call through a
-    // std::function per step is nothing beside the clique merging below (#193).
+  perm_.reserve(un);
+
+  for (Index k = 0; k < n; ++k) {
+    // ASKED EVERY STEP, as before: one call through a std::function is nothing beside the
+    // list work, and the deadline is what makes a time limit mean anything here (#197).
     if (should_stop && should_stop()) return false;
 
-    // The vertex of minimum current degree; lowest index on a tie.
-    Index best = -1;
-    std::size_t best_degree = std::numeric_limits<std::size_t>::max();
-    for (Index v = 0; v < n; ++v) {
-      const auto u = static_cast<std::size_t>(v);
-      if (eliminated[u]) continue;
-      if (adjacency[u].size() < best_degree) {
-        best_degree = adjacency[u].size();
-        best = v;
+    while (head[at(min_degree)] < 0) ++min_degree;
+    const Index p = head[at(min_degree)];
+    remove(p);
+    perm_.push_back(p);
+    status[at(p)] = Status::kElement;
+
+    // L_p: the live variables of A_p and of every element p touches; those elements are
+    // absorbed into p.
+    lp.clear();
+    in_lp[at(p)] = k;
+    for (const Index i : adjacent[at(p)]) {
+      if (status[at(i)] != Status::kVariable || in_lp[at(i)] == k) continue;
+      in_lp[at(i)] = k;
+      lp.push_back(i);
+    }
+    for (const Index e : elements[at(p)]) {
+      if (status[at(e)] != Status::kElement) continue;
+      for (const Index i : members[at(e)]) {
+        if (status[at(i)] != Status::kVariable || in_lp[at(i)] == k) continue;
+        in_lp[at(i)] = k;
+        lp.push_back(i);
+      }
+      status[at(e)] = Status::kAbsorbed;
+      std::vector<Index>().swap(members[at(e)]);
+    }
+    std::vector<Index>().swap(adjacent[at(p)]);
+    std::vector<Index>().swap(elements[at(p)]);
+    members[at(p)] = lp;
+
+    // w[e] = |L_e \ L_p| for every live element adjacent to a member of L_p. A member i of
+    // L_p lists e exactly when i is in L_e, so each such listing subtracts one.
+    for (const Index i : lp) {
+      for (const Index e : elements[at(i)]) {
+        if (status[at(e)] != Status::kElement) continue;
+        if (w_stamp[at(e)] != k) {
+          w_stamp[at(e)] = k;
+          w[at(e)] = static_cast<Index>(members[at(e)].size());
+        }
+        --w[at(e)];
       }
     }
-    const auto p = static_cast<std::size_t>(best);
-    perm_.push_back(best);
-    eliminated[p] = true;
-    // Eliminating p makes its neighbours a clique: every neighbour u gains p's other
-    // neighbours and loses p.
-    const std::vector<Index> neighbours = std::move(adjacency[p]);
-    adjacency[p].clear();
-    for (const Index v : neighbours) {
-      const auto u = static_cast<std::size_t>(v);
-      std::vector<Index>& own = adjacency[u];
-      merged.clear();
-      merged.reserve(own.size() + neighbours.size());
-      std::set_union(own.begin(), own.end(), neighbours.begin(), neighbours.end(),
-                     std::back_inserter(merged));
-      merged.erase(std::remove_if(merged.begin(), merged.end(),
-                                  [&](Index w) { return w == v || w == best; }),
-                   merged.end());
-      own.swap(merged);
+
+    const auto lp_size = static_cast<Index>(lp.size());
+    for (const Index i : lp) {
+      remove(i);
+      // A_i loses the members of L_p (they are reachable through p now) and anything
+      // eliminated.
+      std::size_t keep = 0;
+      for (const Index v : adjacent[at(i)]) {
+        if (status[at(v)] != Status::kVariable || in_lp[at(v)] == k) continue;
+        adjacent[at(i)][keep++] = v;
+      }
+      adjacent[at(i)].resize(keep);
+      // E_i loses absorbed elements and gains p; an element wholly inside L_p is absorbed
+      // here, before it can be counted.
+      Index external = 0;
+      keep = 0;
+      for (const Index e : elements[at(i)]) {
+        if (status[at(e)] != Status::kElement) continue;
+        if (w[at(e)] <= 0) {
+          status[at(e)] = Status::kAbsorbed;
+          std::vector<Index>().swap(members[at(e)]);
+          continue;
+        }
+        elements[at(i)][keep++] = e;
+        external += w[at(e)];
+      }
+      elements[at(i)].resize(keep);
+      elements[at(i)].push_back(p);
+
+      const Index remaining = n - k - 1;
+      const Index by_old_degree = degree[at(i)] + (lp_size - 1);
+      const Index by_lists =
+          static_cast<Index>(adjacent[at(i)].size()) + (lp_size - 1) + external;
+      degree[at(i)] = std::max<Index>(0, std::min({remaining, by_old_degree, by_lists}));
+      insert(i);
+      if (degree[at(i)] < min_degree) min_degree = degree[at(i)];
     }
   }
-  inverse_.assign(static_cast<std::size_t>(n), -1);
-  for (Index k = 0; k < n; ++k)
-    inverse_[static_cast<std::size_t>(perm_[static_cast<std::size_t>(k)])] = k;
+  inverse_.assign(un, -1);
+  for (Index k = 0; k < n; ++k) inverse_[at(perm_[at(k)])] = k;
   return true;
 }
 

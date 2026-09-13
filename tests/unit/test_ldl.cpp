@@ -231,6 +231,44 @@ TEST(SparseLdl, NormalEquationsMatchTheDenseProduct) {
   EXPECT_LT(worst, 1e-12);
 }
 
+TEST(SparseLdl, TheOrderingIsAPermutationAndATridiagonalMatrixFillsNothing) {
+  // #193 replaced the explicit-clique minimum degree with AMD on the quotient graph. Two
+  // things the replacement must keep: the output is a permutation (every index once), and
+  // a matrix with no fill under the natural order gets no fill from the ordering either -
+  // a tridiagonal matrix's factor has exactly n-1 strictly-lower entries, and any ordering
+  // that produces more has invented work. Both are checked at a size where an O(n^2) scan
+  // per step would still pass, so this is a correctness pin, not the speed claim; the speed
+  // claim is measured by the scale runner and quoted from its CSV.
+  const Index n = 2000;
+  SparseMatrix lower;
+  lower.reset(n, n);
+  for (Index i = 0; i < n; ++i) {
+    lower.add_entry(i, i, 4.0);
+    if (i + 1 < n) lower.add_entry(i + 1, i, -1.0);
+  }
+  lower.finalize(0.0);
+  SparseLdl ldl;
+  ASSERT_TRUE(ldl.analyze(lower));
+  const std::vector<Index>& perm = ldl.permutation();
+  ASSERT_EQ(static_cast<Index>(perm.size()), n);
+  std::vector<bool> seen(static_cast<std::size_t>(n), false);
+  for (const Index p : perm) {
+    ASSERT_GE(p, 0);
+    ASSERT_LT(p, n);
+    ASSERT_FALSE(seen[static_cast<std::size_t>(p)]) << "index " << p << " ordered twice";
+    seen[static_cast<std::size_t>(p)] = true;
+  }
+  EXPECT_EQ(ldl.factor_nonzeros(), n - 1) << "a tridiagonal matrix must not fill";
+  ASSERT_TRUE(ldl.factorize(lower, 0.0));
+  std::vector<double> rhs(static_cast<std::size_t>(n), 1.0);
+  ldl.solve(rhs.data());
+  // (4, -1) tridiagonal: the solution of A x = 1 is bounded and strictly positive.
+  for (const double v : rhs) {
+    EXPECT_GT(v, 0.0);
+    EXPECT_LT(v, 1.0);
+  }
+}
+
 TEST(SparseLdl, ADeadlineStopsTheOrderingAndSaysSoWasWhy) {
   // #193: the solver checks the clock between iterations, which is no use to a method whose
   // FIRST iteration pays for the ordering. On a generated 20,000-row model that iteration ran
