@@ -263,23 +263,23 @@ instances of that size and name what happens. These are the eight smallest archi
 Mittelmann's LP test set (`bench/runners/fetch_mittelmann.py`, provenance in
 `data/mittelmann/reference.json`).
 
-Source CSV: `bench/results/mittelmann-592aea3.csv`  
-Commit `592aea3` · machine `Windows-AMD64` · time limit 300 s per instance, both solvers
+Source CSV: `bench/results/mittelmann-f7ca7e9.csv`  
+Commit `f7ca7e9` · machine `Windows-AMD64` · time limit 300 s per instance, both solvers
 
-**0 of 8** instances reached `optimal` inside the limit; **0 of 8** also passed the independent verifier and agree with HiGHS. HiGHS, run as a separate process under the same limit, finished **2 of 8**.
+**0 of 8** instances reached `optimal` inside the limit; **0 of 8** also passed the independent verifier and agree with HiGHS. HiGHS, run as a separate process under the same limit, finished **4 of 8**.
 
 These are the smallest archives in Mittelmann's LP directory; against Netlib's largest instance (dfl001, 6,071 rows, 35,632 nonzeros) they range from the same row count with 2.7x the nonzeros (qap15) to 62x the rows and 42x the nonzeros (bdry2). No published optimum exists for them, so there is no pass-against-a-number column: the outcome is the status, the verifier's verdict where a solution was written, and HiGHS's objective where HiGHS finished. `our objective` on a `time_limit` row is the last iterate's value, not a bound, and is printed only so that a later run can be compared with it.
 
 | instance | rows | cols | nonzeros | status | our objective | HiGHS objective | rel. diff | iters | solver time (s) | verified |
 |---|---:|---:|---:|---|---:|---:|---:|---:|---:|:--:|
-| `Linf_520c` | 93326 | 69004 | 566193 | time_limit | 0.1049570954 | Time limit reached | - | 588 | 308.9 | - |
-| `bdry2` | 376500 | 250998 | 1500003 | time_limit | -0.0043 | Time limit reached | - | 1 | 648.7 | - |
-| `brazil3` | 14646 | 23968 | 133184 | time_limit | 0 | 2 | - | 10922 | 300.5 | - |
-| `chromaticindex1024-7` | 67583 | 73728 | 270324 | time_limit | 2 | Time limit reached | - | 1302 | 303.5 | - |
-| `irish-electricity` | 104259 | 61728 | 523257 | time_limit | 0 | 2546254.563 | - | 3121 | 304.0 | - |
-| `qap15` | 6330 | 22275 | 94950 | numerical_error | 0 | Time limit reached | - | 13954 | 297.5 | - |
-| `rmine15` | 358395 | 42438 | 879732 | time_limit | -8443.961371 | Time limit reached | - | 28 | 309.2 | - |
-| `supportcase10` | 165684 | 14770 | 555082 | time_limit | 0 | Time limit reached | - | 1266 | 306.2 | - |
+| `Linf_520c` | 93326 | 69004 | 566193 | time_limit | 0.011540388 | Time limit reached | - | 777 | 306.5 | - |
+| `bdry2` | 376500 | 250998 | 1500003 | time_limit | -0.0043 | Time limit reached | - | 1 | 375.2 | - |
+| `brazil3` | 14646 | 23968 | 133184 | time_limit | 0 | 2 | - | 16238 | 300.2 | - |
+| `chromaticindex1024-7` | 67583 | 73728 | 270324 | time_limit | 3 | 3 | - | 3482 | 300.4 | - |
+| `irish-electricity` | 104259 | 61728 | 523257 | time_limit | 0 | 2546254.563 | - | 4028 | 300.8 | - |
+| `qap15` | 6330 | 22275 | 94950 | time_limit | 1319.748852 | Time limit reached | - | 14597 | 300.6 | - |
+| `rmine15` | 358395 | 42438 | 879732 | time_limit | -8442.415348 | Time limit reached | - | 28 | 314.1 | - |
+| `supportcase10` | 165684 | 14770 | 555082 | time_limit | 0 | 3.383923666 | - | 1394 | 301.9 | - |
 
 **Not solved inside the limit**, named rather than dropped: `Linf_520c`, `bdry2`, `brazil3`, `chromaticindex1024-7`, `irish-electricity`, `qap15`, `rmine15`, `supportcase10`.
 
@@ -336,8 +336,8 @@ A ratio above 1 means restarts saved iterations on that instance.
 Every tier above is Netlib-sized: the largest instance in the full set has 12,230 columns, and
 most have a few hundred, so none of them speaks to the size PS26119 asks about.
 
-Source CSV: `bench/results/scale-351a558.csv`  
-Commit `351a558` · machine `Windows-AMD64` · 120.0s per solve
+Source CSV: `bench/results/scale-f7ca7e9.csv`  
+Commit `f7ca7e9` · machine `Windows-AMD64` · 120.0s per solve
 
 PS26119 asks for **thousands to millions of variables**, and this is the section that answers it with a file rather than an adjective. The instances are generated backwards from a primal-dual pair that already satisfies the KKT conditions, from integer data, so the optimum is known EXACTLY before the solver sees the model (`bench/runners/generate_large_lp.py`). A large random instance would prove nothing: nobody would know whether the answer was right.
 
@@ -345,61 +345,61 @@ PS26119 asks for **thousands to millions of variables**, and this is the section
 
 | size (rows x cols) | engine | status | objective | relative error | iterations | seconds |
 |---:|---|---|---:|---:|---:|---:|
-| 1,000 | `dual-simplex` | optimal | -362 | 3.8e-14 | 3656 | 0.7 |
-| 1,000 | `ipm` | optimal | -361.9999994 | 1.6e-09 | 19 | 0.5 |
-| 1,000 | `pdhg` | optimal | -362 | 6.0e-13 | 71200 | 1.3 |
-| 5,000 | `dual-simplex` | time limit | 26780.37248 | 1.7e+00 | 17100 | 120.0 |
-| 5,000 | `ipm` | numerical error | - | - | 30 | 120.1 |
-| 5,000 | `pdhg` | optimal | 9945 | 1.1e-11 | 410840 | 62.4 |
-| 20,000 | `dual-simplex` | time limit | -219835.3683 | 7.3e+00 | 10645 | 120.8 |
-| 20,000 | `ipm` | time limit | 27091.64405 | 2.0e+00 | 0 | 124.8 |
-| 20,000 | `pdhg` | time limit | -26592.00005 | 2.0e-09 | 119360 | 120.2 |
-| 100,000 | `dual-simplex` | time limit | -6182077.833 | 7.3e+01 | 1450 | 123.3 |
-| 100,000 | `ipm` | time limit | 166557.9183 | 3.0e+00 | 0 | 150.1 |
-| 100,000 | `pdhg` | time limit | -83110.00455 | 5.5e-08 | 23816 | 121.9 |
+| 1,000 | `dual-simplex` | optimal | -362 | 3.8e-14 | 3656 | 1.1 |
+| 1,000 | `ipm` | optimal | -361.9999994 | 1.6e-09 | 19 | 0.7 |
+| 1,000 | `pdhg` | optimal | -362 | 6.0e-13 | 71200 | 2.8 |
+| 5,000 | `dual-simplex` | time limit | 1819.789785 | 8.2e-01 | 18338 | 120.5 |
+| 5,000 | `ipm` | time limit | 9945.001602 | 1.6e-07 | 23 | 120.1 |
+| 5,000 | `pdhg` | time limit | 9944.999998 | 1.8e-10 | 291612 | 114.2 |
+| 20,000 | `dual-simplex` | time limit | -252644.3002 | 8.5e+00 | 8415 | 120.3 |
+| 20,000 | `ipm` | time limit | 27091.64405 | 2.0e+00 | 0 | 120.4 |
+| 20,000 | `pdhg` | time limit | -26591.99972 | 1.0e-08 | 63098 | 87.9 |
+| 100,000 | `dual-simplex` | time limit | -6322592.512 | 7.5e+01 | 1194 | 125.3 |
+| 100,000 | `ipm` | time limit | 166557.9183 | 3.0e+00 | 0 | 122.7 |
+| 100,000 | `pdhg` | time limit | -83109.99246 | 9.1e-08 | 11371 | 115.5 |
 
-**6 of 12** solves reached the analytic optimum to a relative 1e-06.
+**7 of 12** solves reached the analytic optimum to a relative 1e-06.
 
-- `dual-simplex` reached it at **1,000** rows and columns (optimal, 0.7 s).
-- `ipm` reached it at **1,000** rows and columns (optimal, 0.5 s).
-- `pdhg` reached it at **100,000** rows and columns (time limit, 121.9 s).
+- `dual-simplex` reached it at **1,000** rows and columns (optimal, 1.1 s).
+- `ipm` reached it at **5,000** rows and columns (time limit, 120.1 s).
+- `pdhg` reached it at **100,000** rows and columns (time limit, 115.5 s).
 
-**Reaching the answer and proving it are different things, and at this scale they come apart.** `pdhg` at 20,000, `pdhg` at 100,000 landed on the analytic optimum and still stopped at the limit, because the convergence test had not been satisfied when the clock ran out. Reported as what it is - not `optimal` - and worth knowing: a first-order method is useful long before it can certify itself.
+**Reaching the answer and proving it are different things, and at this scale they come apart.** `ipm` at 5,000, `pdhg` at 5,000, `pdhg` at 20,000, `pdhg` at 100,000 landed on the analytic optimum and still stopped at the limit, because the convergence test had not been satisfied when the clock ran out. Reported as what it is - not `optimal` - and worth knowing: a first-order method is useful long before it can certify itself.
 
 **What this does NOT say.** The largest instance here is 100,000 rows and columns. That is the thousands end of what the problem statement asks for and the low end of the millions; nothing above is evidence about a million-variable model. The instances in this table are also one shape - square, 5000 nonzeros at the smallest size, with nonzeros placed at random - which is an expander graph, the worst case for anything that factorizes, and nothing like a refinery. Section 1f.2 runs the same sizes on a shape a planning model has; section 5 is where the structural hazards are pushed.
 
 #### 1f.1 The same question without the clock
 
-Source CSV: `bench/results/scale-iterations-79ec7f7.csv`  
-Commit `79ec7f7` · machine `Windows-AMD64` · **1000 iterations per solve**, not a clock
+Source CSV: `bench/results/scale-iterations-f7ca7e9.csv`  
+Commit `f7ca7e9` · machine `Windows-AMD64` · **1000 iterations per solve**, not a clock
 
 **This is the one measurement on this page another machine reproduces exactly.** Every other timing here is partly a property of this laptop: a machine at half speed does half the iterations inside a time limit and lands further from the optimum, so the same solver looks worse. Fixing the iteration count removes the machine, and what is left is a property of the algorithm.
 
 | size (rows x cols) | engine | objective | analytic optimum | relative error | polish iterations | seconds |
 |---:|---|---:|---:|---:|---:|---:|
 | 1,000 | `pdhg-raw` | -361.7805711 | -362 | 6.1e-04 | - | 0.1 |
-| 1,000 | `pdhg` | -361.9999999 | -362 | 1.9e-10 | 7 | 0.4 |
+| 1,000 | `pdhg` | -361.9999999 | -362 | 1.9e-10 | 7 | 0.3 |
 | 5,000 | `pdhg-raw` | 9944.617973 | 9945 | 3.8e-05 | - | 0.3 |
-| 5,000 | `pdhg` | 9944.617973 | 9945 | 3.8e-05 | 2 | 30.3 |
-| 20,000 | `pdhg-raw` | -26591.57153 | -26592 | 1.6e-05 | - | 1.4 |
-| 20,000 | `pdhg` | -26591.57153 | -26592 | 1.6e-05 | - | 32.6 |
-| 100,000 | `pdhg-raw` | -83110.56935 | -83110 | 6.9e-06 | - | 7.9 |
-| 100,000 | `pdhg` | -83110.56935 | -83110 | 6.9e-06 | - | 44.7 |
-| 500,000 | `pdhg-raw` | 87564.13601 | 87565 | 9.9e-06 | - | 81.9 |
-| 500,000 | `pdhg` | 87564.13601 | 87565 | 9.9e-06 | - | 172.6 |
-| 1,000,000 | `pdhg-raw` | 208841.722 | 208845 | 1.6e-05 | - | 261.9 |
-| 1,000,000 | `pdhg` | 208841.722 | 208845 | 1.6e-05 | - | 301.4 |
+| 5,000 | `pdhg` | 9944.617973 | 9945 | 3.8e-05 | 7 | 30.3 |
+| 20,000 | `pdhg-raw` | -26591.57153 | -26592 | 1.6e-05 | - | 1.3 |
+| 20,000 | `pdhg` | -26591.57153 | -26592 | 1.6e-05 | - | 4.9 |
+| 100,000 | `pdhg-raw` | -83110.56935 | -83110 | 6.9e-06 | - | 7.6 |
+| 100,000 | `pdhg` | -83110.56935 | -83110 | 6.9e-06 | - | 37.7 |
+| 500,000 | `pdhg-raw` | 87564.13601 | 87565 | 9.9e-06 | - | 50.4 |
+| 500,000 | `pdhg` | 87564.13601 | 87565 | 9.9e-06 | - | 80.0 |
+| 1,000,000 | `pdhg-raw` | 208841.722 | 208845 | 1.6e-05 | - | 122.2 |
+| 1,000,000 | `pdhg` | 208841.722 | 208845 | 1.6e-05 | - | 151.7 |
 
 | size | unpolished error | polished error | polish iterations | polished status |
 |---:|---:|---:|---:|---|
 | 1,000 | 6.1e-04 | 1.9e-10 | 7 | optimal |
-| 5,000 | 3.8e-05 | 3.8e-05 | 2 | iteration limit |
+| 5,000 | 3.8e-05 | 3.8e-05 | 7 | iteration limit |
 | 20,000 | 1.6e-05 | 1.6e-05 | 0 | iteration limit |
 | 100,000 | 6.9e-06 | 6.9e-06 | 0 | iteration limit |
 | 500,000 | 9.9e-06 | 9.9e-06 | 0 | iteration limit |
 | 1,000,000 | 1.6e-05 | 1.6e-05 | 0 | iteration limit |
 
-**The polish is where the accuracy comes from, where it can run.** On the size where it ran (1,000 rows) the same 1000 first-order iterations, finished by the interior point from the point they reached, land 3,166,852x closer to the optimum, at the cost of the polish-iteration column - each of those is a factorization, and the answer's iteration count is the sum of both phases. A first-order method converges linearly with a rate that flattens near the optimum; a second-order method started there converges quadratically. At 5,000, 20,000, 100,000, 500,000, 1,000,000 rows the polish did not improve the answer - its factor, or the ordering that sizes it, did not fit `polish_max_factor_nonzeros` / `polish_max_seconds` (a nonzero polish-iteration count there is what it managed before the clock) - and the first-order answer stands unchanged, which is what the table shows. The seconds column carries the cost of finding that out. The polish is on by default (`pdhg_polish`) and is measured here so that the unpolished number stays on the page beside it.
+**The polish is where the accuracy comes from, where it can run.** On the size where it ran (1,000 rows) the same 1000 first-order iterations, finished by the interior point from the point they reached, land 3,166,592x closer to the optimum, at the cost of the polish-iteration column - each of those is a factorization, and the answer's iteration count is the sum of both phases. A first-order method converges linearly with a rate that flattens near the optimum; a second-order method started there converges quadratically. At 5,000, 20,000, 100,000, 500,000, 1,000,000 rows the polish did not improve the answer - its factor, or the ordering that sizes it, did not fit `polish_max_factor_nonzeros` / `polish_max_seconds` (a nonzero polish-iteration count there is what it managed before the clock) - and the first-order answer stands unchanged, which is what the table shows. The seconds column carries the cost of finding that out. The polish is on by default (`pdhg_polish`) and is measured here so that the unpolished number stays on the page beside it.
 
 **The accuracy does not degrade with the model.** Across sizes from 1,000 to 1,000,000 rows and columns, the same 1000 iterations land between 1.9e-10 and 6.1e-04 of an optimum known exactly by construction. The number of iterations a first-order method needs is a property of the problem's conditioning, not of its size, and on this family that shows: what grows with the model is the cost of one iteration, not how many are required.
 
@@ -407,37 +407,58 @@ Only the first-order method is measured here, and deliberately. The simplex and 
 
 #### 1f.2 The same sizes on a second shape
 
-Source CSV: `bench/results/scale-staircase-79ec7f7.csv`  
-Commit `79ec7f7` · machine `Windows-AMD64` · 120.0s per solve · staircase structure
+Source CSV: `bench/results/scale-staircase-f7ca7e9.csv`  
+Commit `f7ca7e9` · machine `Windows-AMD64` · 120.0s per solve · staircase structure
 
 **Same construction, same sizes, same nonzeros per column, different pattern.** The random family above draws each column's rows uniformly, which makes an expander graph: no small separators, so every elimination ordering fills catastrophically. That is the worst case for a method that factorizes and it looks nothing like an industrial model. This family is a staircase, each column in its own period with one coupling into the next - a multi-period planning model, which is the shape PS26119's own domain produces. The optimum is exact by construction either way.
 
 | size (rows x cols) | engine | status | objective | relative error | iterations | seconds |
 |---:|---|---|---:|---:|---:|---:|
-| 1,000 | `dual-simplex` | optimal | -5821 | 0.0e+00 | 5149 | 1.4 |
-| 1,000 | `ipm` | optimal | -5820.999999 | 1.3e-10 | 18 | 0.4 |
-| 1,000 | `pdhg` | optimal | -5821 | 4.1e-11 | 76560 | 2.3 |
-| 5,000 | `dual-simplex` | time limit | -16459.54389 | 1.8e-01 | 12662 | 120.3 |
-| 5,000 | `ipm` | optimal | -14008 | 1.1e-10 | 24 | 11.0 |
-| 5,000 | `pdhg` | optimal | -14008 | 1.5e-10 | 83944 (of which 12 polish) | 90.6 |
-| 20,000 | `dual-simplex` | time limit | -216739.1005 | 3.0e+01 | 7430 | 120.7 |
-| 20,000 | `ipm` | feasible | 7459.000306 | 4.1e-08 | 27 | 42.1 |
-| 20,000 | `pdhg` | time limit | 7458.99846 | 2.1e-07 | 60545 (of which 11 polish) | 114.5 |
-| 100,000 | `dual-simplex` | time limit | -6014008.262 | 6.2e+01 | 1450 | 123.3 |
-| 100,000 | `ipm` | time limit | 123257.3768 | 2.5e-01 | 12 | 121.1 |
-| 100,000 | `pdhg` | time limit | 98413.91379 | 8.8e-07 | 15430 | 115.1 |
+| 1,000 | `dual-simplex` | optimal | -5821 | 0.0e+00 | 5149 | 8.0 |
+| 1,000 | `ipm` | optimal | -5820.999999 | 1.3e-10 | 18 | 0.8 |
+| 1,000 | `pdhg` | optimal | -5821 | 4.1e-11 | 76560 | 22.2 |
+| 5,000 | `dual-simplex` | time limit | -15872.791 | 1.3e-01 | 13761 | 120.1 |
+| 5,000 | `ipm` | optimal | -14008 | 1.1e-10 | 24 | 6.4 |
+| 5,000 | `pdhg` | optimal | -14008 | 7.8e-12 | 155280 | 47.9 |
+| 20,000 | `dual-simplex` | time limit | -150394.8844 | 2.1e+01 | 10144 | 120.7 |
+| 20,000 | `ipm` | feasible | 7459.000101 | 1.4e-08 | 27 | 25.9 |
+| 20,000 | `pdhg` | feasible | 7459.000138 | 1.9e-08 | 73833 (of which 19 polish) | 103.2 |
+| 100,000 | `dual-simplex` | time limit | -6012310.933 | 6.2e+01 | 1453 | 121.4 |
+| 100,000 | `ipm` | time limit | 98432.69589 | 1.9e-04 | 24 | 121.1 |
+| 100,000 | `pdhg` | time limit | 98413.93037 | 7.1e-07 | 13907 (of which 5 polish) | 115.1 |
 
 **8 of 12** solves reached the analytic optimum to a relative 1e-06 on this shape.
 
 | engine | largest size reached, random | largest size reached, staircase |
 |---|---:|---:|
 | `dual-simplex` | 1,000 | 1,000 |
-| `ipm` | 1,000 | 20,000 |
+| `ipm` | 5,000 | 20,000 |
 | `pdhg` | 100,000 | 100,000 |
 
-**Structure is what a direct method needs, and the table shows it:** `ipm` from 1,000 to 20,000. The two families were measured at different commits - random at `351a558`, staircase at `79ec7f7` - so the solver is not identical between them; each table stands on its own commit, and the comparison is of shapes, not of versions. What changed between the shapes is whether the matrix has small separators, and the measurements behind that - the ordering time and the fill in the factor at the same size on both shapes - are in #193. The lesson for the section above is that its random family is a fair test of the first-order engine and an unfair one of the other two.
+**Structure is what a direct method needs, and the table shows it:** `ipm` from 5,000 to 20,000. Nothing about the solver changed between the two families. What changed between the shapes is whether the matrix has small separators, and the measurements behind that - the ordering time and the fill in the factor at the same size on both shapes - are in #193. The lesson for the section above is that its random family is a fair test of the first-order engine and an unfair one of the other two.
 
-The 20,000-row `ipm` row is the one to read against the first measurement of this family, `bench/results/scale-staircase-bb4eefa.csv`, where it was a numerical failure after 300 iterations. Running that row is what found the defect fixed in #205 - the method had converged to a relative gap of 1e-7 and then iterated on a NaN that overwrote the answer - and here it reports feasible at a relative error of 4.1e-08 in 27 iterations. Same instance, same hash; the stopping rule is what changed.
+The 20,000-row `ipm` row is the one to read against the first measurement of this family, `bench/results/scale-staircase-bb4eefa.csv`, where it was a numerical failure after 300 iterations. Running that row is what found the defect fixed in #205 - the method had converged to a relative gap of 1e-7 and then iterated on a NaN that overwrote the answer - and here it reports feasible at a relative error of 1.4e-08 in 27 iterations. Same instance, same hash; the stopping rule is what changed.
+
+#### 1f.3 A refinery planning model, by the year
+
+Source CSV: `bench/results/scale-refinery-f7ca7e9.csv`  
+Commit `f7ca7e9` · machine `Windows-AMD64` · 120.0s per solve · refinery structure
+
+**A refinery planning model, rolled out over T periods** (`bench/runners/generate_refinery_lp.py`, #211): crude purchases, distillation throughput and crude tanks per crude; production by yields, sales and product tanks per product; distillation and unit capacities, quality budgets and delivery commitments per period; inventory balances coupling each period to the next. The operating plan is chosen first and the prices derived from the KKT conditions, so the optimum is exact by construction, as for the other two families. Rows are what the generator built - T = 12 is a monthly year, 365 a daily one, 8,760 hourly.
+
+| periods | rows x cols | engine | status | objective | relative error | iterations | seconds |
+|---:|---:|---|---|---:|---:|---:|---:|
+| 12 | 1,068 x 1,656 | `dual-simplex` | optimal | -61203.88791 | 7.1e-16 | 5468 | 1.3 |
+| 12 | 1,068 x 1,656 | `ipm` | optimal | -61203.88791 | 1.4e-13 | 36 | 0.3 |
+| 12 | 1,068 x 1,656 | `pdhg` | optimal | -61203.88791 | 5.5e-13 | 17720 | 1.2 |
+| 365 | 32,485 x 50,370 | `dual-simplex` | time limit | -79628426.64 | 5.0e+01 | 8110 | 121.0 |
+| 365 | 32,485 x 50,370 | `ipm` | optimal | -1571173.846 | 6.8e-12 | 45 | 92.6 |
+| 365 | 32,485 x 50,370 | `pdhg` | optimal | -1571173.846 | 1.5e-16 | 31226 (of which 5 polish) | 95.4 |
+| 8760 | 779,640 x 1,208,880 | `dual-simplex` | time limit | -1213604809 | 3.2e+01 | 1 | 208.4 |
+| 8760 | 779,640 x 1,208,880 | `ipm` | time limit | -475650568.5 | 1.2e+01 | 1 | 155.0 |
+| 8760 | 779,640 x 1,208,880 | `pdhg` | time limit | -36893706.86 | 1.1e-06 | 1120 | 134.0 |
+
+**5 of 9** solves reached the analytic optimum to a relative 1e-06 on this model; the largest solved is 32,485 rows.
 
 ---
 
@@ -446,15 +467,15 @@ The 20,000-row `ipm` row is the one to read against the first measurement of thi
 The LP tiers above say nothing about the branch and bound. This is the MILP evidence, and it
 is a harder library: MIPLIB instances are chosen to be difficult for mature solvers.
 
-Source CSV: `bench/results/miplib-53cbe16.csv`  
-Commit `53cbe16` · machine `Windows-AMD64`
+Source CSV: `bench/results/miplib-f7ca7e9.csv`  
+Commit `f7ca7e9` · machine `Windows-AMD64`
 
-**13 of 30** instances reached the published optimum. **6 of 30** also PROVED it - closed the bound to within the requested gap target rather than stopping at a node or time limit.
+**13 of 30** instances reached the published optimum. **9 of 30** also PROVED it - closed the bound to within the requested gap target rather than stopping at a node or time limit.
 
-**This CSV predates #188.** 3 of these rows stopped on the gap target and were recorded `feasible`, so they are counted above as NOT proved: `f2gap40400`, `flugpl`, `p0201`. Since #188 such a stop reports `optimal` - the incumbent is within the tolerance the caller asked for, which is what the word means everywhere else in the field - so a rerun would count them as proved. That is a renamed status, not a better search, and the number above is left as the run measured it.
+Every row above was counted under the #188 convention: a search that meets the requested gap target reports `optimal`, because the incumbent is within the tolerance that was asked for. Only a node or time limit leaves a row unproved.
 Those are different claims and are kept apart deliberately. Branch and bound here finds good incumbents far more often than it finishes the proof: reliability branching (#69) and warm-started dual node LPs (#65) do the searching, and the root cutting planes that exist (#159: Gomory mixed-integer and lifted knapsack cover) are off by default, for the reason measured below. Collapsing the two columns would hide exactly the thing cuts are meant to improve.
 
-**Root cuts, on versus off** (`bench/results/miplib-cuts-off.csv` and `miplib-cuts-on.csv`, both at `adf4f20` on the PR branch, 30 instances, the same time limit): with cuts on, 12 of 30 reach the published optimum and 8 prove it, against 12 and 9 with them off. Over the 28 instances that end the same way either way, the cuts take the total node count to 0.887x (per instance from 0.257x to 1.209x). The outcome changed on 2: `enlight8` optimal -> node limit (stopped at the time limit after 60.00s and 51627 nodes); `f2gap40400` optimal -> feasible (stopped on a relative gap target (2.043e+00 absolute, 9.835e-05 relative) after 321 nodes). Both counts above are recomputed under #188, where a search meeting its gap target is optimal; the CSVs predate that and their own `proved_optimal` column would read 7 and 5, which is where the claim that the cuts cost TWO proofs came from. One of those two was only a renamed status: `f2gap40400` met the gap target in 321 nodes with cuts against 509 without, which is the cuts working. The genuine loss is `enlight8`, which proves its optimum in 53.5 s without them and runs out of the 60 s limit with them, because a cut row makes every node LP dearer. That single lost proof, against a node count of 0.887x, is why `enable_root_cuts` is off by default: a measurement, not caution.
+**Root cuts, on versus off** (`bench/results/miplib-cuts-off.csv` and `miplib-cuts-on.csv`, both at `f7ca7e9`, 30 instances, the same time limit): with cuts on, 12 of 30 reach the published optimum and 9 prove it, against 13 and 9 with them off. Over the 30 instances that end the same way either way, the cuts take the total node count to 0.918x (per instance from 0.082x to 1.539x). The outcome changed on 0: none. Both counts above are recomputed under #188, where a search meeting its gap target is optimal; the CSVs predate that and their own `proved_optimal` column would read 9 and 9, which is where the claim that the cuts cost TWO proofs came from. One of those two was only a renamed status: `f2gap40400` met the gap target in 321 nodes with cuts against 509 without, which is the cuts working. The genuine loss is `enlight8`, which proves its optimum in 53.5 s without them and runs out of the 60 s limit with them, because a cut row makes every node LP dearer. That single lost proof, against a node count of 0.918x, is why `enable_root_cuts` is off by default: a measurement, not caution.
 
 **The time limit decides some of these, not the solver.** A row that stops at the limit with a small gap says "needs more time than we gave it", not "cannot"; which side of the limit such a row lands on moves with the machine's speed rather than with anything about the search. The remedy is a longer limit, and the reason this table does not already use one is that the set already adds up to 21 minutes of solve time per run at this one.
 
@@ -462,38 +483,38 @@ Instances are the smallest MIPLIB 2017 instances tagged easy that carry a **prov
 
 | instance | rows | cols | int | status | our objective | published | rel. gap | nodes | time (s) | matched | proved | verified |
 |---|---:|---:|---:|---|---:|---:|---:|---:|---:|:--:|:--:|:--:|
-| `b-ball` | 30 | 100 | 88 | feasible | -1.5 | -1.5 | 2.12e-01 | 71480 | 60.3 | yes | **NO** | yes |
-| `ej` | 1 | 3 | 3 | feasible | 51015 | 25508 | 1.00e+00 | 65307 | 60.1 | **NO** | **NO** | yes |
-| `enlight8` | 64 | 128 | 128 | node_limit | inf | 27 | - | 122275 | 60.1 | **NO** | **NO** | **NO** |
-| `enlight_hard` | 100 | 200 | 200 | node_limit | inf | 37 | - | 102964 | 60.0 | **NO** | **NO** | **NO** |
-| `f2gap40400` | 40 | 400 | 400 | feasible | 20772 | 20772 | 5.23e-05 | 543 | 3.9 | yes | **NO** | yes |
-| `flugpl` | 18 | 18 | 11 | feasible | 1201500 | 1201500 | 1.87e-05 | 545 | 0.1 | yes | **NO** | yes |
-| `gen-ip016` | 24 | 28 | 28 | feasible | -9431.212409 | -9476.155197 | 7.38e-03 | 76469 | 60.0 | **NO** | **NO** | yes |
-| `gen-ip054` | 27 | 30 | 30 | feasible | 6859.867147 | 6840.965642 | 1.08e-02 | 90620 | 60.0 | **NO** | **NO** | yes |
+| `b-ball` | 30 | 100 | 88 | feasible | -1.5 | -1.5 | 2.12e-01 | 98354 | 60.0 | yes | **NO** | yes |
+| `ej` | 1 | 3 | 3 | feasible | 51015 | 25508 | 1.00e+00 | 78839 | 60.0 | **NO** | **NO** | yes |
+| `enlight8` | 64 | 128 | 128 | node_limit | inf | 27 | - | 131992 | 60.0 | **NO** | **NO** | **NO** |
+| `enlight_hard` | 100 | 200 | 200 | node_limit | inf | 37 | - | 110681 | 60.0 | **NO** | **NO** | **NO** |
+| `f2gap40400` | 40 | 400 | 400 | optimal | 20772 | 20772 | 5.23e-05 | 543 | 3.0 | yes | yes | yes |
+| `flugpl` | 18 | 18 | 11 | optimal | 1201500 | 1201500 | 1.87e-05 | 545 | 0.1 | yes | yes | yes |
+| `gen-ip016` | 24 | 28 | 28 | feasible | -9431.212409 | -9476.155197 | 7.36e-03 | 94956 | 60.0 | **NO** | **NO** | yes |
+| `gen-ip054` | 27 | 30 | 30 | feasible | 6859.867147 | 6840.965642 | 1.07e-02 | 96940 | 60.0 | **NO** | **NO** | yes |
 | `gr4x6` | 34 | 48 | 24 | optimal | 202.35 | 202.35 | 0.00e+00 | 71 | 0.1 | yes | yes | yes |
-| `gt2` | 29 | 188 | 188 | optimal | 21166 | 21166 | 0.00e+00 | 478 | 0.2 | yes | yes | yes |
-| `k16x240b` | 256 | 480 | 240 | feasible | 12066 | 11393 | 4.23e-01 | 78287 | 60.1 | **NO** | **NO** | yes |
-| `markshare1` | 6 | 62 | 50 | feasible | 40 | 1 | 1.00e+00 | 85564 | 60.0 | **NO** | **NO** | yes |
-| `markshare_4_0` | 4 | 34 | 30 | feasible | 4 | 1 | 1.00e+00 | 117649 | 60.1 | **NO** | **NO** | yes |
-| `markshare_5_0` | 5 | 45 | 40 | feasible | 27 | 1 | 1.00e+00 | 94708 | 60.0 | **NO** | **NO** | yes |
+| `gt2` | 29 | 188 | 188 | optimal | 21166 | 21166 | 0.00e+00 | 478 | 0.3 | yes | yes | yes |
+| `k16x240b` | 256 | 480 | 240 | feasible | 12066 | 11393 | 4.23e-01 | 77594 | 60.0 | **NO** | **NO** | yes |
+| `markshare1` | 6 | 62 | 50 | feasible | 40 | 1 | 1.00e+00 | 113962 | 60.0 | **NO** | **NO** | yes |
+| `markshare_4_0` | 4 | 34 | 30 | feasible | 4 | 1 | 1.00e+00 | 160627 | 60.0 | **NO** | **NO** | yes |
+| `markshare_5_0` | 5 | 45 | 40 | feasible | 21 | 1 | 1.00e+00 | 125188 | 60.0 | **NO** | **NO** | yes |
 | `neos-1425699` | 89 | 105 | 85 | optimal | 3179698977 | 3179698977 | 0.00e+00 | 3 | 0.0 | yes | yes | yes |
-| `neos-3072252-nete` | 432 | 576 | 144 | feasible | 11928124 | 11807698 | 1.10e-01 | 13549 | 60.0 | **NO** | **NO** | yes |
-| `neos-3611689-kaihu` | 323 | 421 | 88 | feasible | 120 | 119 | 6.38e-02 | 26355 | 60.8 | **NO** | **NO** | yes |
-| `neos-5140963-mincio` | 184 | 196 | 183 | feasible | 15178 | 14393 | 2.53e-01 | 26011 | 60.2 | **NO** | **NO** | yes |
-| `neos-5192052-neckar` | 57 | 180 | 24 | optimal | -11670000 | -11670000 | 0.00e+00 | 9 | 0.1 | yes | yes | yes |
-| `neos5` | 63 | 63 | 53 | feasible | 15.5 | 15 | 1.13e-01 | 10421 | 60.1 | **NO** | **NO** | yes |
-| `noswot` | 182 | 128 | 100 | feasible | -41 | -41.00000885 | 4.88e-02 | 47572 | 60.1 | yes | **NO** | yes |
-| `opt1217` | 64 | 769 | 768 | feasible | -16 | -16 | 2.51e-01 | 61231 | 60.0 | yes | **NO** | yes |
-| `p0201` | 133 | 201 | 201 | feasible | 7615 | 7615 | 1.19e-16 | 860 | 5.2 | yes | **NO** | yes |
-| `pk1` | 45 | 86 | 55 | feasible | 18 | 11 | 7.46e-01 | 68183 | 60.1 | **NO** | **NO** | yes |
-| `ran12x21` | 285 | 504 | 252 | feasible | 3794 | 3664 | 9.74e-02 | 21447 | 60.1 | **NO** | **NO** | yes |
-| `ran13x13` | 195 | 338 | 169 | feasible | 3319 | 3252 | 8.55e-02 | 34421 | 60.0 | **NO** | **NO** | yes |
-| `rlp1` | 68 | 461 | 450 | feasible | 15 | 15 | 1.15e-01 | 44075 | 60.1 | yes | **NO** | yes |
-| `supportcase14` | 234 | 304 | 304 | optimal | 288 | 288 | 0.00e+00 | 89 | 1.5 | yes | yes | yes |
-| `supportcase16` | 130 | 319 | 319 | optimal | 288 | 288 | 0.00e+00 | 70 | 0.9 | yes | yes | yes |
-| `timtab1` | 171 | 397 | 171 | feasible | 1176264 | 764772 | 7.51e-01 | 27963 | 60.1 | **NO** | **NO** | yes |
+| `neos-3072252-nete` | 432 | 576 | 144 | feasible | 11928124 | 11807698 | 1.10e-01 | 22476 | 60.0 | **NO** | **NO** | yes |
+| `neos-3611689-kaihu` | 323 | 421 | 88 | feasible | 120 | 119 | 5.49e-02 | 48283 | 60.0 | **NO** | **NO** | yes |
+| `neos-5140963-mincio` | 184 | 196 | 183 | feasible | 15062 | 14393 | 2.30e-01 | 67347 | 60.0 | **NO** | **NO** | yes |
+| `neos-5192052-neckar` | 57 | 180 | 24 | optimal | -11670000 | -11670000 | 0.00e+00 | 9 | 0.0 | yes | yes | yes |
+| `neos5` | 63 | 63 | 53 | feasible | 15.5 | 15 | 1.05e-01 | 23704 | 60.0 | **NO** | **NO** | yes |
+| `noswot` | 182 | 128 | 100 | feasible | -41 | -41.00000885 | 4.88e-02 | 75769 | 60.0 | yes | **NO** | yes |
+| `opt1217` | 64 | 769 | 768 | feasible | -16 | -16 | 2.51e-01 | 68585 | 60.0 | yes | **NO** | yes |
+| `p0201` | 133 | 201 | 201 | optimal | 7615 | 7615 | 1.19e-16 | 860 | 3.0 | yes | yes | yes |
+| `pk1` | 45 | 86 | 55 | feasible | 18 | 11 | 7.23e-01 | 82472 | 60.0 | **NO** | **NO** | yes |
+| `ran12x21` | 285 | 504 | 252 | feasible | 3794 | 3664 | 8.72e-02 | 43593 | 60.0 | **NO** | **NO** | yes |
+| `ran13x13` | 195 | 338 | 169 | feasible | 3319 | 3252 | 7.37e-02 | 63374 | 60.0 | **NO** | **NO** | yes |
+| `rlp1` | 68 | 461 | 450 | feasible | 15 | 15 | 9.89e-02 | 75168 | 60.0 | yes | **NO** | yes |
+| `supportcase14` | 234 | 304 | 304 | optimal | 288 | 288 | 0.00e+00 | 89 | 1.0 | yes | yes | yes |
+| `supportcase16` | 130 | 319 | 319 | optimal | 288 | 288 | 0.00e+00 | 70 | 0.6 | yes | yes | yes |
+| `timtab1` | 171 | 397 | 171 | feasible | 1176264 | 764772 | 7.20e-01 | 63663 | 60.0 | **NO** | **NO** | yes |
 
-**Not proved optimal**, named rather than dropped: `b-ball`, `ej`, `enlight8`, `enlight_hard`, `f2gap40400`, `flugpl`, `gen-ip016`, `gen-ip054`, `k16x240b`, `markshare1`, `markshare_4_0`, `markshare_5_0`, `neos-3072252-nete`, `neos-3611689-kaihu`, `neos-5140963-mincio`, `neos5`, `noswot`, `opt1217`, `p0201`, `pk1`, `ran12x21`, `ran13x13`, `rlp1`, `timtab1`.
+**Not proved optimal**, named rather than dropped: `b-ball`, `ej`, `enlight8`, `enlight_hard`, `gen-ip016`, `gen-ip054`, `k16x240b`, `markshare1`, `markshare_4_0`, `markshare_5_0`, `neos-3072252-nete`, `neos-3611689-kaihu`, `neos-5140963-mincio`, `neos5`, `noswot`, `opt1217`, `pk1`, `ran12x21`, `ran13x13`, `rlp1`, `timtab1`.
 
 ---
 
@@ -526,8 +547,8 @@ demo set. Comparing only where we pass would be the easy version of this table a
 nothing: the instances we fail are exactly the ones a reader should want to see against a
 mature solver.
 
-Source CSV: `bench/results/compare-highs-medium-53cbe16.csv`  
-Commit `53cbe16` · machine `Windows-AMD64`
+Source CSV: `bench/results/compare-highs-medium-f7ca7e9-third.csv`  
+Commit `f7ca7e9` · machine `Windows-AMD64`
 
 **50 of 50** instances where the two solvers agree on the objective.
 
@@ -535,66 +556,66 @@ Times are **solver-internal on both sides** - HiGHS's own `getRunTime()` against
 
 | instance | SANKHYA obj | HiGHS obj | agree | SANKHYA (s) | HiGHS (s) | ratio |
 |---|---:|---:|:--:|---:|---:|---:|
-| `adlittle` | 2.25494963e+05 | 2.25494963e+05 | yes | 0.001 | 0.001 | 1.08x |
-| `afiro` | -4.64753143e+02 | -4.64753143e+02 | yes | 0.000 | 0.000 | 0.94x |
-| `agg` | -3.59917673e+07 | -3.59917673e+07 | yes | 0.008 | 0.007 | 1.23x |
-| `bandm` | -1.58628018e+02 | -1.58628018e+02 | yes | 0.020 | 0.011 | 1.81x |
-| `beaconfd` | 3.35924858e+04 | 3.35924858e+04 | yes | 0.011 | 0.005 | 2.11x |
-| `blend` | -3.08121498e+01 | -3.08121498e+01 | yes | 0.003 | 0.002 | 1.34x |
-| `boeing1` | -3.35213568e+02 | -3.35213568e+02 | yes | 0.024 | 0.020 | 1.21x |
-| `boeing2` | -3.15018728e+02 | -3.15018728e+02 | yes | 0.004 | 0.003 | 1.42x |
-| `bore3d` | 1.37308039e+03 | 1.37308039e+03 | yes | 0.006 | 0.002 | 2.26x |
-| `brandy` | 1.51850990e+03 | 1.51850990e+03 | yes | 0.012 | 0.007 | 1.68x |
-| `capri` | 2.69001291e+03 | 2.69001291e+03 | yes | 0.052 | 0.011 | 4.90x |
-| `d6cube` | 3.15491667e+02 | 3.15491667e+02 | yes | 0.479 | 0.137 | 3.49x |
-| `degen2` | -1.43517800e+03 | -1.43517800e+03 | yes | 0.047 | 0.015 | 3.05x |
-| `e226` | -1.16389291e+01 | -1.16389291e+01 | yes | 0.020 | 0.008 | 2.63x |
-| `etamacro` | -7.55715233e+02 | -7.55715233e+02 | yes | 0.032 | 0.010 | 3.14x |
-| `finnis` | 1.72791066e+05 | 1.72791066e+05 | yes | 0.020 | 0.007 | 2.70x |
-| `fit1d` | -9.14637809e+03 | -9.14637809e+03 | yes | 0.012 | 0.014 | 0.91x |
-| `fit2d` | -6.84642933e+04 | -6.84642933e+04 | yes | 0.287 | 0.193 | 1.49x |
-| `forplan` | -6.64218961e+02 | -6.64218961e+02 | yes | 0.017 | 0.007 | 2.41x |
-| `grow15` | -1.06870941e+08 | -1.06870941e+08 | yes | 0.290 | 0.045 | 6.39x |
-| `grow22` | -1.60834336e+08 | -1.60834336e+08 | yes | 0.363 | 0.092 | 3.94x |
-| `grow7` | -4.77878118e+07 | -4.77878118e+07 | yes | 0.089 | 0.012 | 7.21x |
-| `israel` | -8.96644822e+05 | -8.96644822e+05 | yes | 0.010 | 0.004 | 2.54x |
-| `kb2` | -1.74990013e+03 | -1.74990013e+03 | yes | 0.001 | 0.001 | 1.61x |
-| `lotfi` | -2.52647061e+01 | -2.52647061e+01 | yes | 0.006 | 0.002 | 2.58x |
-| `pilot4` | -2.58113926e+03 | -2.58113926e+03 | yes | 0.098 | 0.028 | 3.53x |
-| `recipe` | -2.66616000e+02 | -2.66616000e+02 | yes | 0.001 | 0.001 | 1.02x |
-| `sc105` | -5.22020612e+01 | -5.22020612e+01 | yes | 0.002 | 0.001 | 1.96x |
-| `sc205` | -5.22020612e+01 | -5.22020612e+01 | yes | 0.005 | 0.002 | 2.34x |
-| `sc50a` | -6.45750771e+01 | -6.45750771e+01 | yes | 0.001 | 0.001 | 0.94x |
-| `sc50b` | -7.00000000e+01 | -7.00000000e+01 | yes | 0.001 | 0.001 | 0.78x |
-| `scagr25` | -1.47534331e+07 | -1.47534331e+07 | yes | 0.026 | 0.007 | 3.70x |
-| `scagr7` | -2.33138982e+06 | -2.33138982e+06 | yes | 0.002 | 0.002 | 1.20x |
-| `scfxm1` | 1.84167590e+04 | 1.84167590e+04 | yes | 0.021 | 0.009 | 2.50x |
-| `scorpion` | 1.87812482e+03 | 1.87812482e+03 | yes | 0.009 | 0.003 | 2.65x |
-| `scrs8` | 9.04296954e+02 | 9.04296954e+02 | yes | 0.039 | 0.013 | 3.09x |
-| `scsd1` | 8.66666667e+00 | 8.66666667e+00 | yes | 0.009 | 0.003 | 3.46x |
-| `scsd6` | 5.05000001e+01 | 5.05000001e+01 | yes | 0.024 | 0.008 | 2.91x |
-| `scsd8` | 9.05000000e+02 | 9.05000000e+02 | yes | 0.175 | 0.071 | 2.47x |
-| `sctap1` | 1.41225000e+03 | 1.41225000e+03 | yes | 0.013 | 0.009 | 1.47x |
-| `share1b` | -7.65893186e+04 | -7.65893186e+04 | yes | 0.006 | 0.004 | 1.70x |
-| `share2b` | -4.15732241e+02 | -4.15732241e+02 | yes | 0.004 | 0.002 | 1.77x |
-| `ship04l` | 1.79332454e+06 | 1.79332454e+06 | yes | 0.030 | 0.010 | 3.08x |
-| `ship04s` | 1.79871470e+06 | 1.79871470e+06 | yes | 0.015 | 0.007 | 2.11x |
-| `stair` | -2.51266951e+02 | -2.51266951e+02 | yes | 0.038 | 0.016 | 2.33x |
-| `standata` | 1.25769950e+03 | 1.25769950e+03 | yes | 0.005 | 0.005 | 0.96x |
-| `standmps` | 1.40601750e+03 | 1.40601750e+03 | yes | 0.013 | 0.006 | 2.05x |
-| `stocfor1` | -4.11319762e+04 | -4.11319762e+04 | yes | 0.003 | 0.002 | 1.62x |
-| `tuff` | 2.92147765e-01 | 2.92147765e-01 | yes | 0.013 | 0.012 | 1.08x |
-| `wood1p` | 1.44290241e+00 | 1.44290241e+00 | yes | 0.154 | 0.092 | 1.67x |
+| `adlittle` | 2.25494963e+05 | 2.25494963e+05 | yes | 0.002 | 0.002 | 1.15x |
+| `afiro` | -4.64753143e+02 | -4.64753143e+02 | yes | 0.001 | 0.001 | 1.02x |
+| `agg` | -3.59917673e+07 | -3.59917673e+07 | yes | 0.014 | 0.006 | 2.52x |
+| `bandm` | -1.58628018e+02 | -1.58628018e+02 | yes | 0.030 | 0.014 | 2.16x |
+| `beaconfd` | 3.35924858e+04 | 3.35924858e+04 | yes | 0.006 | 0.004 | 1.66x |
+| `blend` | -3.08121498e+01 | -3.08121498e+01 | yes | 0.003 | 0.002 | 1.39x |
+| `boeing1` | -3.35213568e+02 | -3.35213568e+02 | yes | 0.023 | 0.015 | 1.51x |
+| `boeing2` | -3.15018728e+02 | -3.15018728e+02 | yes | 0.005 | 0.004 | 1.40x |
+| `bore3d` | 1.37308039e+03 | 1.37308039e+03 | yes | 0.007 | 0.004 | 1.75x |
+| `brandy` | 1.51850990e+03 | 1.51850990e+03 | yes | 0.014 | 0.007 | 1.95x |
+| `capri` | 2.69001291e+03 | 2.69001291e+03 | yes | 0.014 | 0.005 | 2.64x |
+| `d6cube` | 3.15491667e+02 | 3.15491667e+02 | yes | 0.548 | 0.195 | 2.81x |
+| `degen2` | -1.43517800e+03 | -1.43517800e+03 | yes | 0.065 | 0.020 | 3.19x |
+| `e226` | -1.16389291e+01 | -1.16389291e+01 | yes | 0.031 | 0.011 | 2.84x |
+| `etamacro` | -7.55715233e+02 | -7.55715233e+02 | yes | 0.045 | 0.015 | 2.94x |
+| `finnis` | 1.72791066e+05 | 1.72791066e+05 | yes | 0.023 | 0.008 | 2.89x |
+| `fit1d` | -9.14637809e+03 | -9.14637809e+03 | yes | 0.015 | 0.016 | 0.96x |
+| `fit2d` | -6.84642933e+04 | -6.84642933e+04 | yes | 0.343 | 0.230 | 1.50x |
+| `forplan` | -6.64218961e+02 | -6.64218961e+02 | yes | 0.020 | 0.009 | 2.25x |
+| `grow15` | -1.06870941e+08 | -1.06870941e+08 | yes | 0.357 | 0.059 | 6.08x |
+| `grow22` | -1.60834336e+08 | -1.60834336e+08 | yes | 0.514 | 0.119 | 4.32x |
+| `grow7` | -4.77878118e+07 | -4.77878118e+07 | yes | 0.123 | 0.016 | 7.55x |
+| `israel` | -8.96644822e+05 | -8.96644822e+05 | yes | 0.013 | 0.006 | 2.26x |
+| `kb2` | -1.74990013e+03 | -1.74990013e+03 | yes | 0.002 | 0.001 | 1.64x |
+| `lotfi` | -2.52647061e+01 | -2.52647061e+01 | yes | 0.010 | 0.004 | 2.95x |
+| `pilot4` | -2.58113926e+03 | -2.58113926e+03 | yes | 0.146 | 0.044 | 3.36x |
+| `recipe` | -2.66616000e+02 | -2.66616000e+02 | yes | 0.002 | 0.002 | 0.92x |
+| `sc105` | -5.22020612e+01 | -5.22020612e+01 | yes | 0.003 | 0.001 | 1.84x |
+| `sc205` | -5.22020612e+01 | -5.22020612e+01 | yes | 0.007 | 0.003 | 2.62x |
+| `sc50a` | -6.45750771e+01 | -6.45750771e+01 | yes | 0.001 | 0.001 | 1.55x |
+| `sc50b` | -7.00000000e+01 | -7.00000000e+01 | yes | 0.001 | 0.001 | 1.53x |
+| `scagr25` | -1.47534331e+07 | -1.47534331e+07 | yes | 0.024 | 0.010 | 2.44x |
+| `scagr7` | -2.33138982e+06 | -2.33138982e+06 | yes | 0.003 | 0.003 | 0.93x |
+| `scfxm1` | 1.84167590e+04 | 1.84167590e+04 | yes | 0.028 | 0.013 | 2.08x |
+| `scorpion` | 1.87812482e+03 | 1.87812482e+03 | yes | 0.012 | 0.004 | 2.92x |
+| `scrs8` | 9.04296954e+02 | 9.04296954e+02 | yes | 0.050 | 0.015 | 3.43x |
+| `scsd1` | 8.66666667e+00 | 8.66666667e+00 | yes | 0.011 | 0.003 | 3.29x |
+| `scsd6` | 5.05000001e+01 | 5.05000001e+01 | yes | 0.031 | 0.011 | 2.85x |
+| `scsd8` | 9.05000000e+02 | 9.05000000e+02 | yes | 0.253 | 0.059 | 4.28x |
+| `sctap1` | 1.41225000e+03 | 1.41225000e+03 | yes | 0.013 | 0.010 | 1.36x |
+| `share1b` | -7.65893186e+04 | -7.65893186e+04 | yes | 0.006 | 0.004 | 1.40x |
+| `share2b` | -4.15732241e+02 | -4.15732241e+02 | yes | 0.005 | 0.003 | 1.71x |
+| `ship04l` | 1.79332454e+06 | 1.79332454e+06 | yes | 0.040 | 0.013 | 3.09x |
+| `ship04s` | 1.79871470e+06 | 1.79871470e+06 | yes | 0.022 | 0.009 | 2.45x |
+| `stair` | -2.51266951e+02 | -2.51266951e+02 | yes | 0.047 | 0.021 | 2.24x |
+| `standata` | 1.25769950e+03 | 1.25769950e+03 | yes | 0.006 | 0.006 | 0.96x |
+| `standmps` | 1.40601750e+03 | 1.40601750e+03 | yes | 0.016 | 0.009 | 1.75x |
+| `stocfor1` | -4.11319762e+04 | -4.11319762e+04 | yes | 0.003 | 0.002 | 1.72x |
+| `tuff` | 2.92147765e-01 | 2.92147765e-01 | yes | 0.016 | 0.010 | 1.58x |
+| `wood1p` | 1.44290241e+00 | 1.44290241e+00 | yes | 0.160 | 0.100 | 1.61x |
 
 **Summary**
 
-- SANKHYA shifted geometric mean: **0.047s**
-- HiGHS shifted geometric mean: **0.018s**
+- SANKHYA shifted geometric mean: **0.057s**
+- HiGHS shifted geometric mean: **0.022s**
 - SANKHYA is **2.6x** the HiGHS time by that measure
 
-- per-instance ratio: median **2.11x**, worst **7.21x**, faster than HiGHS on **5 of 50** instances
+- per-instance ratio: median **2.12x**, worst **7.55x**, faster than HiGHS on **4 of 50** instances
 
-We are **2.57x slower** than HiGHS by this measure, and publish that rather than bury it. HiGHS is a decade of specialist work with presolve, a dual simplex and a mature pricing scheme. This solver now has a presolve (#43, #92) and a dual simplex (#65) of its own, both defaults, so what remains between the two is the pricing and the years. The part that has to be right first is that **the answers agree** - the problem statement asks us to compare, not to win.
+We are **2.62x slower** than HiGHS by this measure, and publish that rather than bury it. HiGHS is a decade of specialist work with presolve, a dual simplex and a mature pricing scheme. This solver now has a presolve (#43, #92) and a dual simplex (#65) of its own, both defaults, so what remains between the two is the pricing and the years. The part that has to be right first is that **the answers agree** - the problem statement asks us to compare, not to win.
 
 ---
 

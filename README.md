@@ -99,17 +99,22 @@ largest instances rather than robustness. Tracked in #214 (the four non-passes t
 ours to fix) and #210 (the dual simplex's iteration rate at size).
 
 MIPLIB 2017 is benchmarked too: **13 of 30** easy instances reach the published optimum,
-**6 of 30** also prove it (`bench/results/miplib-53cbe16.csv`, 60 s) —
-branch and bound has reliability branching and warm-started node LPs, and root cutting
-planes that are off by default because they were measured to cost proofs at this limit
-(#159; `docs/BENCHMARKS.md` section 2), so it finds good incumbents far more often than it
-closes the bound. For
+**9 of 30** also prove it (`bench/results/miplib-f7ca7e9.csv`, 60 s; it was 6 of 30 at
+`53cbe16`, before #188 let a search that meets its gap target say `optimal` - three of the
+nine are that renamed status, not a better search) - branch and bound has reliability
+branching and warm-started node LPs, and root cutting planes that are off by default: on the
+same commit they prove the same nine, take the node count to 0.918x, and cost one published
+match (`noswot`'s incumbent worsens from -41 to -39 with them on; `bench/results/miplib-
+cuts-{off,on}.csv`, `docs/BENCHMARKS.md` section 2), so it finds good incumbents far more
+often than it closes the bound. For
 scale beyond what Netlib tests, `bench/runners/generate_large_lp.py` builds sparse LPs of
 any size with an exactly known analytic optimum, and `bench/runners/mittelmann.py` runs
 Mittelmann's LP set: on its eight smallest instances (6,330 to 376,500 rows) the result is
-**0 of 8** inside 300 s - seven time limits and one singular basis (`qap15`, #174) - every
-one named in section 1d of `docs/BENCHMARKS.md` (`bench/results/mittelmann-592aea3.csv`,
-run on `main` with the machine awake and on AC throughout).
+**0 of 8** inside 300 s - eight time limits, now that `qap15` no longer ends in a singular
+basis (#174, fixed in #178) - every one named in section 1d of `docs/BENCHMARKS.md`
+(`bench/results/mittelmann-f7ca7e9.csv`, run on `main`, on AC, alone on the machine). The
+overrun on `bdry2`, whose time limit cannot reach inside the sparse LU (#208), is 380 s
+against 300 where it was 648.
 
 ## Reproduce everything
 
@@ -240,20 +245,25 @@ tracks every PS26119 requirement against what exists on `main`; section 6 of
 | not implemented | note |
 |---|---|
 | **GPU acceleration** | The first-order method it needs exists and runs on CPU - restarted PDHG, `--option algorithm=pdhg`, **9 of 9** committed instances to `optimal` at 1e-8 on `main` at `79ec7f7` (`bench/results/pdhg-79ec7f7.csv`, `docs/BENCHMARKS.md` section 1e). The ninth is `share2b`, which the first-order method alone leaves at its million-iteration limit: since #229 its answer is finished by the interior point by default (`pdhg_polish`), nine more iterations there, and section 1f.1 measures the same thing size by size - 6.1e-04 to 1.9e-10 at 1,000 rows, declined where the factor is not affordable. The CUDA backend is unwritten (#16-#19); `--gpu` warns and falls back. No speed-up is claimed. |
-| **Scale** | Measured to a million, and the answer depends on the engine (#198, `docs/BENCHMARKS.md` sections 1f and 1f.1). On generated instances whose optimum is exact by construction: under a 120 s clock the first-order engine reaches the optimum at **100,000 x 100,000** to 5.5e-08 without certifying it, while the dual simplex and the interior point reach it only at 1,000. Given a fixed 1,000 iterations instead of a clock - the one accuracy claim here another machine reproduces exactly - the error stays between 6.9e-06 and 6.1e-04 all the way to **1,000,000 x 1,000,000**, so what grows with the model is the cost per iteration, not the number needed. Those are the random family's numbers, and a random sparse matrix is the worst case for anything that factorizes; on a second family shaped like a multi-period planning model (#198, section 1f.2, `bench/results/scale-staircase-6503800.csv`) the interior point reaches the optimum at **20,000** rows instead of 1,000 and 8 of 12 solves reach it against 6 of 12. The polish that finishes PDHG's answer (#229) is not yet in a committed scale CSV; section 1f.1 will carry the unpolished and polished error side by side once it is re-measured on `main`. On real models: the largest Netlib instance solved is `fit2d`, 25x10500 with 129018 nonzeros, in 0.3 s, and on Mittelmann's eight smallest LPs, 6,330 to 376,500 rows, the result is 0 of 8 inside 300 s. No industrial model of that size has been run. |
+| **Scale** | Measured to a million, and the answer depends on the engine (#198, `docs/BENCHMARKS.md` sections 1f and 1f.1). On generated instances whose optimum is exact by construction: under a 120 s clock the first-order engine reaches the optimum at **100,000 x 100,000** to 9.1e-08 without certifying it, the interior point reaches it at 5,000 since the AMD ordering (#193) and the dual simplex only at 1,000 (`bench/results/scale-f7ca7e9.csv`, 7 of 12). Given a fixed 1,000 iterations instead of a clock - the one accuracy claim here another machine reproduces exactly - the error stays between 6.9e-06 and 6.1e-04 all the way to **1,000,000 x 1,000,000**, so what grows with the model is the cost per iteration, not the number needed. Those are the random family's numbers, and a random sparse matrix is the worst case for anything that factorizes; on a second family shaped like a multi-period planning model (#198, section 1f.2, `bench/results/scale-staircase-6503800.csv`) the interior point reaches the optimum at **20,000** rows instead of 1,000 and 8 of 12 solves reach it against 6 of 12. The polish that finishes PDHG's answer (#229) is measured beside the unpolished run in section 1f.1 (`bench/results/scale-iterations-f7ca7e9.csv`): at 1,000 rows the same 1,000 iterations land at 6.1e-04 unpolished and 1.9e-10 polished, and at every larger size of the random family the polish declines within its 30 s budget because the factor is dense, which the table shows rather than hides. On real models: the largest Netlib instance solved is `fit2d`, 25x10500 with 129018 nonzeros, in 0.3 s, and on Mittelmann's eight smallest LPs, 6,330 to 376,500 rows, the result is 0 of 8 inside 300 s. On an industrial-structured model - a T-period refinery planning LP with crudes, tanks, yields, capacities, quality budgets and delivery commitments, optimum exact by construction (`bench/runners/generate_refinery_lp.py`, #211, section 1f.3, `bench/results/scale-refinery-f7ca7e9.csv`) - the monthly year (1,068 rows) is solved exactly by all three engines, the daily year (**32,485 rows**) exactly by the interior point (45 iterations, 93 s) and by PDHG finished by it (95 s), and the hourly year (**779,640 rows**) is reached by PDHG to 1.1e-06 inside 120 s and proved by nothing: 5 of 9 solves. That is the first industrial-shaped model at this size the evidence holds, and the number to read is the daily year. |
 | **Interior point as a default** | An interior-point method exists (#56, `--option algorithm=ipm`, Mehrotra predictor-corrector over a from-scratch sparse LDL^T) and is opt-in: it produces no basis, so it cannot warm-start branch and bound and cannot certify infeasibility, and on the full Netlib set it verifies fewer instances than the dual simplex (`docs/PS26119_COVERAGE.md`). The default continuous engine is the simplex. It does two things by default now that it did not: it stops the moment its iterate is not a number and returns the best finite one (#205, found on the 20,000-row staircase model), and it finishes PDHG's answers from PDHG's own point (#229), declining within `polish_max_seconds` when the factor is not affordable. |
-| **Cutting planes by default** | Root Gomory mixed-integer and lifted knapsack cover cuts exist (#159, `--option enable_root_cuts=true`) and are off by default: on the 30-instance MIPLIB set at 60 s they take the node count to 0.887x over the instances that end the same way and cost one proof (`enlight8`, which runs out of the limit with them), because a cut row makes every node LP dearer (`bench/results/miplib-cuts-{off,on}.csv`; `docs/BENCHMARKS.md` section 2). No MIR cuts, and none below the root. Branch and bound itself has reliability branching (#69) and warm-started dual node LPs (#65). This is why MIPLIB proves few optima. |
+| **Cutting planes by default** | Root Gomory mixed-integer and lifted knapsack cover cuts exist (#159, `--option enable_root_cuts=true`) and are off by default: on the 30-instance MIPLIB set at 60 s on `main` at `f7ca7e9` they prove the same 9 instances, take the node count to 0.918x, and cost one published match (`noswot`, whose incumbent is -39 with them and -41 without), because a cut row makes every node LP dearer (`bench/results/miplib-cuts-{off,on}.csv`; `docs/BENCHMARKS.md` section 2). No MIR cuts, and none below the root (#221). Branch and bound itself has reliability branching (#69) and warm-started dual node LPs (#65). This is why MIPLIB proves few optima. |
 | **Non-convex QP** | Refused deliberately, with an LDL^T certificate. A local optimum reported as a global one is not something this solver will do. |
 | **MIQP bound quality** | MIQP is implemented, but its node bound comes from a first-order method and is only accurate to the tolerance it converged to, so pruning is deliberately kept on the conservative side and costs nodes. With root cuts off by default too, expect incumbents more often than proofs. |
 | **Parallelism** | Single-threaded by default. `--option threads=N` runs the column loops of an iteration under OpenMP, deterministically - results are bit-identical at 1 and 8 threads - and at Netlib scale it is measured to buy nothing, because an iteration is too short to amortize the fork (#57). It is a correctness-preserving switch, not a speed claim. |
 
 On speed against HiGHS: on the medium tier the objectives agree on all 50 instances, and
-the speed comparison is **indistinguishable rather than a result**. These models solve in
-single-digit milliseconds, 20 of the 50 timing envelopes overlap outright, and the median
-per-instance ratio came out 1.38x on one committed run and 2.11x on the next, three days
-apart on this machine (`bench/results/compare-highs-medium-adcee1b.csv` and
-`compare-highs-medium-53cbe16.csv`) - while our total solve time on the second run was
-0.68x the first's. A number that unstable is not a speed claim in either direction.
+the speed ratio is, for the first time, a number two runs an hour apart agree on. Three
+runs of the same binary on `main` at `f7ca7e9` (`bench/results/compare-highs-medium-
+f7ca7e9.csv`, `-second.csv`, `-third.csv`; 16:17, 16:41 and 17:21 on the same afternoon,
+alone on the machine, on mains) put the median per-instance ratio at **2.01x, 2.04x and
+2.12x** - SANKHYA slower - with total solve time 2.64x, 2.56x and 2.62x. The first and the
+third are an hour apart and agree within 6%, which is the bar #212 set for quoting it;
+the earlier committed pair, three days apart, had read 1.38x and 2.11x, and that spread is
+why the number was not quoted before. Read it as *about twice HiGHS's time on these
+instances, on this laptop*: 9 to 16 of the 50 timing envelopes still overlap outright,
+the instances solve in single-digit milliseconds, and the ratio belongs to this machine
+state as much as to the solver.
 The reproducible comparison is iteration count, where the gap narrowed by a third when
 devex pricing became the default (#66); HiGHS's devex still takes fewer.
 

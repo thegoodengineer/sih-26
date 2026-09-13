@@ -615,7 +615,8 @@ def pdhg_section(path: Path | None) -> str:
 def cuts_ab_paragraph() -> str:
     """The root-cut A/B (#159), computed from its two CSVs rather than typed.
 
-    Both runs were made at one commit on one machine, on the PR branch that added the cuts,
+    Both runs were made at one commit on one machine - first on the PR branch that added the
+    cuts, since f7ca7e9 on main -
     with `enable_root_cuts` off and on and nothing else different. The option's own
     description quotes these numbers; recomputing them here on every regeneration is what
     keeps the description, this document and the files from disagreeing.
@@ -678,7 +679,7 @@ def cuts_ab_paragraph() -> str:
     changed_text = "; ".join(outcome(n) for n in changed) if changed else "none"
     spread = (f" (per instance from {min(per):.3f}x to {max(per):.3f}x)" if per else "")
     return (f"**Root cuts, on versus off** (`bench/results/miplib-cuts-off.csv` and "
-            f"`miplib-cuts-on.csv`, both at `{commit}` on the PR branch, {len(common)} "
+            f"`miplib-cuts-on.csv`, both at `{commit}`, {len(common)} "
             f"instances, the same time limit): with cuts on, {matched_on} of {len(on)} reach "
             f"the published optimum and {proved_on} prove it, against {matched_off} and "
             f"{proved_off} with them off. Over the {len(same)} instances that end the same "
@@ -1153,6 +1154,69 @@ def structured_scale_section(random_path: Path | None, staircase_path: Path | No
     return chr(10).join(out)
 
 
+def refinery_scale_section(path: Path | None) -> str:
+    """The industrial-structured family (#211): a T-period refinery planning LP.
+
+    Everything is computed from the CSV. The rows column is the model's real row count -
+    for this family `--sizes` is the number of periods, and the generator reports what it
+    built - so the table is read as "a year at daily resolution is 32,485 rows".
+    """
+    if path is None:
+        return ("_No `scale-refinery-*.csv` in `bench/results/`. Produce one with_ "
+                "`python bench/runners/scale.py --structure refinery --sizes 12 365 8760`.\n")
+    rows = read_csv(path)
+    if not rows:
+        return "No refinery-family results recorded yet." + chr(10)
+    commit = rows[0].get("git_commit", "unknown")
+    machine = rows[0].get("machine", "unknown")
+    limit = rows[0].get("time_limit", "?")
+    with_a_point = ("optimal", "feasible", "iteration_limit", "time_limit")
+    out = [
+        f"Source CSV: `bench/results/{path.name}`  ",
+        f"Commit `{commit}` · machine `{machine}` · {limit}s per solve · refinery structure",
+        "",
+        "**A refinery planning model, rolled out over T periods** "
+        "(`bench/runners/generate_refinery_lp.py`, #211): crude purchases, distillation "
+        "throughput and crude tanks per crude; production by yields, sales and product "
+        "tanks per product; distillation and unit capacities, quality budgets and delivery "
+        "commitments per period; inventory balances coupling each period to the next. The "
+        "operating plan is chosen first and the prices derived from the KKT conditions, so "
+        "the optimum is exact by construction, as for the other two families. Rows are what "
+        "the generator built - T = 12 is a monthly year, 365 a daily one, 8,760 hourly.",
+        "",
+        "| periods | rows x cols | engine | status | objective | relative error | iterations "
+        "| seconds |",
+        "|---:|---:|---|---|---:|---:|---:|---:|",
+    ]
+    for r in sorted(rows, key=lambda r: (int(r.get("instance", "0").split("-")[-1].split(".")[0]
+                                             if r.get("instance") else 0), r["engine"])):
+        status = r.get("status", "")
+        answered = status in with_a_point
+        objective = as_float(r, "our_objective")
+        error = as_float(r, "relative_error")
+        seconds = as_float(r, "wall_seconds")
+        periods = r.get("instance", "").split("-")[-1].split(".")[0]
+        polish = r.get("polish_iterations") or ""
+        iterations = r.get("iterations") or "-"
+        if polish not in ("", "0"):
+            iterations = f"{iterations} (of which {polish} polish)"
+        out.append(
+            f"| {periods} | {int(r['rows']):,} x {int(r['columns']):,} | `{r['engine']}` "
+            f"| {status.replace('_', ' ')} "
+            f"| {'-' if objective is None or not answered else f'{objective:.10g}'} "
+            f"| {'-' if error is None or not answered else f'{error:.1e}'} "
+            f"| {iterations} "
+            f"| {'-' if seconds is None else f'{seconds:.1f}'} |")
+    out.append("")
+    reached = [r for r in rows if r.get("reached_optimum") == "1"]
+    largest = max((int(r["rows"]) for r in reached), default=0)
+    out.append(f"**{len(reached)} of {len(rows)}** solves reached the analytic optimum to a "
+               f"relative 1e-06 on this model"
+               + (f"; the largest solved is {largest:,} rows." if largest else "."))
+    out.append("")
+    return chr(10).join(out)
+
+
 def milp_section(path: Path | None) -> str:
     """MIPLIB, where TWO questions have to be answered separately.
 
@@ -1332,6 +1396,7 @@ def main() -> int:
     scale_csv = newest("scale-[0-9a-f]*.csv")
     per_iteration_csv = newest("scale-iterations-*.csv")
     staircase_csv = newest("scale-staircase-*.csv")
+    refinery_csv = newest("scale-refinery-*.csv")
 
     # Legacy untagged CSVs predate the tier tag; fall back so an old results directory still
     # generates something rather than failing.
@@ -1418,6 +1483,9 @@ most have a few hundred, so none of them speaks to the size PS26119 asks about.
 #### 1f.2 The same sizes on a second shape
 
 {structured_scale_section(scale_csv, staircase_csv)}
+#### 1f.3 A refinery planning model, by the year
+
+{refinery_scale_section(refinery_csv)}
 ---
 
 ## 2. MIPLIB — the mixed-integer side

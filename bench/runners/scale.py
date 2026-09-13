@@ -43,6 +43,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 RESULTS_DIR = REPO_ROOT / "bench" / "results"
 GENERATOR = REPO_ROOT / "bench" / "runners" / "generate_large_lp.py"
+REFINERY_GENERATOR = REPO_ROOT / "bench" / "runners" / "generate_refinery_lp.py"
 
 DEFAULT_SIZES = [1_000, 5_000, 20_000, 100_000]
 DEFAULT_ENGINES = ["dual-simplex", "pdhg", "ipm"]
@@ -95,21 +96,37 @@ def default_binary() -> Path:
 
 
 def generate(size: int, nnz_per_col: int, seed: int, directory: Path,
-             structure: str = "random") -> tuple[Path, float]:
-    """Write the instance and return its path and the optimum that is true by construction."""
+             structure: str = "random") -> tuple[Path, float, int, int, int]:
+    """Write the instance and return its path, the optimum that is true by construction, and
+    its rows, columns and nonzeros.
+
+    For the random and staircase families `size` is the row and column count. For the
+    refinery family (#211) `size` is the number of PERIODS - 12, 365, 8,760 - because that is
+    the number a planner means, and the generator prints the dimensions it produced, which
+    the row records so the table says what was solved.
+    """
     path = directory / f"scale-{structure}-{size}.mps"
-    result = subprocess.run(
-        [sys.executable, str(GENERATOR), "--rows", str(size), "--cols", str(size),
-         "--nnz-per-col", str(nnz_per_col), "--seed", str(seed), "--out", str(path),
-         "--structure", structure],
-        capture_output=True, text=True, check=True)
+    if structure == "refinery":
+        command = [sys.executable, str(REFINERY_GENERATOR), "--periods", str(size),
+                   "--seed", str(seed), "--out", str(path)]
+    else:
+        command = [sys.executable, str(GENERATOR), "--rows", str(size), "--cols", str(size),
+                   "--nnz-per-col", str(nnz_per_col), "--seed", str(seed), "--out", str(path),
+                   "--structure", structure]
+    result = subprocess.run(command, capture_output=True, text=True, check=True)
     optimum = None
+    rows, cols, nonzeros = size, size, size * nnz_per_col
     for line in result.stdout.splitlines():
         if "analytic optimum:" in line:
             optimum = float(line.split("analytic optimum:")[1].strip())
+        if line.strip().startswith("rows:") and "columns:" in line:
+            fields = line.replace(":", " ").split()
+            rows = int(fields[fields.index("rows") + 1])
+            cols = int(fields[fields.index("columns") + 1])
+            nonzeros = int(fields[fields.index("nonzeros") + 1])
     if optimum is None:
         raise SystemExit(f"the generator printed no analytic optimum for size {size}")
-    return path, optimum
+    return path, optimum, rows, cols, nonzeros
 
 
 # A solve is stopped from outside at this multiple of its own limit. The solver checks the
@@ -205,7 +222,8 @@ def main() -> int:
                         help="square instances of this many rows and columns")
     parser.add_argument("--engines", nargs="+", default=DEFAULT_ENGINES)
     parser.add_argument("--nnz-per-col", type=int, default=5)
-    parser.add_argument("--structure", choices=("random", "staircase"), default="random",
+    parser.add_argument("--structure", choices=("random", "staircase", "refinery"),
+                        default="random",
                         help="which sparsity pattern the generator uses (#198). random is an "
                              "expander graph and the worst case for a direct method; "
                              "staircase is the shape of a multi-period planning model. The "
@@ -255,10 +273,9 @@ def main() -> int:
         directory = args.keep or Path(tmp)
         directory.mkdir(parents=True, exist_ok=True)
         for size in args.sizes:
-            instance, optimum = generate(size, args.nnz_per_col, args.seed, directory,
-                                         args.structure)
+            instance, optimum, n_rows, n_cols, nonzeros = generate(
+                size, args.nnz_per_col, args.seed, directory, args.structure)
             digest = sha256(instance)
-            nonzeros = size * args.nnz_per_col
             for engine in args.engines:
                 result = solve(binary, instance, engine, args.time_limit,
                                args.solver_option, args.iteration_limit)
@@ -274,8 +291,8 @@ def main() -> int:
                 row = {
                     "instance": instance.name,
                     "instance_sha256": digest,
-                    "rows": size,
-                    "columns": size,
+                    "rows": n_rows,
+                    "columns": n_cols,
                     "nonzeros": nonzeros,
                     "analytic_optimum": repr(optimum),
                     "engine": engine,
