@@ -371,7 +371,8 @@ bool Simplex::refactorize() {
   // singular under partial pivoting is genuinely singular.
   static constexpr double kThresholdLadder[] = {tol::kMarkowitzThreshold, 0.1, 0.5, 1.0};
   for (std::size_t attempt = 0; attempt < std::size(kThresholdLadder); ++attempt) {
-    if (lu_.factorize(basis_columns_, m_, tol::kPivotTolerance, kThresholdLadder[attempt])) {
+    if (lu_.factorize(basis_columns_, m_, tol::kPivotTolerance, kThresholdLadder[attempt],
+                      deadline_)) {
       // PER FACTORIZATION, NOT A LATCH. This used to latch true for the rest of the solve,
       // which disabled the basis update permanently and made every later iteration
       // refactorize from scratch: measured on modszk1, 109,827 refactorizations in 80
@@ -413,6 +414,12 @@ bool Simplex::refactorize() {
                       pivot);
       return true;
     }
+    // Told to stop, not unable to: the ladder and the repair below would only run the same
+    // clock out further on the same basis.
+    if (lu_.stopped_early()) {
+      factors_abandoned_ = true;
+      return false;
+    }
   }
 
   // The ladder ran out at full partial pivoting, so this basis is rank deficient rather than
@@ -435,7 +442,7 @@ bool Simplex::refactorize() {
         target.size = 1;
       }
     }
-    if (lu_.factorize(basis_columns_, m_, tol::kPivotTolerance, 1.0)) {
+    if (lu_.factorize(basis_columns_, m_, tol::kPivotTolerance, 1.0, deadline_)) {
       basis_needed_stricter_threshold_ = true;
       // THE BASIS CHANGED, SO THE BASIC VALUES DESCRIBE A BASIS THAT NO LONGER EXISTS.
       //
@@ -449,8 +456,31 @@ bool Simplex::refactorize() {
       compute_basic_values();
       return true;
     }
+    if (lu_.stopped_early()) factors_abandoned_ = true;
   }
   return false;
+}
+
+void Simplex::arm_deadline(const Timer& timer) {
+  factors_abandoned_ = false;
+  if (time_limit_ > 0.0 && std::isfinite(time_limit_)) {
+    deadline_ = [&timer, this] { return timer.elapsed_seconds() > time_limit_; };
+  } else {
+    deadline_ = {};
+  }
+}
+
+Solution Simplex::factorization_failed(Count iterations, const Timer& timer) {
+  if (factors_abandoned_) {
+    return finish(SolveStatus::kTimeLimit,
+                  fmt::format("time limit {:g}s reached inside the basis factorization, which "
+                              "was abandoned",
+                              time_limit_),
+                  iterations, timer.elapsed_seconds());
+  }
+  return finish(SolveStatus::kNumericalError,
+                fmt::format("basis became singular at iteration {}", iterations), iterations,
+                timer.elapsed_seconds());
 }
 
 void Simplex::perturb_bounds() {
@@ -617,6 +647,7 @@ void Simplex::refine_final_basis() {
 }
 
 void Simplex::compute_basic_values() {
+  if (factors_abandoned_) return;  // no factors to solve with (#208); x_ is as it was
   // [A | -I][x ; s] = 0, so B x_B = -N x_N.
   std::vector<double> rhs(static_cast<std::size_t>(m_), 0.0);
   for (Index k = 0; k < total_; ++k) {
@@ -659,6 +690,7 @@ double Simplex::max_infeasibility() const {
 }
 
 void Simplex::compute_reduced_costs(bool phase_one) {
+  if (factors_abandoned_) return;  // no factors to solve with (#208); d_ is as it was
   if (phase_one) {
     // Gradient of sum of bound violations with respect to each basic variable. Nonbasic
     // variables sit exactly on a bound and contribute nothing, so their phase-1 cost is 0.
@@ -1290,6 +1322,7 @@ std::optional<Solution> Simplex::prepare(const WarmStart* warm, const Timer& tim
   if (!warm_started_) set_initial_basis();
 
   if (!refactorize()) {
+    if (factors_abandoned_) return factorization_failed(0, timer);
     if (!warm_started_) {
       return finish(SolveStatus::kNumericalError, "the initial slack basis is singular", 0,
                     timer.elapsed_seconds());
@@ -1302,6 +1335,7 @@ std::optional<Solution> Simplex::prepare(const WarmStart* warm, const Timer& tim
     warm_started_ = false;
     set_initial_basis();
     if (!refactorize()) {
+      if (factors_abandoned_) return factorization_failed(0, timer);
       return finish(SolveStatus::kNumericalError, "the initial slack basis is singular", 0,
                     timer.elapsed_seconds());
     }
@@ -1312,6 +1346,8 @@ std::optional<Solution> Simplex::prepare(const WarmStart* warm, const Timer& tim
 
 Solution Simplex::run(const WarmStart* warm) {
   Timer timer;
+  time_limit_ = options_.get_double("time_limit");
+  arm_deadline(timer);
   if (std::optional<Solution> early = prepare(warm, timer)) return *early;
 
   logger_.info("Primal simplex: {} rows, {} columns, {} nonzeros{}", m_, n_,
@@ -1420,11 +1456,7 @@ Solution Simplex::primal_loop(Timer& timer, Count* iterations_io) {
       // it is about to report. It cannot loop: a refactorization empties the eta file, and
       // only a pivot refills it.
       if (m_ > 0 && lu_.eta_count() > 0) {
-        if (!refactorize()) {
-          return finish(SolveStatus::kNumericalError,
-                        fmt::format("basis became singular at iteration {}", iterations),
-                        iterations, timer.elapsed_seconds());
-        }
+        if (!refactorize()) return factorization_failed(iterations, timer);
         ++refactorizations_;
         compute_basic_values();
         logger_.verbose(
@@ -1463,11 +1495,7 @@ Solution Simplex::primal_loop(Timer& timer, Count* iterations_io) {
       const double residual = ftran_residual(entering);
       if (residual > kUpdateAccuracyTolerance) {
         ++accuracy_refactorizations_;
-        if (!refactorize()) {
-          return finish(SolveStatus::kNumericalError,
-                        fmt::format("basis became singular at iteration {}", iterations),
-                        iterations, timer.elapsed_seconds());
-        }
+        if (!refactorize()) return factorization_failed(iterations, timer);
         ++refactorizations_;
         ftran_entering_column(entering);
       }
@@ -1490,11 +1518,7 @@ Solution Simplex::primal_loop(Timer& timer, Count* iterations_io) {
     // is made. A claim that does not survive was the eta file talking, and the iteration
     // simply continues with the corrected alpha.
     if (ratio.unbounded && lu_.eta_count() > 0) {
-      if (!refactorize()) {
-        return finish(SolveStatus::kNumericalError,
-                      fmt::format("basis became singular at iteration {}", iterations),
-                      iterations, timer.elapsed_seconds());
-      }
+      if (!refactorize()) return factorization_failed(iterations, timer);
       ++refactorizations_;
       ftran_entering_column(entering);
       ratio = ratio_test(entering, direction, phase_one);
@@ -1670,11 +1694,7 @@ Solution Simplex::primal_loop(Timer& timer, Count* iterations_io) {
           eta_work_since_refactor_ >
           refactor_work_ratio_ * std::max(1.0, static_cast<double>(lu_.factor_nonzeros()));
       if (!updated || past_break_even || lu_.should_refactorize()) {
-        if (!refactorize()) {
-          return finish(SolveStatus::kNumericalError,
-                        fmt::format("basis became singular at iteration {}", iterations),
-                        iterations, timer.elapsed_seconds());
-        }
+        if (!refactorize()) return factorization_failed(iterations, timer);
         ++refactorizations_;
       }
       compute_basic_values();

@@ -41,6 +41,7 @@
 // invisible.
 #pragma once
 
+#include <functional>
 #include <vector>
 
 #include "sankhya/sparse.hpp"
@@ -66,8 +67,20 @@ class SparseLu {
   /// `markowitz_threshold` is tau above; 0.01 is the long-standing default and lives in
   /// tolerances.hpp. Passing 1.0 degenerates to partial pivoting (maximum stability, worst
   /// fill), passing 0.0 to pure Markowitz (best fill, no stability guarantee at all).
+  /// A deadline the factorization consults before every pivot step, the same shape as
+  /// SparseLdl's (#197). When it fires the factorization returns false with the factors
+  /// unusable and stopped_early() true, which is how a caller tells a time limit from a
+  /// singular basis. Never asked, it changes nothing: the same matrix gives the same
+  /// factors with and without one (#208).
+  using ShouldStop = std::function<bool()>;
+
   [[nodiscard]] bool factorize(const std::vector<LuColumn>& columns, Index m,
-                               double pivot_tolerance, double markowitz_threshold);
+                               double pivot_tolerance, double markowitz_threshold,
+                               const ShouldStop& should_stop = {});
+
+  /// True when the last factorize() returned false because the deadline fired, not because
+  /// the basis is singular. The factors are unusable either way.
+  [[nodiscard]] bool stopped_early() const noexcept { return stopped_early_; }
 
   /// When factorize() returns false, the columns of the ORIGINAL `columns` array (identified
   /// by position, 0..m-1) that no pivot ever reached - the genuine rank defect, not merely
@@ -165,9 +178,11 @@ class SparseLu {
   /// the class proper so that a factorized SparseLu carries only what the solves need.
   struct Workspace;
 
-  [[nodiscard]] bool eliminate(Workspace& w, double pivot_tolerance, double threshold);
+  [[nodiscard]] bool eliminate(Workspace& w, double pivot_tolerance, double threshold,
+                               const ShouldStop& should_stop);
 
   Index m_ = 0;
+  bool stopped_early_ = false;  ///< the last failure was a deadline, not a singular basis
 
   // ---- the factors --------------------------------------------------------------------
   // Indexed by elimination step k, not by row or column. pivot_row_[k] and pivot_col_[k]

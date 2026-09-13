@@ -688,5 +688,88 @@ TEST(SparseLu, HyperSparseSolveAgreesWithTheReferenceGather) {
   EXPECT_LT(worst, 1e-10);
 }
 
+// ---- The deadline inside the factorization (#208) ------------------------------------------
+//
+// #197 made the interior point's factorization interruptible; the simplex kept checking the
+// clock once per iteration, and on Mittelmann's bdry2 one iteration was a 376,500-row
+// factorization that ran for minutes - 648 s against a 300 s limit. The two things a caller
+// needs are pinned here: a deadline that fires is reported as a deadline and not as a
+// singular basis, and a deadline that never fires changes nothing about the arithmetic.
+
+TestMatrix random_nonsingular(std::mt19937_64& rng, Index m) {
+  // Diagonally dominant, so it is nonsingular by construction whatever the draw.
+  std::uniform_real_distribution<double> value(-1.0, 1.0);
+  std::uniform_real_distribution<double> unit(0.0, 1.0);
+  TestMatrix matrix(m);
+  for (Index j = 0; j < m; ++j) {
+    for (Index i = 0; i < m; ++i) {
+      if (i == j) {
+        matrix.set(i, j, static_cast<double>(m) + 1.0);
+      } else if (unit(rng) < 0.3) {
+        matrix.set(i, j, value(rng));
+      }
+    }
+  }
+  return matrix;
+}
+
+TEST(SparseLu, ADeadlineStopsTheFactorizationAndSaysSoWasWhy) {
+  std::mt19937_64 rng(208);
+  const TestMatrix matrix = random_nonsingular(rng, 30);
+
+  SparseLu lu;
+  EXPECT_FALSE(lu.factorize(matrix.columns(), 30, tol::kPivotTolerance, kThreshold,
+                            [] { return true; }));
+  EXPECT_TRUE(lu.stopped_early()) << "a deadline is not a singular basis";
+
+  // The same object, asked again without a deadline, factorizes: an abandoned attempt
+  // leaves nothing behind that a later call has to know about.
+  EXPECT_TRUE(lu.factorize(matrix.columns(), 30, tol::kPivotTolerance, kThreshold));
+  EXPECT_FALSE(lu.stopped_early());
+
+  // And a genuinely singular matrix is reported as one, deadline or not.
+  TestMatrix singular(3);
+  singular.set(0, 0, 1.0);
+  singular.set(0, 1, 2.0);
+  singular.set(0, 2, 3.0);
+  singular.set(1, 0, 2.0);
+  singular.set(1, 1, 4.0);
+  singular.set(1, 2, 6.0);
+  singular.set(2, 0, 1.0);
+  singular.set(2, 1, 1.0);
+  singular.set(2, 2, 1.0);
+  SparseLu other;
+  EXPECT_FALSE(other.factorize(singular.columns(), 3, tol::kPivotTolerance, kThreshold,
+                               [] { return false; }));
+  EXPECT_FALSE(other.stopped_early()) << "a singular basis is not a deadline";
+}
+
+TEST(SparseLu, ADeadlineNeverAskedIsADeadlineThatChangesNothing) {
+  // Wall-clock must never decide arithmetic (the rule #172 was closed for): a factorization
+  // that COMPLETES produces the same factors, and therefore bit-identical solves, whether or
+  // not a deadline was supplied.
+  std::mt19937_64 rng(2080);
+  const TestMatrix matrix = random_nonsingular(rng, 40);
+  std::vector<double> rhs(40);
+  std::uniform_real_distribution<double> value(-5.0, 5.0);
+  for (double& v : rhs) v = value(rng);
+
+  SparseLu plain;
+  ASSERT_TRUE(plain.factorize(matrix.columns(), 40, tol::kPivotTolerance, kThreshold));
+  SparseLu with_deadline;
+  ASSERT_TRUE(with_deadline.factorize(matrix.columns(), 40, tol::kPivotTolerance, kThreshold,
+                                      [] { return false; }));
+  EXPECT_EQ(plain.factor_nonzeros(), with_deadline.factor_nonzeros());
+
+  std::vector<double> x_plain = rhs;
+  std::vector<double> x_deadline = rhs;
+  plain.solve(x_plain.data());
+  with_deadline.solve(x_deadline.data());
+  for (Index i = 0; i < 40; ++i) {
+    EXPECT_EQ(x_plain[static_cast<std::size_t>(i)], x_deadline[static_cast<std::size_t>(i)])
+        << "component " << i << " differs with a deadline that never fired";
+  }
+}
+
 }  // namespace
 }  // namespace sankhya

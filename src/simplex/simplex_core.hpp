@@ -208,6 +208,17 @@ class Simplex {
   /// spent, so a dual-then-primal solve reports one total.
   Solution primal_loop(Timer& timer, Count* iterations);
 
+  // ---- the deadline inside the factorization (#208) ------------------------------------
+  /// Point deadline_ at `timer`, so every refactorization from here on can be abandoned
+  /// when the time limit passes. `timer` must outlive the solve it clocks; run() and
+  /// run_dual() own theirs for exactly that long.
+  void arm_deadline(const Timer& timer);
+  /// What a failed refactorization means: a time limit, when the deadline fired inside the
+  /// factorization and the factors were abandoned (the point in hand is reported, its
+  /// reduced costs as last computed, because the factors that would refresh them do not
+  /// exist), or a singular basis otherwise.
+  [[nodiscard]] Solution factorization_failed(Count iterations, const Timer& timer);
+
   // ---- dual simplex (dual_simplex.cpp) ---------------------------------------------------
   /// The dual iteration loop. Empty when the basis must be handed to primal_loop(): the
   /// artificial bounds have already been removed and the basis is in place.
@@ -504,6 +515,11 @@ class Simplex {
   double primal_tolerance_ = tol::kPrimalFeasibility;
   double dual_tolerance_ = tol::kDualFeasibility;
   double time_limit_ = std::numeric_limits<double>::infinity();
+  /// Handed to every basis factorization (#208). Empty when there is no time limit.
+  SparseLu::ShouldStop deadline_;
+  /// Set when a refactorization was abandoned on the deadline: the LU is not usable, and
+  /// compute_basic_values() / compute_reduced_costs() leave their vectors as they were.
+  bool factors_abandoned_ = false;
   std::int64_t iteration_limit_ = -1;
   bool warm_started_ = false;
   std::string algorithm_name_ = "simplex-primal";  ///< what finish() reports

@@ -146,8 +146,9 @@ struct SparseLu::Workspace {
 // =========================================================================================
 
 bool SparseLu::factorize(const std::vector<LuColumn>& columns, Index m, double pivot_tolerance,
-                         double markowitz_threshold) {
+                         double markowitz_threshold, const ShouldStop& should_stop) {
   m_ = m;
+  stopped_early_ = false;
   pivot_row_.clear();
   pivot_col_.clear();
   pivot_value_.clear();
@@ -191,7 +192,7 @@ bool SparseLu::factorize(const std::vector<LuColumn>& columns, Index m, double p
     }
   }
 
-  if (!eliminate(w, pivot_tolerance, markowitz_threshold)) return false;
+  if (!eliminate(w, pivot_tolerance, markowitz_threshold, should_stop)) return false;
 
   // U was recorded against column indices, because at the moment a pivot row is retired the
   // step at which each of its columns will itself be eliminated is not yet known. Translate
@@ -282,7 +283,8 @@ bool SparseLu::should_refactorize() const noexcept {
   return eta_count() >= kMaxEtaCount;
 }
 
-bool SparseLu::eliminate(Workspace& w, double pivot_tolerance, double threshold) {
+bool SparseLu::eliminate(Workspace& w, double pivot_tolerance, double threshold,
+                         const ShouldStop& should_stop) {
   const Index m = w.m;
   pivot_row_.reserve(static_cast<std::size_t>(m));
   pivot_col_.reserve(static_cast<std::size_t>(m));
@@ -319,6 +321,16 @@ bool SparseLu::eliminate(Workspace& w, double pivot_tolerance, double threshold)
   };
 
   for (Index step = 0; step < m; ++step) {
+    // ASKED BEFORE EVERY PIVOT, as the LDL^T asks before every elimination step (#197): on
+    // Mittelmann's bdry2 one factorization of a 376,500-row basis ran for minutes, and the
+    // simplex could only look at the clock once it returned - 648 s against a 300 s limit
+    // (#208). A coarser cadence was measured wrong for the LDL^T (48 s past a 10 s limit
+    // in one batch of 64 steps) and is not tried here. The check decides only whether an
+    // unfinished factorization keeps running; it never touches the arithmetic.
+    if (should_stop && should_stop()) {
+      stopped_early_ = true;
+      return false;
+    }
     // ---- choose a pivot ------------------------------------------------------------------
     Index best_row = -1;
     Index best_col = -1;

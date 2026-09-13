@@ -430,11 +430,12 @@ std::optional<Solution> Simplex::dual_loop(Timer& timer, Count* iterations_io) {
     return std::nullopt;
   };
   const auto singular = [&]() {
+    // Or abandoned on the deadline (#208): factorization_failed() tells the two apart. The
+    // two removals below do not need the factors; the reduced costs they would refresh stay
+    // as last computed, which is what an abandoned factorization leaves.
     remove_cost_perturbation();
     remove_artificial_bounds();
-    return finish(SolveStatus::kNumericalError,
-                  fmt::format("basis became singular at iteration {}", iterations), iterations,
-                  timer.elapsed_seconds());
+    return factorization_failed(iterations, timer);
   };
   // Refactorize and recompute everything the loop reads. Used wherever a claim reached
   // through the eta file must be re-examined on fresh factors before it is acted on.
@@ -708,6 +709,8 @@ void Simplex::remove_cost_perturbation() {
 
 Solution Simplex::run_dual(const WarmStart* warm) {
   Timer timer;
+  time_limit_ = options_.get_double("time_limit");
+  arm_deadline(timer);
   algorithm_name_ = "simplex-dual";
   if (std::optional<Solution> early = prepare(warm, timer)) return *early;
 
