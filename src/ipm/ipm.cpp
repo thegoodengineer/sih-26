@@ -72,6 +72,22 @@ constexpr double kIpmComplementarity = 1e-8;
 constexpr double kIpmGap = 1e-8;
 /// Primal regularization rho added to every Theta^-1 (Altman & Gondzio): holds free
 /// variables and keeps Theta finite as a slack goes to zero.
+/// THE BARRIER'S LAST WORD (#209). Near the solution theta = 1 / (z/s) spans the gap between
+/// the variables at bounds (z/s -> infinity) and the basic ones (z/s -> 0), and past some
+/// point the normal equations A theta A^T are singular to working precision whatever the
+/// regularization: on the 20,000-row staircase model the factorization went from 9
+/// regularized pivots to 5,090 in one step, at a relative gap of 1.0e-07, and the direction
+/// it produced was NaN (#205 kept the answer; this keeps the method from asking). A jump of
+/// this size in one factorization, while the iterate is already within one decade of every
+/// convergence tolerance, means the method has reached the resolution the barrier has left
+/// - Mehrotra-type codes treat it as termination, and so does this one: the iterate in hand
+/// is reported as converged, and the status guard in solve() measures it against the
+/// project's tolerances like every other optimal claim. Wright, *Primal-Dual Interior-Point
+/// Methods* (1997), chapter 11.
+constexpr double kBarrierExhaustedSlack = 10.0;  ///< within this factor of each tolerance
+constexpr Count kBarrierExhaustedPivots = 64;    ///< at least this many pivots regularized...
+constexpr double kBarrierExhaustedFraction = 0.01;  ///< ...or this fraction of the rows
+
 constexpr double kPrimalRegularization = 1e-8;
 /// Dual regularization delta on the diagonal of the normal equations, and the pivot floor
 /// the factorization enforces.
@@ -781,6 +797,37 @@ Solution InteriorPoint::run() {
       return finish(SolveStatus::kNumericalError,
                     "the normal equations could not be factorized", iterations,
                     timer.elapsed_seconds());
+    }
+
+    // THE BARRIER'S LAST WORD (#209, and the constants above). On the 20,000-row staircase
+    // model the factorization at a relative gap of 4e-8 had to regularize 2,199 of 18,227
+    // pivots where the one before regularized 6, and the direction it produced was NaN. A
+    // spike like that at an iterate within a decade of every tolerance is the matrix saying
+    // the barrier is gone: the columns pinned to their bounds have left the normal equations
+    // and what remains is rank deficient at working precision. Capping z/s was tried and
+    // changes nothing - the capped factorization regularizes 2,194 and its step is NaN too -
+    // because the deficiency is in the rank of the active columns, not in their weights. So
+    // the iterate measured at the top of this loop is the answer, reported as converged and
+    // measured by the status guard in solve() against the project's tolerances like every
+    // other optimal claim; on that model the guard finds its dual side 12% over the 1e-7
+    // tolerance and reports it feasible at a relative error of 1.4e-8, which is what it is.
+    {
+      const Count regularized_now = ldl_.regularized_pivots();
+      const auto spike_threshold = std::max<Count>(
+          kBarrierExhaustedPivots,
+          static_cast<Count>(kBarrierExhaustedFraction * static_cast<double>(m_)));
+      const bool nearly_converged =
+          primal_infeasibility_ <= kBarrierExhaustedSlack * kIpmTolerance &&
+          dual_infeasibility_ <= kBarrierExhaustedSlack * kIpmTolerance &&
+          relative_gap <= kBarrierExhaustedSlack * kIpmGap &&
+          max_product_ <= kBarrierExhaustedSlack * kIpmComplementarity;
+      if (regularized_now >= spike_threshold && nearly_converged) {
+        return finish(SolveStatus::kOptimal,
+                      fmt::format("converged at a relative gap of {:.1e} when the barrier "
+                                  "vanished: {} of {} pivots regularized in one factorization",
+                                  relative_gap, regularized_now, m_),
+                      iterations, timer.elapsed_seconds());
+      }
     }
 
     // PREDICTOR: the affine-scaling direction (mu-terms = -s z).
