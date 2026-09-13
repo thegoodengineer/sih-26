@@ -1070,6 +1070,20 @@ double Simplex::minimization_objective() const {
 
 Solution Simplex::finish(SolveStatus status, const std::string& message, Count iterations,
                          double seconds) {
+  // The dual loop's time, by phase (#210), for whoever asks at verbose level.
+  double phase_total = 0.0;
+  for (const double t : dual_phase_seconds_) phase_total += t;
+  if (phase_total > 0.0) {
+    std::string breakdown;
+    for (std::size_t k = 0; k < dual_phase_seconds_.size(); ++k) {
+      if (!breakdown.empty()) breakdown += ", ";
+      breakdown +=
+          fmt::format("{} {:.2f}s ({:.0f}%)", kDualPhaseNames[k], dual_phase_seconds_[k],
+                      100.0 * dual_phase_seconds_[k] / phase_total);
+    }
+    logger_.verbose("dual simplex time by phase over {} iterations and {} refactorizations: {}",
+                    iterations, refactorizations_, breakdown);
+  }
   // EVERY EXIT, not just the optimal one. The perturbation relaxes bounds, so any point
   // reported while it is active belongs to a problem whose feasible region is slightly
   // larger than the caller's. The optimal path already restores them before returning - it

@@ -13,6 +13,7 @@
 #include "primal_simplex.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -422,6 +423,18 @@ class Simplex {
   /// Effort counters for the solve log. rejected_updates_ is the interesting one: a basis
   /// that keeps producing unsafe pivots is badly conditioned, and that is worth seeing.
   Count refactorizations_ = 0;
+  /// WHERE A DUAL ITERATION'S TIME GOES (#210). Seconds accumulated per phase over the dual
+  /// loop and reported at verbose level by finish(): the scale tables showed the iteration
+  /// rate falling 38x for a 5x larger model, and the only honest way to say why is to
+  /// measure each phase. Index order: pricing, pivot row (BTRAN + row), ratio test, FTRAN,
+  /// basis update, refactorization, basic values (FTRAN), reduced costs (BTRAN + pass).
+  std::array<double, 8> dual_phase_seconds_{};
+  /// Right-hand side for the one FTRAN that carries a set of bound flips into the basic
+  /// values (#210); kept as a member so a flip iteration allocates nothing.
+  std::vector<double> flip_rhs_;
+  static constexpr const char* kDualPhaseNames[8] = {
+      "pricing", "pivot row",   "ratio test",   "ftran",
+      "update",  "refactorize", "basic values", "reduced costs"};
   double worst_basis_pivot_ = 0.0;  ///< smallest pivot over every factorization
   Count iterations_seen_ = 0;       ///< for the per-refactorization log line only
   Count rejected_updates_ = 0;

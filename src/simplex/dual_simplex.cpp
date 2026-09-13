@@ -453,7 +453,13 @@ std::optional<Solution> Simplex::dual_loop(Timer& timer, Count* iterations_io) {
                         timer.elapsed_seconds());
     }
 
+    Timer phase_clock;
+    const auto charge = [&](std::size_t phase) {
+      dual_phase_seconds_[phase] += phase_clock.elapsed_seconds();
+      phase_clock.reset();
+    };
     const Index leaving_slot = choose_leaving_row();
+    charge(0);
     if (leaving_slot < 0) {
       // PRIMAL FEASIBLE ON FRESH FACTORS OR NOT AT ALL - the same rule the primal loop
       // applies to its optimality claim, for the same reason: the basic values were
@@ -485,7 +491,9 @@ std::optional<Solution> Simplex::dual_loop(Timer& timer, Count* iterations_io) {
                           x_basic_[static_cast<std::size_t>(leaving_slot)] > upper_[l];
 
     compute_pivot_row(leaving_slot);
+    charge(1);
     const DualRatioResult ratio = dual_ratio_test(leaving_slot, to_upper);
+    charge(2);
 
     if (ratio.dual_unbounded) {
       // INFEASIBILITY IS CLAIMED ON FRESH FACTORS, and only about the caller's model. With
@@ -530,8 +538,14 @@ std::optional<Solution> Simplex::dual_loop(Timer& timer, Count* iterations_io) {
                     iterations, timer.elapsed_seconds());
     }
 
+    // UPDATE, DO NOT RECOMPUTE (#210). B x_B = -N x_N, so a set of flips moves the basic
+    // values by B^-1 of the flipped columns times their changes: one FTRAN of a vector with
+    // a few columns' worth of entries, against a pass over every nonzero of the model plus
+    // the same FTRAN. The recomputation returns at the next refactorization, below.
+    if (!ratio.flips.empty()) flip_rhs_.assign(static_cast<std::size_t>(m_), 0.0);
     for (const Index k : ratio.flips) {
       const auto u = static_cast<std::size_t>(k);
+      const double before = nonbasic_value_[u];
       if (status_[u] == BasisStatus::kAtLower) {
         status_[u] = BasisStatus::kAtUpper;
         nonbasic_value_[u] = upper_[u];
@@ -539,9 +553,19 @@ std::optional<Solution> Simplex::dual_loop(Timer& timer, Count* iterations_io) {
         status_[u] = BasisStatus::kAtLower;
         nonbasic_value_[u] = lower_[u];
       }
+      const double change = nonbasic_value_[u] - before;
+      for_each_entry(k, [&](Index row, double coefficient) {
+        flip_rhs_[static_cast<std::size_t>(row)] -= coefficient * change;
+      });
       ++bound_flips_;
     }
-    if (!ratio.flips.empty()) compute_basic_values();
+    if (!ratio.flips.empty()) {
+      lu_.solve(flip_rhs_.data());
+      for (Index i = 0; i < m_; ++i) {
+        x_basic_[static_cast<std::size_t>(i)] += flip_rhs_[static_cast<std::size_t>(i)];
+      }
+      charge(6);
+    }
 
     const double x_now = x_basic_[static_cast<std::size_t>(leaving_slot)];
     const double target = to_upper ? upper_[l] : lower_[l];
@@ -588,6 +612,7 @@ std::optional<Solution> Simplex::dual_loop(Timer& timer, Count* iterations_io) {
     const Index entering = ratio.entering;
     const auto e = static_cast<std::size_t>(entering);
     ftran_entering_column(entering);
+    charge(3);
     const double pivot = alpha_[static_cast<std::size_t>(leaving_slot)];
     const double pivot_by_row = pivot_row_[e];
 
@@ -613,8 +638,8 @@ std::optional<Solution> Simplex::dual_loop(Timer& timer, Count* iterations_io) {
                       pivot, pivot_by_row));
     }
 
-    // Dual step length, for the stall counter only: the duals themselves are recomputed
-    // from the new basis below rather than updated.
+    // Dual step length: the duals move by this much along rho below, and the stall counter
+    // reads it here.
     const double dual_step = reduced_cost_[e] / pivot_by_row;
     if (std::fabs(dual_step) <= tol::kRatioTestFeasibility) {
       ++degenerate_run;
@@ -656,10 +681,40 @@ std::optional<Solution> Simplex::dual_loop(Timer& timer, Count* iterations_io) {
     status_[e] = BasisStatus::kBasic;
     nonbasic_value_[e] += delta;
 
+    // UPDATE, DO NOT RECOMPUTE (#210). Every iteration used to end with a fresh FTRAN and a
+    // pass over the nonzeros for x_B, and a fresh BTRAN and a pass over every column for d
+    // - two of the four solves and three of the three matrix passes an iteration paid for.
+    // Measured on the 20,000-row random model of the scale tables, with the
+    // factorization already fixed, 34% of the time. The
+    // textbook update needs the vectors already computed: x_B moves by -delta along alpha
+    // (the entering column through the basis) with the entering variable taking the
+    // vacated slot, and the duals move by the dual step along rho (the leaving row through
+    // the basis), which moves every reduced cost by that step times its pivot-row entry.
+    // The leaving column's pivot-row entry is 1 - it is the unit column of its own slot -
+    // and pivot_row_ holds 0 there because it was basic, so its reduced cost is set by hand;
+    // the entering column's is zero by construction. The recomputation still happens
+    // wherever the factors are fresh: at every refactorization, and at every refresh().
+    for (Index i = 0; i < m_; ++i) {
+      x_basic_[static_cast<std::size_t>(i)] -= delta * alpha_[static_cast<std::size_t>(i)];
+    }
+    x_basic_[static_cast<std::size_t>(leaving_slot)] = nonbasic_value_[e];
+    charge(6);
+    for (Index k = 0; k < total_; ++k) {
+      reduced_cost_[static_cast<std::size_t>(k)] -=
+          dual_step * pivot_row_[static_cast<std::size_t>(k)];
+    }
+    reduced_cost_[e] = 0.0;
+    reduced_cost_[l] = -dual_step;
+    for (Index i = 0; i < m_; ++i) {
+      y_[static_cast<std::size_t>(i)] += dual_step * rho_[static_cast<std::size_t>(i)];
+    }
+    charge(7);
+
     // The same update-or-refactorize policy as the primal loop, for the same reasons; see
     // the primal loop for the evidence behind each trigger.
     const bool trust_update = !basis_needed_stricter_threshold_;
     const bool updated = trust_update && lu_.update(leaving_slot, alpha_.data());
+    charge(4);
     if (trust_update && !updated) ++rejected_updates_;
     eta_work_since_refactor_ += static_cast<double>(lu_.eta_nonzeros());
     const bool past_break_even =
@@ -668,9 +723,13 @@ std::optional<Solution> Simplex::dual_loop(Timer& timer, Count* iterations_io) {
     if (!updated || past_break_even || lu_.should_refactorize()) {
       if (!refactorize()) return singular();
       ++refactorizations_;
+      charge(5);
+      // Fresh factors: whatever the updates above accumulated is replaced by the truth.
+      compute_basic_values();
+      charge(6);
+      compute_reduced_costs(false);
+      charge(7);
     }
-    compute_basic_values();
-    compute_reduced_costs(false);
 
     if (std::optional<Solution> stopped = count_iteration()) return stopped;
   }
