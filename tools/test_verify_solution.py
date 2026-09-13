@@ -590,6 +590,30 @@ def test_a_limit_that_understates_its_infeasibility_is_rejected() -> None:
           "; ".join(f"{n}: {d}" for ok, n, d in report.lines))
 
 
+def test_interrupted_is_treated_exactly_like_a_time_limit() -> None:
+    """#223. A SolveControl stop is not a weaker verdict than a clock stopping the same
+    solve - it claims exactly the same thing a time limit does (an iterate or incumbent in
+    hand, feasibility not asserted) and is checked exactly the same way. Same model, same
+    numbers, same expected outcome as test_a_limit_is_checked_on_what_it_claims_not_on_
+    feasibility above; only the status word differs."""
+    model = _open_below()  # min -x subject to x >= 1
+    solution = _verdict("interrupted",
+                        header={"objective": "0.0", "primal_infeasibility": "1.0"},
+                        columns={"x0": 0.0}, rows={"r0": 0.0})
+    report = _run(model, solution)
+    check(report.failures == 0, "an interrupted solve that states its own infeasibility verifies",
+          "; ".join(f"{n}: {d}" for ok, n, d in report.lines if not ok))
+
+    # The control: understating it must still be rejected, exactly as for time_limit.
+    understated = _verdict("interrupted",
+                           header={"objective": "0.0", "primal_infeasibility": "1e-9"},
+                           columns={"x0": 0.0}, rows={"r0": 0.0})
+    understated_report = _run(model, understated)
+    check(understated_report.failures >= 1,
+          "an interrupted solve that understates its infeasibility is rejected",
+          "; ".join(f"{n}: {d}" for ok, n, d in understated_report.lines))
+
+
 def test_an_optimal_answer_is_still_held_to_feasibility() -> None:
     """The other control. The relaxation above must not have loosened the case that matters:
     `optimal` asserts a feasible point, and an infeasible one is still a failure."""
@@ -629,6 +653,7 @@ def main() -> int:
     test_a_verdict_that_claims_no_point_is_not_checked_as_if_it_did()
     test_a_limit_is_checked_on_what_it_claims_not_on_feasibility()
     test_a_limit_that_understates_its_infeasibility_is_rejected()
+    test_interrupted_is_treated_exactly_like_a_time_limit()
     test_an_optimal_answer_is_still_held_to_feasibility()
     print()
     if FAILURES == 0:

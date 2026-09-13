@@ -699,8 +699,12 @@ def verify_ray(model: Model, solution: Solution, report: Report, primal_tol: flo
 # no code with the solver, so they are kept in step by saying so in both places rather than by
 # a header. `unbounded` is here because since #191 it carries the feasible point its ray starts
 # from - a ray from outside the feasible region proves nothing.
+#
+# `interrupted` (#223) is treated exactly like `time_limit`: both are a clock or a caller
+# stopping an otherwise-unfinished solve with an iterate or incumbent in hand, and neither
+# asserts anything a limit does not already assert - see STATUSES_ASSERTING_FEASIBILITY below.
 STATUSES_WITH_A_POINT = ("optimal", "feasible", "unbounded", "iteration_limit", "time_limit",
-                         "node_limit")
+                         "node_limit", "interrupted")
 
 # Of those, the ones that assert the point is FEASIBLE. The distinction is the whole of what
 # a limit means: `optimal` and `feasible` say "here is a point inside the model", and a limit

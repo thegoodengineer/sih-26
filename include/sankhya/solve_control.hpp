@@ -130,15 +130,24 @@ class SolveControl {
     {
       const std::lock_guard<std::mutex> lock(mutex_);
       if (!callback_) return false;
+      // A MILP interleaves BOTH phases on one SolveControl: every node's own LP relaxation
+      // reports kLp, and the tree itself reports kTree once per node. The two counters are
+      // kept independent - comparing "iterations last seen" against "nodes now" would judge
+      // the tree gate on a quantity that has nothing to do with it (and vice versa), which
+      // is exactly the bug a single shared counter had here until it was caught by
+      // StopsAMilpAfterTheFifthCallbackCallWithAFeasiblePoint counting only 4 of what should
+      // have been 5 tree-phase calls: a node count that happened to equal a leftover LP
+      // iteration count read as "no progress since last call".
       const bool tree = progress.phase == SolvePhase::kTree;
+      Count& last_metric = tree ? last_nodes_ : last_iterations_;
       const Count metric = tree ? progress.nodes : progress.iterations;
       const Count every = tree ? every_nodes_ : every_iterations_;
-      const bool count_due = !fired_once_ || (metric - last_metric_) >= every;
+      const bool count_due = !fired_once_ || (metric - last_metric) >= every;
       const bool time_due =
           !fired_once_ || (progress.elapsed_seconds - last_call_seconds_) >= min_interval_seconds_;
       if (!count_due || !time_due) return false;
       fired_once_ = true;
-      last_metric_ = metric;
+      last_metric = metric;
       last_call_seconds_ = progress.elapsed_seconds;
       callback_copy = callback_;
     }
@@ -157,7 +166,8 @@ class SolveControl {
     interrupted_.store(false, std::memory_order_relaxed);
     const std::lock_guard<std::mutex> lock(mutex_);
     fired_once_ = false;
-    last_metric_ = 0;
+    last_iterations_ = 0;
+    last_nodes_ = 0;
     last_call_seconds_ = 0.0;
   }
 
@@ -173,7 +183,8 @@ class SolveControl {
   Count every_nodes_ = 1;
   double min_interval_seconds_ = 0.1;
   bool fired_once_ = false;
-  Count last_metric_ = 0;
+  Count last_iterations_ = 0;  ///< throttle state for SolvePhase::kPresolve / kLp
+  Count last_nodes_ = 0;       ///< throttle state for SolvePhase::kTree, tracked separately
   double last_call_seconds_ = 0.0;
 };
 
