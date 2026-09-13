@@ -80,6 +80,78 @@ constexpr double kUpdatePivotThreshold = 1e-7;
 /// fires first; this is the backstop for a model whose solves are so cheap that it does not.
 constexpr Index kMaxEtaCount = 128;
 
+/// Rows or columns of the active submatrix grouped by count, as intrusive doubly linked
+/// lists: one node per index, one list per count, every index in at most one list. Moving
+/// an index between counts is O(1) and leaves nothing behind, so the pivot search walks
+/// live candidates only.
+///
+/// WHY LISTS AND NOT VECTORS (#210). The buckets used to be vectors that were appended to
+/// on every count change and never purged; a pivoted column's entry stayed in the bucket it
+/// was found in. The search starts from the lowest counts at every step, and those are
+/// exactly the buckets that fill with retired singletons - so the walk past stale entries
+/// grew with the number of steps taken, and one factorization of an 18,000-row basis spent
+/// 120 ms choosing pivots against 25 ms of arithmetic.
+class CountLists {
+ public:
+  explicit CountLists(Index m)
+      : head_(static_cast<std::size_t>(m) + 1, -1),
+        tail_(static_cast<std::size_t>(m) + 1, -1),
+        next_(static_cast<std::size_t>(m), -1),
+        prev_(static_cast<std::size_t>(m), -1),
+        count_(static_cast<std::size_t>(m), -1) {}
+
+  [[nodiscard]] Index first(Index count) const {
+    return head_[static_cast<std::size_t>(count)];
+  }
+  [[nodiscard]] Index after(Index index) const {
+    return next_[static_cast<std::size_t>(index)];
+  }
+
+  /// Take `index` out of whichever list it is in, if any.
+  void remove(Index index) {
+    const auto u = static_cast<std::size_t>(index);
+    const Index count = count_[u];
+    if (count < 0) return;
+    const auto c = static_cast<std::size_t>(count);
+    const Index p = prev_[u];
+    const Index n = next_[u];
+    if (p >= 0) {
+      next_[static_cast<std::size_t>(p)] = n;
+    } else {
+      head_[c] = n;
+    }
+    if (n >= 0) {
+      prev_[static_cast<std::size_t>(n)] = p;
+    } else {
+      tail_[c] = p;
+    }
+    count_[u] = -1;
+    prev_[u] = -1;
+    next_[u] = -1;
+  }
+
+  /// File `index` under `count`, at the back of that list. An index already filed under
+  /// this count keeps its place.
+  void place(Index index, Index count) {
+    const auto u = static_cast<std::size_t>(index);
+    if (count_[u] == count) return;
+    remove(index);
+    const auto c = static_cast<std::size_t>(count);
+    count_[u] = count;
+    prev_[u] = tail_[c];
+    next_[u] = -1;
+    if (tail_[c] >= 0) {
+      next_[static_cast<std::size_t>(tail_[c])] = index;
+    } else {
+      head_[c] = index;
+    }
+    tail_[c] = index;
+  }
+
+ private:
+  std::vector<Index> head_, tail_, next_, prev_, count_;
+};
+
 }  // namespace
 
 // =========================================================================================
@@ -124,6 +196,11 @@ struct SparseLu::Workspace {
   /// list is built through a marker array rather than iterated in place.
   std::vector<Index> pivot_row_columns;
   std::vector<char> column_seen;
+
+  /// The active rows of the column being updated, recorded as it is scattered, so that the
+  /// gather afterwards visits those rows and the multiplier rows and nothing else. It used
+  /// to sweep all m rows for every column of every step - the other half of #210.
+  std::vector<Index> old_rows;
 
   void init(Index dimension) {
     m = dimension;
@@ -291,31 +368,27 @@ bool SparseLu::eliminate(Workspace& w, double pivot_tolerance, double threshold)
   smallest_pivot_ = std::numeric_limits<double>::max();
   largest_pivot_ = 0.0;
 
-  // Active rows and columns bucketed by count, so the pivot search can start from the
-  // sparsest without scanning everything. Entries go stale as counts change and are
-  // filtered on the way out rather than being relocated eagerly.
-  std::vector<std::vector<Index>> col_bucket(static_cast<std::size_t>(m) + 1);
-  std::vector<std::vector<Index>> row_bucket(static_cast<std::size_t>(m) + 1);
-  for (Index j = 0; j < m; ++j) {
-    col_bucket[static_cast<std::size_t>(w.col_count[static_cast<std::size_t>(j)])].push_back(j);
-  }
-  for (Index i = 0; i < m; ++i) {
-    row_bucket[static_cast<std::size_t>(w.row_count[static_cast<std::size_t>(i)])].push_back(i);
-  }
+  // Active rows and columns filed by count, so the pivot search can start from the
+  // sparsest without scanning everything. A retired row or column is taken out of its list
+  // and a changed count moves it, so the lists hold live candidates only (see CountLists).
+  CountLists col_lists(m);
+  CountLists row_lists(m);
+  for (Index j = 0; j < m; ++j) col_lists.place(j, w.col_count[static_cast<std::size_t>(j)]);
+  for (Index i = 0; i < m; ++i) row_lists.place(i, w.row_count[static_cast<std::size_t>(i)]);
 
   // A count that drifts out of [0, m] is a bookkeeping bug, and the symptom is not a wrong
   // answer but an out-of-bounds write: a negative count casts to a huge size_t and indexes
-  // past the end of the bucket array. Assert on the way in rather than segfaulting later at
+  // past the end of the list heads. Assert on the way in rather than segfaulting later at
   // a place that says nothing about the cause.
   const auto rebucket_column = [&](Index j) {
     const Index count = w.col_count[static_cast<std::size_t>(j)];
     assert(count >= 0 && count <= m && "column count out of range");
-    col_bucket[static_cast<std::size_t>(count)].push_back(j);
+    col_lists.place(j, count);
   };
   const auto rebucket_row = [&](Index i) {
     const Index count = w.row_count[static_cast<std::size_t>(i)];
     assert(count >= 0 && count <= m && "row count out of range");
-    row_bucket[static_cast<std::size_t>(count)].push_back(i);
+    row_lists.place(i, count);
   };
 
   for (Index step = 0; step < m; ++step) {
@@ -331,14 +404,11 @@ bool SparseLu::eliminate(Workspace& w, double pivot_tolerance, double threshold)
     // singleton/triangular pre-pass falling out of the general rule rather than being
     // special-cased alongside it.
     for (Index count = 1; count <= m && examined < kCandidateBudget && best_cost > 0; ++count) {
-      const auto uc = static_cast<std::size_t>(count);
-
       // -- candidate columns of this count
-      std::vector<Index>& cols = col_bucket[uc];
-      for (std::size_t p = 0; p < cols.size() && examined < kCandidateBudget; ++p) {
-        const Index j = cols[p];
+      for (Index j = col_lists.first(count); j >= 0 && examined < kCandidateBudget;
+           j = col_lists.after(j)) {
         const auto uj = static_cast<std::size_t>(j);
-        if (w.col_active[uj] == 0 || w.col_count[uj] != count) continue;  // stale
+        assert(w.col_active[uj] != 0 && w.col_count[uj] == count && "a stale list entry");
         ++examined;
 
         double column_max = 0.0;
@@ -368,11 +438,10 @@ bool SparseLu::eliminate(Workspace& w, double pivot_tolerance, double threshold)
 
       // -- candidate rows of this count, which the column sweep can miss entirely when a
       //    row singleton sits in a dense column
-      std::vector<Index>& rows = row_bucket[uc];
-      for (std::size_t p = 0; p < rows.size() && examined < kCandidateBudget; ++p) {
-        const Index i = rows[p];
+      for (Index i = row_lists.first(count); i >= 0 && examined < kCandidateBudget;
+           i = row_lists.after(i)) {
         const auto ui = static_cast<std::size_t>(i);
-        if (w.row_active[ui] == 0 || w.row_count[ui] != count) continue;  // stale
+        assert(w.row_active[ui] != 0 && w.row_count[ui] == count && "a stale list entry");
         ++examined;
 
         for (const Index j : w.row_cols[ui]) {
@@ -524,6 +593,8 @@ bool SparseLu::eliminate(Workspace& w, double pivot_tolerance, double threshold)
     // below nor any later step has to keep excluding them by hand.
     w.row_active[pivot_r] = 0;
     w.col_active[pivot_c] = 0;
+    row_lists.remove(best_row);
+    col_lists.remove(best_col);
 
     // Every row that had an entry in the pivot column loses it.
     for (const Index i : w.mult_rows) --w.row_count[static_cast<std::size_t>(i)];
@@ -561,6 +632,7 @@ bool SparseLu::eliminate(Workspace& w, double pivot_tolerance, double threshold)
       // entry is what becomes the U coefficient.
       double pivot_row_value = 0.0;
       bool pivot_row_present = false;
+      w.old_rows.clear();
       for (std::size_t t = 0; t < rows.size(); ++t) {
         const Index i = rows[t];
         const auto ui = static_cast<std::size_t>(i);
@@ -572,13 +644,14 @@ bool SparseLu::eliminate(Workspace& w, double pivot_tolerance, double threshold)
         if (w.row_active[ui] == 0) continue;
         w.acc[ui] = values[t];
         w.acc_present[ui] = 1;
+        w.old_rows.push_back(i);
       }
 
       if (!pivot_row_present || pivot_row_value == 0.0) {
         // A stale row-pattern entry: nothing to eliminate against in this column. Undo the
         // scatter and move on.
-        for (std::size_t t = 0; t < rows.size(); ++t) {
-          const auto ui = static_cast<std::size_t>(rows[t]);
+        for (const Index i : w.old_rows) {
+          const auto ui = static_cast<std::size_t>(i);
           w.acc[ui] = 0.0;
           w.acc_present[ui] = 0;
         }
@@ -624,8 +697,9 @@ bool SparseLu::eliminate(Workspace& w, double pivot_tolerance, double threshold)
         rows.push_back(w.mult_rows[t]);
         values.push_back(value);
       }
-      // Whatever remains in the accumulator belongs to rows the pivot column did not touch.
-      for (Index i = 0; i < m; ++i) {
+      // Whatever remains in the accumulator belongs to rows the pivot column did not touch:
+      // rows of the column's old pattern, which the scatter recorded.
+      for (const Index i : w.old_rows) {
         const auto ui = static_cast<std::size_t>(i);
         if (w.acc_present[ui] == 0) continue;
         rows.push_back(i);
