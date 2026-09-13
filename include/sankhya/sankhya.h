@@ -62,7 +62,11 @@ typedef enum sankhya_solve_status {
   SANKHYA_TIME_LIMIT = 6,
   SANKHYA_NODE_LIMIT = 7,
   SANKHYA_NUMERICAL_ERROR = 8,
-  SANKHYA_MODEL_ERROR = 9
+  SANKHYA_MODEL_ERROR = 9,
+  /** Stopped by a progress callback or sankhya_model_interrupt() (#223). Like the limit
+   *  statuses, this normally carries a point - the incumbent, or the last feasible
+   *  iterate. */
+  SANKHYA_INTERRUPTED = 11
 } sankhya_solve_status;
 
 /* ---- Opaque handles -------------------------------------------------------------------- */
@@ -165,6 +169,51 @@ int sankhya_model_num_nonzeros(const sankhya_model* model);
  * reason in last_error.
  */
 sankhya_status sankhya_model_validate(const sankhya_model* model);
+
+/* ---- Progress and interruption (#223) ---------------------------------------------------- */
+
+/** Mirrors sankhya::Progress. Fields that do not apply to the reporting engine are 0. */
+typedef struct sankhya_progress {
+  int phase; /**< 0 presolve, 1 lp, 2 tree - mirrors sankhya::SolvePhase */
+  long iterations;
+  long nodes;
+  long open_nodes;
+  double objective;
+  double best_bound;
+  double gap;
+  double elapsed_seconds;
+} sankhya_progress;
+
+/**
+ * Called on the solving thread at a bounded rate (by iteration/node count, and never more
+ * often than roughly every 100 ms) so a slow or chatty callback cannot materially slow the
+ * solve down. Return non-zero to ask the solve to stop.
+ */
+typedef int (*sankhya_progress_callback)(const sankhya_progress* progress, void* user_data);
+
+/**
+ * Install a progress callback for every solve of `model` from here on, replacing any
+ * previous one. A NULL `callback` removes it. `user_data` is opaque, passed back unchanged,
+ * and its lifetime is the caller's responsibility - it must outlive every solve of this
+ * model that could still invoke the callback.
+ *
+ * A solve whose callback returns non-zero stops with SANKHYA_INTERRUPTED and whatever point
+ * (incumbent, or last feasible iterate) the engine was carrying at the time.
+ */
+sankhya_status sankhya_set_callback(sankhya_model* model, sankhya_progress_callback callback,
+                                    void* user_data);
+
+/**
+ * Ask a solve of `model` running on ANOTHER THREAD to stop.
+ *
+ * Thread-safe, and NOT throttled the way the callback is: the solving thread sees it the
+ * next time it checks, which is at least as often as it already checks its time limit.
+ * Safe to call whether or not a solve is currently running; each call to sankhya_solve
+ * starts with a clear flag, so calling this before or after a solve (rather than during
+ * one) has no effect on the next one - it is a request to stop THIS solve, not a standing
+ * instruction.
+ */
+sankhya_status sankhya_model_interrupt(sankhya_model* model);
 
 /* ---- Options ---------------------------------------------------------------------------- */
 

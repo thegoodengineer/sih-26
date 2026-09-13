@@ -7,6 +7,7 @@
 #include "sankhya/logging.hpp"
 #include "sankhya/model.hpp"
 #include "sankhya/options.hpp"
+#include "sankhya/solve_control.hpp"
 
 #include "la/scaling.hpp"
 
@@ -16,8 +17,11 @@ namespace sankhya {
 /// the node solver branch-and-cut will call in Phase 5, and it is the caller's job to know
 /// whether it wanted a relaxation. solve() in src/core refuses a MILP for exactly this
 /// reason rather than quietly returning a fractional point labelled optimal.
+///
+/// `control` (#223): optional progress/interrupt channel, honoured everywhere the time
+/// limit already is - the iteration loop and the basis factorization deadline alike.
 [[nodiscard]] Solution solve_primal_simplex(const Model& model, const Options& options,
-                                            Logger& logger);
+                                            Logger& logger, SolveControl* control = nullptr);
 
 /// The equilibration a repeated caller can compute once and hand back on every solve.
 ///
@@ -48,7 +52,8 @@ struct NodeScaling {
 /// An invalid cache is not an error: it falls through to the unscaled path, which is what
 /// `scaling=false` wants anyway.
 [[nodiscard]] Solution solve_primal_simplex(const Model& model, const Options& options,
-                                            Logger& logger, const NodeScaling& cache);
+                                            Logger& logger, const NodeScaling& cache,
+                                            SolveControl* control = nullptr);
 
 /// A basis to start from, as the statuses a previous Solution reported.
 ///
@@ -75,9 +80,11 @@ struct WarmStart {
 /// is still active at the dual's optimum the true bounds are restored and the PRIMAL loop
 /// finishes from that basis, so the answer is always about the caller's model.
 [[nodiscard]] Solution solve_dual_simplex(const Model& model, const Options& options,
-                                          Logger& logger, const WarmStart* warm = nullptr);
+                                          Logger& logger, const WarmStart* warm = nullptr,
+                                          SolveControl* control = nullptr);
 [[nodiscard]] Solution solve_dual_simplex(const Model& model, const Options& options,
                                           Logger& logger, const NodeScaling& cache,
-                                          const WarmStart* warm = nullptr);
+                                          const WarmStart* warm = nullptr,
+                                          SolveControl* control = nullptr);
 
 }  // namespace sankhya

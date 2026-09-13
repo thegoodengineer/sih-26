@@ -602,6 +602,18 @@ std::optional<Solution> Simplex::dual_loop(Timer& timer, Count* iterations_io) {
         return stop_at_limit(SolveStatus::kTimeLimit,
                              fmt::format("time limit {:g}s reached", time_limit_));
       }
+      if (control_ != nullptr) {
+        Progress progress;
+        progress.phase = SolvePhase::kLp;
+        progress.iterations = iterations;
+        progress.objective = minimization_objective();
+        progress.best_bound = progress.objective;
+        progress.elapsed_seconds = elapsed;
+        if (control_->poll(progress)) {
+          return stop_at_limit(SolveStatus::kInterrupted,
+                               fmt::format("interrupted after {} iterations", iterations));
+        }
+      }
       return std::nullopt;
     };
     if (residual <= primal_tolerance_ || ratio.entering < 0) {

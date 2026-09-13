@@ -5,15 +5,9 @@
 #include "sankhya/logging.hpp"
 #include "sankhya/model.hpp"
 #include "sankhya/options.hpp"
+#include "sankhya/solve_control.hpp"
 
 namespace sankhya::ipm {
-
-/// Solve a continuous LP with Mehrotra's predictor-corrector method on the normal
-/// equations. Integrality is ignored, as by every LP engine; the dispatcher routes MILPs
-/// elsewhere. NO BASIS IS PRODUCED: the returned Solution carries primal values, row duals
-/// and reduced costs to the tolerance the method converged to, and empty statuses. The
-/// simplex remains the node engine for branch and bound for that reason.
-[[nodiscard]] Solution solve_ipm(const Model& model, const Options& options, Logger& logger);
 
 /// A starting point handed in from outside: a primal point, its row duals and its reduced
 /// costs, in the ORIGINAL model's units and sign convention (the ones a Solution carries).
@@ -27,11 +21,20 @@ struct WarmStart {
   std::vector<double> col_dual;
 };
 
-/// As above, started from `warm` when it is not null. With a warm start the option
+/// Solve a continuous LP with Mehrotra's predictor-corrector method on the normal
+/// equations. Integrality is ignored, as by every LP engine; the dispatcher routes MILPs
+/// elsewhere. NO BASIS IS PRODUCED: the returned Solution carries primal values, row duals
+/// and reduced costs to the tolerance the method converged to, and empty statuses. The
+/// simplex remains the node engine for branch and bound for that reason.
+///
+/// Started from `warm` when it is not null. With a warm start the option
 /// polish_max_factor_nonzeros is honoured: when the ordering says the factor would exceed
 /// it, the solve is declined with status kNotSolved and the reason in the message, before
 /// anything expensive is built.
+///
+/// `control` (#223): optional progress/interrupt channel, honoured at every iteration and
+/// inside the normal-equations factorization exactly where the time limit already is.
 [[nodiscard]] Solution solve_ipm(const Model& model, const Options& options, Logger& logger,
-                                 const WarmStart* warm);
+                                 const WarmStart* warm = nullptr, SolveControl* control = nullptr);
 
 }  // namespace sankhya::ipm

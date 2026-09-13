@@ -26,6 +26,7 @@
 #include "sankhya/io.hpp"
 #include "sankhya/model.hpp"
 #include "sankhya/options.hpp"
+#include "sankhya/solve_control.hpp"
 #include "sankhya/version.hpp"
 
 namespace {
@@ -56,6 +57,7 @@ sankhya_solve_status to_c_status(sankhya::SolveStatus status) {
     case sankhya::SolveStatus::kIterationLimit: return SANKHYA_ITERATION_LIMIT;
     case sankhya::SolveStatus::kTimeLimit: return SANKHYA_TIME_LIMIT;
     case sankhya::SolveStatus::kNodeLimit: return SANKHYA_NODE_LIMIT;
+    case sankhya::SolveStatus::kInterrupted: return SANKHYA_INTERRUPTED;
     case sankhya::SolveStatus::kNumericalError: return SANKHYA_NUMERICAL_ERROR;
     case sankhya::SolveStatus::kModelError: return SANKHYA_MODEL_ERROR;
   }
@@ -106,6 +108,14 @@ struct sankhya_model {
   // (row, col) -> value, pending until the matrix is materialised.
   std::map<std::pair<int, int>, double> entries;
   std::map<std::pair<int, int>, double> quadratic;
+
+  // #223. `mutable`: sankhya_solve takes a `const sankhya_model*` (it does not change the
+  // model's mathematics), but the whole point of this member is that another thread calls
+  // sankhya_model_interrupt() WHILE a solve is reading it - the callback/interrupt channel
+  // is accessory state with its own internal synchronisation, not part of the model this
+  // const-ness protects. See sankhya::SolveControl's own comment for the thread-safety
+  // contract that makes this sound.
+  mutable sankhya::SolveControl control;
 };
 
 struct sankhya_options {
@@ -288,6 +298,39 @@ sankhya_status sankhya_model_set_quadratic_coefficient(sankhya_model* model, int
   });
 }
 
+sankhya_status sankhya_set_callback(sankhya_model* model, sankhya_progress_callback callback,
+                                    void* user_data) {
+  if (model == nullptr) return fail(SANKHYA_ERROR_ARGUMENT, "model is null");
+  return guarded([&]() -> sankhya_status {
+    if (callback == nullptr) {
+      model->control.set_callback(nullptr);
+      return ok();
+    }
+    // Capture the C function pointer and its user_data by value; convert the C++ Progress
+    // to the C sankhya_progress struct at the boundary, exactly the shape the rest of this
+    // file uses for every other type crossing it.
+    model->control.set_callback([callback, user_data](const sankhya::Progress& progress) {
+      const sankhya_progress c_progress{
+          static_cast<int>(progress.phase),
+          static_cast<long>(progress.iterations),
+          static_cast<long>(progress.nodes),
+          static_cast<long>(progress.open_nodes),
+          progress.objective,
+          progress.best_bound,
+          progress.gap,
+          progress.elapsed_seconds};
+      return callback(&c_progress, user_data) != 0;
+    });
+    return ok();
+  });
+}
+
+sankhya_status sankhya_model_interrupt(sankhya_model* model) {
+  if (model == nullptr) return fail(SANKHYA_ERROR_ARGUMENT, "model is null");
+  model->control.interrupt();
+  return ok();
+}
+
 int sankhya_model_num_cols(const sankhya_model* model) {
   return model == nullptr ? 0 : static_cast<int>(model->model.col_cost.size());
 }
@@ -430,8 +473,13 @@ sankhya_status sankhya_solve(const sankhya_model* model, const sankhya_options* 
     sankhya::Options effective;
     if (options != nullptr) effective = options->options;
 
+    // Each solve starts with a clear interrupt flag and throttle history, so an
+    // interrupt() called before or after a solve never reaches into an unrelated later one
+    // (see sankhya_model_interrupt); the registered callback itself survives.
+    model->control.reset();
+
     auto* result = new sankhya_solution();
-    result->solution = sankhya::solve(built, effective);
+    result->solution = sankhya::solve(built, effective, &model->control);
     *solution = result;
     return ok();
   });

@@ -157,7 +157,8 @@ void hessian_multiply(const Model& model, const std::vector<double>& x,
 
 }  // namespace
 
-Solution solve_convex_qp(const Model& model, const Options& options, Logger& logger) {
+Solution solve_convex_qp(const Model& model, const Options& options, Logger& logger,
+                         SolveControl* control) {
   Timer timer;
   Solution solution;
   solution.allocate_for(model);
@@ -256,6 +257,19 @@ Solution solve_convex_qp(const Model& model, const Options& options, Logger& log
       status = SolveStatus::kTimeLimit;
       message = fmt::format("time limit {:.3g}s reached", time_limit);
       break;
+    }
+    if (control != nullptr) {
+      Progress progress;
+      progress.phase = SolvePhase::kLp;
+      progress.iterations = iterations;
+      progress.objective = model.evaluate_objective(x.data());
+      progress.best_bound = progress.objective;
+      progress.elapsed_seconds = timer.elapsed_seconds();
+      if (control->poll(progress)) {
+        status = SolveStatus::kInterrupted;
+        message = fmt::format("interrupted after {} iterations", iterations);
+        break;
+      }
     }
 
     // Primal residual: the worst row-bound violation.

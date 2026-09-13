@@ -5,6 +5,7 @@
 #include "sankhya/logging.hpp"
 #include "sankhya/model.hpp"
 #include "sankhya/options.hpp"
+#include "sankhya/solve_control.hpp"
 
 namespace sankhya::pdhg {
 
@@ -12,6 +13,10 @@ namespace sankhya::pdhg {
 ///
 /// Requires a model with no integrality and no quadratic objective; the solve() dispatcher
 /// checks that. Never throws: every failure comes back as a status.
-[[nodiscard]] Solution solve_pdhg(const Model& model, const Options& options, Logger& logger);
+///
+/// `control` (#223): optional progress/interrupt channel, polled at the same point the
+/// iteration loop already checks its time limit.
+[[nodiscard]] Solution solve_pdhg(const Model& model, const Options& options, Logger& logger,
+                                  SolveControl* control = nullptr);
 
 }  // namespace sankhya::pdhg

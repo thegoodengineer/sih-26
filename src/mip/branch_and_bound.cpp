@@ -92,8 +92,10 @@ double fractionality(double value) {
 
 class BranchAndBound {
  public:
-  BranchAndBound(const Model& model, const Options& options, Logger& logger)
-      : original_(model), working_(model), options_(options), logger_(logger) {
+  BranchAndBound(const Model& model, const Options& options, Logger& logger,
+                SolveControl* control = nullptr)
+      : original_(model), working_(model), options_(options), logger_(logger),
+        control_(control) {
     integrality_tolerance_ = options.get_double("integrality_tolerance");
     relative_gap_target_ = options.get_double("mip_relative_gap");
     absolute_gap_target_ = options.get_double("mip_absolute_gap");
@@ -206,7 +208,7 @@ class BranchAndBound {
   [[nodiscard]] Solution solve_node() { return solve_node_with(node_options_); }
 
   [[nodiscard]] Solution solve_node_with(const Options& options) {
-    if (quadratic_) return qp::solve_convex_qp(working_, options, logger_);
+    if (quadratic_) return qp::solve_convex_qp(working_, options, logger_, control_);
     // WARM-STARTED DUAL SIMPLEX BELOW THE ROOT (#65). The basis in current_warm_ was
     // optimal for a problem that differs from this one by a bound or two, so it is dual
     // feasible here, which is exactly the state the dual simplex starts from. Measured
@@ -216,10 +218,12 @@ class BranchAndBound {
     // numerical answer at a node cannot be fathomed honestly, and the search below stops
     // on it, so it is worth one more solve to avoid.
     if (node_engine_dual_ && !current_warm_.empty()) {
-      Solution warm = solve_dual_simplex(working_, options, logger_, scaling_, &current_warm_);
+      Solution warm =
+          solve_dual_simplex(working_, options, logger_, scaling_, &current_warm_, control_);
       if (warm.status == SolveStatus::kOptimal || warm.status == SolveStatus::kInfeasible ||
           warm.status == SolveStatus::kUnbounded ||
-          warm.status == SolveStatus::kIterationLimit) {
+          warm.status == SolveStatus::kIterationLimit ||
+          warm.status == SolveStatus::kInterrupted) {
         ++warm_node_solves_;
         warm_node_iterations_ += warm.iterations;
         return warm;
@@ -230,7 +234,7 @@ class BranchAndBound {
           to_string(warm.status));
       ++cold_fallbacks_;
     }
-    Solution cold = solve_primal_simplex(working_, options, logger_, scaling_);
+    Solution cold = solve_primal_simplex(working_, options, logger_, scaling_, control_);
     ++cold_node_solves_;
     cold_node_iterations_ += cold.iterations;
     return cold;
@@ -298,6 +302,7 @@ class BranchAndBound {
   Model working_;
   const Options& options_;
   Logger& logger_;
+  SolveControl* control_ = nullptr;  ///< #223, optional
   Options node_options_;
 
   double integrality_tolerance_ = tol::kIntegrality;
@@ -839,6 +844,8 @@ Solution BranchAndBound::run() {
   bool dive = false;
   bool limit_hit = false;
   bool gap_target_met = false;
+  bool interrupted_by_control = false;  ///< #223: distinguishes a SolveControl stop from a
+                                        ///< node/time limit, both of which set limit_hit
 
   while (!open_.empty()) {
     if (nodes_explored_ >= node_limit_) {
@@ -947,6 +954,19 @@ Solution BranchAndBound::run() {
           "the LP relaxation is unbounded, so the MILP is unbounded or "
           "infeasible";
       return solution;
+    }
+    // A node LP interrupted by the SAME SolveControl that governs the tree is not a broken
+    // node - it is the caller asking the whole search to stop, mid-node rather than between
+    // nodes. Handled like the node/time limit below: the search stops and the incumbent (if
+    // any) is reported, not treated as the numerical failure the generic branch below would
+    // call it.
+    if (relaxation.status == SolveStatus::kInterrupted) {
+      leave();
+      interrupted_by_control = true;
+      limit_hit = true;
+      solution.message =
+          fmt::format("interrupted during node {}'s LP relaxation", nodes_explored_);
+      break;
     }
     if (relaxation.status != SolveStatus::kOptimal) {
       // A node whose LP did not solve cannot be fathomed honestly: pruning it could discard
@@ -1136,14 +1156,34 @@ Solution BranchAndBound::run() {
       logger_.begin_node_table();
       logged_table = true;
     }
+    const double incumbent_report = have_incumbent_ ? reported(incumbent_internal_) : kInfinity;
+    const double node_table_gap =
+        have_incumbent_ ? std::fabs(incumbent_internal_ - best_open_bound) /
+                              std::max(1.0, std::fabs(incumbent_internal_))
+                        : kInfinity;
     if (nodes_explored_ % 20 == 1 || nodes_explored_ < 5) {
-      const double incumbent_report =
-          have_incumbent_ ? reported(incumbent_internal_) : kInfinity;
-      const double gap = have_incumbent_ ? std::fabs(incumbent_internal_ - best_open_bound) /
-                                               std::max(1.0, std::fabs(incumbent_internal_))
-                                         : kInfinity;
       logger_.node(nodes_explored_, static_cast<Count>(open_.size()), incumbent_report,
-                   reported(best_open_bound), gap, timer_.elapsed_seconds());
+                   reported(best_open_bound), node_table_gap, timer_.elapsed_seconds());
+    }
+
+    // Polled every node (#223) - SolveControl's own throttle decides whether the callback
+    // itself actually fires; interruption is checked unconditionally either way. The
+    // snapshot reuses exactly what the node table above just computed.
+    if (control_ != nullptr) {
+      Progress progress;
+      progress.phase = SolvePhase::kTree;
+      progress.nodes = nodes_explored_;
+      progress.open_nodes = static_cast<Count>(open_.size());
+      progress.objective = incumbent_report;
+      progress.best_bound = reported(best_open_bound);
+      progress.gap = node_table_gap;
+      progress.elapsed_seconds = timer_.elapsed_seconds();
+      if (control_->poll(progress)) {
+        interrupted_by_control = true;
+        limit_hit = true;
+        solution.message = fmt::format("interrupted after {} nodes", nodes_explored_);
+        break;
+      }
     }
   }
 
@@ -1154,7 +1194,9 @@ Solution BranchAndBound::run() {
   }
 
   if (!have_incumbent_) {
-    solution.status = limit_hit ? SolveStatus::kNodeLimit : SolveStatus::kInfeasible;
+    solution.status = interrupted_by_control ? SolveStatus::kInterrupted
+                      : limit_hit             ? SolveStatus::kNodeLimit
+                                              : SolveStatus::kInfeasible;
     if (!limit_hit) {
       solution.message = fmt::format(
           "the search closed with no integer feasible point after {} nodes", nodes_explored_);
@@ -1198,10 +1240,11 @@ Solution BranchAndBound::run() {
     solution.status = SolveStatus::kOptimal;
     solution.dual_bound = reported(final_bound);
   } else {
-    // A node or time limit stopped the proof short of the target. The incumbent is
-    // feasible, not proven, and dual_bound carries the best bound still open - claiming
-    // otherwise would assert a proof that was never established.
-    solution.status = SolveStatus::kFeasible;
+    // A node or time limit - or a SolveControl stop - halted the proof short of the target.
+    // The incumbent is feasible, not proven, and dual_bound carries the best bound still
+    // open - claiming otherwise would assert a proof that was never established.
+    solution.status =
+        interrupted_by_control ? SolveStatus::kInterrupted : SolveStatus::kFeasible;
     solution.dual_bound = reported(final_bound);
   }
   solution.recompute_quality(original_);
@@ -1226,7 +1269,8 @@ Solution BranchAndBound::run() {
 
 }  // namespace
 
-Solution solve_branch_and_bound(const Model& model, const Options& options, Logger& logger) {
+Solution solve_branch_and_bound(const Model& model, const Options& options, Logger& logger,
+                                SolveControl* control) {
   // ROOT CUTS, applied once before the search rather than per node.
   //
   // Integer rounding tightens a row IN PLACE, so unlike a generated cut it adds no row, grows
@@ -1241,7 +1285,7 @@ Solution solve_branch_and_bound(const Model& model, const Options& options, Logg
   Model tightened = model;
   const RowTightening effect = tighten_integral_rows(&tightened, logger);
 
-  BranchAndBound search(effect.rows_tightened > 0 ? tightened : model, options, logger);
+  BranchAndBound search(effect.rows_tightened > 0 ? tightened : model, options, logger, control);
   return search.run();
 }
 

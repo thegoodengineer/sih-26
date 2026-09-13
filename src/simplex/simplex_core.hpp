@@ -183,8 +183,9 @@ enum class Engine { kPrimal, kDual };
 
 class Simplex {
  public:
-  Simplex(const Model& model, const Options& options, Logger& logger)
-      : model_(model), options_(options), logger_(logger) {}
+  Simplex(const Model& model, const Options& options, Logger& logger,
+          SolveControl* control = nullptr)
+      : model_(model), options_(options), logger_(logger), control_(control) {}
 
   /// The primal simplex, from the slack basis or from `warm`.
   Solution run(const WarmStart* warm = nullptr);
@@ -528,7 +529,11 @@ class Simplex {
   double primal_tolerance_ = tol::kPrimalFeasibility;
   double dual_tolerance_ = tol::kDualFeasibility;
   double time_limit_ = std::numeric_limits<double>::infinity();
-  /// Handed to every basis factorization (#208). Empty when there is no time limit.
+  /// Optional progress/interrupt channel (#223). Null means "behave exactly as before":
+  /// only the time and iteration limits can stop this run.
+  SolveControl* control_ = nullptr;
+  /// Handed to every basis factorization (#208). Empty when there is no time limit OR no
+  /// control - i.e. when nothing outside the ordinary limits could ever ask it to stop.
   SparseLu::ShouldStop deadline_;
   /// Set when a refactorization was abandoned on the deadline: the LU is not usable, and
   /// compute_basic_values() / compute_reduced_costs() leave their vectors as they were.
@@ -563,7 +568,8 @@ class Simplex {
 /// primal_simplex.cpp, where the portfolio logic and its evidence live.
 [[nodiscard]] Solution solve_with_scaling(const Model& model, const Options& options,
                                           Logger& logger, const NodeScaling& cache,
-                                          Engine engine, const WarmStart* warm);
+                                          Engine engine, const WarmStart* warm,
+                                          SolveControl* control = nullptr);
 
 /// One row's candidate breakpoint, gathered in pass one of the Harris test and re-examined
 /// in pass two.

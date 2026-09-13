@@ -463,8 +463,15 @@ bool Simplex::refactorize() {
 
 void Simplex::arm_deadline(const Timer& timer) {
   factors_abandoned_ = false;
-  if (time_limit_ > 0.0 && std::isfinite(time_limit_)) {
-    deadline_ = [&timer, this] { return timer.elapsed_seconds() > time_limit_; };
+  const bool time_limited = time_limit_ > 0.0 && std::isfinite(time_limit_);
+  // #223: the same deadline the time limit hands to the factorization also carries an
+  // external interrupt in, exactly the generalisation #197's own comment on this class
+  // describes - "the deadline inside the factorization" was already the seam.
+  if (time_limited || control_ != nullptr) {
+    deadline_ = [&timer, this, time_limited] {
+      if (control_ != nullptr && control_->is_interrupted()) return true;
+      return time_limited && timer.elapsed_seconds() > time_limit_;
+    };
   } else {
     deadline_ = {};
   }
@@ -472,11 +479,15 @@ void Simplex::arm_deadline(const Timer& timer) {
 
 Solution Simplex::factorization_failed(Count iterations, const Timer& timer) {
   if (factors_abandoned_) {
-    return finish(SolveStatus::kTimeLimit,
-                  fmt::format("time limit {:g}s reached inside the basis factorization, which "
-                              "was abandoned",
-                              time_limit_),
-                  iterations, timer.elapsed_seconds());
+    const bool interrupted = control_ != nullptr && control_->is_interrupted();
+    const std::string message =
+        interrupted
+            ? std::string("interrupted inside the basis factorization, which was abandoned")
+            : fmt::format("time limit {:g}s reached inside the basis factorization, which "
+                          "was abandoned",
+                          time_limit_);
+    return finish(interrupted ? SolveStatus::kInterrupted : SolveStatus::kTimeLimit, message,
+                 iterations, timer.elapsed_seconds());
   }
   return finish(SolveStatus::kNumericalError,
                 fmt::format("basis became singular at iteration {}", iterations), iterations,
@@ -1728,6 +1739,20 @@ Solution Simplex::primal_loop(Timer& timer, Count* iterations_io) {
       return finish(SolveStatus::kTimeLimit,
                     fmt::format("time limit {:g}s reached", time_limit), iterations, elapsed);
     }
+    if (control_ != nullptr) {
+      Progress progress;
+      progress.phase = SolvePhase::kLp;
+      progress.iterations = iterations;
+      progress.objective = minimization_objective();
+      progress.best_bound = progress.objective;
+      progress.elapsed_seconds = elapsed;
+      if (control_->poll(progress)) {
+        compute_reduced_costs(false);
+        return finish(SolveStatus::kInterrupted,
+                      fmt::format("interrupted after {} iterations", iterations), iterations,
+                      elapsed);
+      }
+    }
   }
 }
 
@@ -1738,7 +1763,8 @@ Solution Simplex::primal_loop(Timer& timer, Count* iterations_io) {
 /// available improvement; PDLP section 4.1 uses ten and reports the tail as negligible.
 constexpr int kRuizIterations = 10;
 
-Solution solve_primal_simplex(const Model& model, const Options& options, Logger& logger) {
+Solution solve_primal_simplex(const Model& model, const Options& options, Logger& logger,
+                              SolveControl* control) {
   // WHY THE SIMPLEX IS SCALED. It was assumed for a long time that it need not be - a
   // simplex pivots on ratios, so a uniform rescaling of a row cancels. That reasoning is
   // correct about the ALGEBRA and wrong about the ARITHMETIC, and the Netlib medium tier
@@ -1749,7 +1775,8 @@ Solution solve_primal_simplex(const Model& model, const Options& options, Logger
   //
   // Markowitz threshold pivoting (issue #22) helped, but it only chooses among the pivots
   // available; scaling changes which pivots exist at all. See issue #49.
-  return solve_primal_simplex(model, options, logger, build_node_scaling(model, options));
+  return solve_primal_simplex(model, options, logger, build_node_scaling(model, options),
+                              control);
 }
 
 NodeScaling build_node_scaling(const Model& model, const Options& options) {
@@ -1764,29 +1791,33 @@ NodeScaling build_node_scaling(const Model& model, const Options& options) {
 }
 
 Solution solve_primal_simplex(const Model& model, const Options& options, Logger& logger,
-                              const NodeScaling& cache) {
+                              const NodeScaling& cache, SolveControl* control) {
   return detail::solve_with_scaling(model, options, logger, cache, detail::Engine::kPrimal,
-                                    nullptr);
+                                    nullptr, control);
 }
 
 Solution solve_dual_simplex(const Model& model, const Options& options, Logger& logger,
-                            const WarmStart* warm) {
-  return solve_dual_simplex(model, options, logger, build_node_scaling(model, options), warm);
+                            const WarmStart* warm, SolveControl* control) {
+  return solve_dual_simplex(model, options, logger, build_node_scaling(model, options), warm,
+                            control);
 }
 
 Solution solve_dual_simplex(const Model& model, const Options& options, Logger& logger,
-                            const NodeScaling& cache, const WarmStart* warm) {
-  return detail::solve_with_scaling(model, options, logger, cache, detail::Engine::kDual, warm);
+                            const NodeScaling& cache, const WarmStart* warm,
+                            SolveControl* control) {
+  return detail::solve_with_scaling(model, options, logger, cache, detail::Engine::kDual, warm,
+                                    control);
 }
 
 namespace detail {
 
 Solution solve_with_scaling(const Model& model, const Options& options, Logger& logger,
-                            const NodeScaling& cache, Engine engine, const WarmStart* warm) {
+                            const NodeScaling& cache, Engine engine, const WarmStart* warm,
+                            SolveControl* control) {
   // One place chooses the loop, so the scaled attempt and the unscaled retry below cannot
   // disagree about which method they are running.
   const auto run_engine = [&](const Model& problem, const Options& problem_options) {
-    Simplex simplex(problem, problem_options, logger);
+    Simplex simplex(problem, problem_options, logger, control);
     return engine == Engine::kDual ? simplex.run_dual(warm) : simplex.run(warm);
   };
   if (!cache.valid) return run_engine(model, options);
@@ -1808,7 +1839,7 @@ Solution solve_with_scaling(const Model& model, const Options& options, Logger& 
         cache.scaling.row.size(), cache.scaling.column.size(), model.num_rows(),
         model.num_cols());
     return solve_with_scaling(model, options, logger, build_node_scaling(model, options),
-                              engine, warm);
+                              engine, warm, control);
   }
 
   const Scaling& scaling = cache.scaling;

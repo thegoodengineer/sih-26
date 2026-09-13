@@ -264,7 +264,8 @@ Residuals evaluate(const Problem& problem, const std::vector<double>& x,
 
 }  // namespace
 
-Solution solve_pdhg(const Model& model, const Options& options, Logger& logger) {
+Solution solve_pdhg(const Model& model, const Options& options, Logger& logger,
+                    SolveControl* control) {
   Timer timer;
   Solution solution;
   solution.allocate_for(model);
@@ -378,6 +379,7 @@ Solution solve_pdhg(const Model& model, const Options& options, Logger& logger) 
   std::vector<double> best_y = y;
 
   bool converged = false;
+  bool interrupted = false;  ///< #223: a SolveControl stop, distinct from the time limit
   bool logged_table = false;
 
   while (true) {
@@ -560,6 +562,20 @@ Solution solve_pdhg(const Model& model, const Options& options, Logger& logger) 
     logger.iteration(iteration, sense * better.primal_objective + model.objective_offset,
                      better.primal, better.dual, timer.elapsed_seconds());
 
+    if (control != nullptr) {
+      Progress progress;
+      progress.phase = SolvePhase::kLp;
+      progress.iterations = iteration;
+      progress.objective = sense * better.primal_objective + model.objective_offset;
+      progress.best_bound = sense * better.dual_objective + model.objective_offset;
+      progress.gap = better.gap_as_verified;
+      progress.elapsed_seconds = timer.elapsed_seconds();
+      if (control->poll(progress)) {
+        interrupted = true;
+        break;
+      }
+    }
+
     // THE STOPPING TEST AND THE REPORTING TEST ARE THE SAME TEST BY DEFAULT, deliberately.
     // Below, at the report, `verifiable` is `converged &&
     // final_residuals.meets_project_standard()`: a point that satisfies the requested tolerance
@@ -697,13 +713,14 @@ Solution solve_pdhg(const Model& model, const Options& options, Logger& logger) 
   } else {
     // PDHG stopping short is the normal case, not an exception. Report the residuals it
     // actually reached rather than implying the point is optimal.
-    solution.status = timer.elapsed_seconds() > time_limit ? SolveStatus::kTimeLimit
-                                                           : SolveStatus::kIterationLimit;
+    solution.status = interrupted ? SolveStatus::kInterrupted
+                      : timer.elapsed_seconds() > time_limit ? SolveStatus::kTimeLimit
+                                                             : SolveStatus::kIterationLimit;
     solution.message = fmt::format(
-        "stopped at relative primal {:.3e}, dual {:.3e}, gap {:.3e} after {} iterations "
+        "{}at relative primal {:.3e}, dual {:.3e}, gap {:.3e} after {} iterations "
         "and {} restarts (target {:.1e})",
-        final_residuals.primal, final_residuals.dual, final_residuals.gap, iteration, restarts,
-        tolerance);
+        interrupted ? "interrupted " : "stopped ", final_residuals.primal,
+        final_residuals.dual, final_residuals.gap, iteration, restarts, tolerance);
   }
 
   // Only a verifiable point carries a dual bound. Anything else leaves it unknown, which is

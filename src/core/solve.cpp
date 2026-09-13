@@ -27,6 +27,7 @@
 #include "sankhya/options.hpp"
 #include "sankhya/pdhg.hpp"
 #include "sankhya/qp.hpp"
+#include "sankhya/solve_control.hpp"
 #include "sankhya/timer.hpp"
 #include "util/threads.hpp"
 
@@ -98,7 +99,8 @@ void refuse_a_non_finite_answer(Solution* solution, Logger& logger) {
   const bool claims_a_point = solution->status == SolveStatus::kOptimal ||
                               solution->status == SolveStatus::kFeasible ||
                               solution->status == SolveStatus::kIterationLimit ||
-                              solution->status == SolveStatus::kTimeLimit;
+                              solution->status == SolveStatus::kTimeLimit ||
+                              solution->status == SolveStatus::kInterrupted;
   if (!claims_a_point) return;
 
   const bool finite = std::isfinite(solution->objective) &&
@@ -178,7 +180,7 @@ void keep_only_a_proved_certificate(Solution* solution, const Model& model, Logg
 /// A polished answer replaces PDHG's only when it is better - optimal, or feasible with
 /// smaller scaled violations - so the polish cannot make the answer worse.
 void polish_with_the_interior_point(Solution* first, const Model& model, const Options& options,
-                                    Logger& logger, const Timer& timer) {
+                                    Logger& logger, const Timer& timer, SolveControl* control) {
   if (!options.get_bool("pdhg_polish")) return;
   if (first->status == SolveStatus::kOptimal || !claims_a_point(first->status)) return;
   const auto n = static_cast<std::size_t>(model.num_cols());
@@ -213,7 +215,7 @@ void polish_with_the_interior_point(Solution* first, const Model& model, const O
   logger.info("Polish: handing PDHG's point to the interior point, {} iterations at most",
               polish.get_int("iteration_limit"));
   const ipm::WarmStart warm{first->col_value, first->row_dual, first->col_dual};
-  Solution polished = ipm::solve_ipm(model, polish, logger, &warm);
+  Solution polished = ipm::solve_ipm(model, polish, logger, &warm, control);
 
   const auto worst = [](const Solution& s) {
     return std::max(s.primal_infeasibility_scaled, s.dual_infeasibility_scaled);
@@ -307,7 +309,7 @@ void reconcile_status_with_measurement(Solution* solution, const Options& option
   }
 }
 
-Solution solve(const Model& model, const Options& options) {
+Solution solve(const Model& model, const Options& options, SolveControl* control) {
   Timer timer;
   Solution solution;
   solution.allocate_for(model);
@@ -357,13 +359,13 @@ Solution solve(const Model& model, const Options& options) {
         if (options.get_bool("pdhg_polish") && time_limit > 0.0 && std::isfinite(time_limit)) {
           first_pass.set_double("time_limit", time_limit * kPdhgShareOfTheTimeLimit);
         }
-        Solution first = pdhg::solve_pdhg(target, first_pass, logger);
-        polish_with_the_interior_point(&first, target, options, logger, timer);
+        Solution first = pdhg::solve_pdhg(target, first_pass, logger, control);
+        polish_with_the_interior_point(&first, target, options, logger, timer, control);
         return first;
       }
-      return want_ipm    ? ipm::solve_ipm(target, options, logger)
-             : want_dual ? solve_dual_simplex(target, options, logger)
-                         : solve_primal_simplex(target, options, logger);
+      return want_ipm    ? ipm::solve_ipm(target, options, logger, nullptr, control)
+             : want_dual ? solve_dual_simplex(target, options, logger, nullptr, control)
+                         : solve_primal_simplex(target, options, logger, control);
     };
     if (requested != "auto" && requested != "simplex" && !want_pdhg && !want_dual &&
         !want_ipm) {
@@ -428,7 +430,7 @@ Solution solve(const Model& model, const Options& options) {
   }
 
   if (problem_class == ProblemClass::kMilp) {
-    solution = mip::solve_branch_and_bound(model, options, logger);
+    solution = mip::solve_branch_and_bound(model, options, logger, control);
     reconcile_status_with_measurement(&solution, options, logger, /*check_dual=*/false);
     // NOT for the branch and bound's "nothing found" convention, which deliberately reports
     // the worst representable objective - an infinity there is a considered statement that
@@ -444,7 +446,7 @@ Solution solve(const Model& model, const Options& options) {
   }
 
   if (problem_class == ProblemClass::kQp) {
-    solution = qp::solve_convex_qp(model, options, logger);
+    solution = qp::solve_convex_qp(model, options, logger, control);
     // check_dual is false: the QP's reduced costs are c + Qx - A'y, which is not the
     // quantity Solution::recompute_quality() tests, and applying the LP dual rule here
     // would reject correct answers. Primal feasibility and the status still have to agree.
@@ -467,7 +469,7 @@ Solution solve(const Model& model, const Options& options) {
     // rather than the quantity recompute_quality() measures. Integrality and primal
     // feasibility are what distinguish an MIQP answer from its relaxation, and both are
     // checked.
-    solution = mip::solve_branch_and_bound(model, options, logger);
+    solution = mip::solve_branch_and_bound(model, options, logger, control);
     reconcile_status_with_measurement(&solution, options, logger, /*check_dual=*/false);
     logger.info("Result: {}  objective {:.10g}  bound {:.10g}  {} nodes  {:.3f}s",
                 to_string(solution.status), solution.objective, solution.dual_bound,

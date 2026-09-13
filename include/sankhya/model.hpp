@@ -38,6 +38,8 @@
 
 namespace sankhya {
 
+class SolveControl;  // solve_control.hpp; forward-declared so this header stays light.
+
 /// Direction of optimization. Stored on the model rather than folded into the cost vector
 /// so that reported duals and reduced costs keep the sign convention of the original file.
 enum class ObjSense { kMinimize, kMaximize };
@@ -75,6 +77,12 @@ enum class SolveStatus : std::uint8_t {
   kIterationLimit,
   kTimeLimit,
   kNodeLimit,
+  /// Stopped by a SolveControl (include/sankhya/solve_control.hpp, #223): a caller's
+  /// progress callback asked to stop, or another thread called SolveControl::interrupt().
+  /// Like the limit states, this normally stops with a point in hand - the incumbent, or
+  /// the last feasible iterate - which is what makes Ctrl-C during a solve useful instead
+  /// of merely safe.
+  kInterrupted,
   kNumericalError,
   kModelError
 };
@@ -103,7 +111,8 @@ enum class SolveStatus : std::uint8_t {
     case SolveStatus::kUnbounded:
     case SolveStatus::kIterationLimit:
     case SolveStatus::kTimeLimit:
-    case SolveStatus::kNodeLimit: return true;
+    case SolveStatus::kNodeLimit:
+    case SolveStatus::kInterrupted: return true;
     case SolveStatus::kNotSolved:
     case SolveStatus::kInfeasible:
     case SolveStatus::kInfeasibleOrUnbounded:
@@ -382,6 +391,19 @@ class Solution {
 /// This is the seam. The dispatcher picks an engine from the model class (LP / MILP / QP /
 /// MIQP) and the "algorithm" option, and future engines are added here and nowhere else.
 /// It never throws: every failure, including a malformed model, comes back as a status.
-[[nodiscard]] Solution solve(const Model& model, const Options& options);
+///
+/// `control`, ADDED for #223: an optional progress callback and cooperative-interruption
+/// handle. May be null (the default), meaning no callback and no way to interrupt other
+/// than the existing time/iteration/node limits - every call site that predates #223 keeps
+/// compiling and behaving exactly as before. When non-null it is honoured everywhere a time
+/// limit already is: the simplex loops, the interior point, PDHG, the QP loop and the
+/// branch-and-bound tree, down to the factorization deadline itself (SparseLdl::ShouldStop,
+/// #197) they all already share.
+///
+/// `control` is a channel, not a read-only setting - like `Logger&` elsewhere in this
+/// signature list, engines write into it (progress) as well as reading from it (whether to
+/// stop), so it is a plain non-const pointer rather than `const SolveControl*`.
+[[nodiscard]] Solution solve(const Model& model, const Options& options,
+                             SolveControl* control = nullptr);
 
 }  // namespace sankhya
