@@ -627,8 +627,8 @@ Solution InteriorPoint::finish(SolveStatus status, const std::string& message, C
   logger_.info("IPM: {} iterations, {} factorizations, {} regularized pivot(s) in total",
                iterations, factorizations_, regularized_pivots_);
   bool have_point = status == SolveStatus::kOptimal || status == SolveStatus::kFeasible ||
-                    status == SolveStatus::kIterationLimit || status == SolveStatus::kTimeLimit ||
-                    status == SolveStatus::kInterrupted;
+                    status == SolveStatus::kIterationLimit ||
+                    status == SolveStatus::kTimeLimit || status == SolveStatus::kInterrupted;
 
   // A LIMIT IS NOT A LICENCE TO REPORT NONSENSE (#194). Reaching the time limit means the
   // iterate in hand is the answer, and normally it is a real point. It is not one if the
@@ -707,11 +707,11 @@ Solution InteriorPoint::run() {
   if (should_stop_ && should_stop_()) {
     const bool interrupted = control_ != nullptr && control_->is_interrupted();
     const std::string message =
-        interrupted ? std::string("interrupted before the first iteration")
-                   : fmt::format("time limit {:g}s reached before the first iteration",
-                                 time_limit);
+        interrupted
+            ? std::string("interrupted before the first iteration")
+            : fmt::format("time limit {:g}s reached before the first iteration", time_limit);
     return finish(interrupted ? SolveStatus::kInterrupted : SolveStatus::kTimeLimit, message, 0,
-                 timer.elapsed_seconds());
+                  timer.elapsed_seconds());
   }
   logger_.info("Interior point: {} rows, {} columns, {} nonzeros", m_, n_,
                model_.num_nonzeros());
@@ -828,8 +828,8 @@ Solution InteriorPoint::run() {
                 ? fmt::format("interrupted inside the {}, which was abandoned", where)
                 : fmt::format("time limit {:g}s reached inside the {}, which was abandoned",
                               time_limit, where);
-        return finish(interrupted ? SolveStatus::kInterrupted : SolveStatus::kTimeLimit, message,
-                     iterations, timer.elapsed_seconds());
+        return finish(interrupted ? SolveStatus::kInterrupted : SolveStatus::kTimeLimit,
+                      message, iterations, timer.elapsed_seconds());
       }
       return finish(SolveStatus::kNumericalError,
                     "the normal equations could not be factorized", iterations,

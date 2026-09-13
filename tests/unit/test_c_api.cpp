@@ -393,7 +393,8 @@ TEST(CApi, ProgressCallbackReceivesSnapshotsAndUserData) {
   ASSERT_EQ(sankhya_set_callback(model, callback, &user_data), SANKHYA_OK);
 
   SolutionHandle solution;
-  ASSERT_EQ(sankhya_solve(model, nullptr, &solution.handle), SANKHYA_OK) << sankhya_last_error();
+  ASSERT_EQ(sankhya_solve(model, nullptr, &solution.handle), SANKHYA_OK)
+      << sankhya_last_error();
   ASSERT_EQ(sankhya_solution_status(solution.handle), SANKHYA_OPTIMAL);
   EXPECT_GE(user_data.calls, 1);
   // user_data round-trips as the SAME pointer, not a copy passed through by value somewhere
@@ -423,7 +424,8 @@ TEST(CApi, ANonZeroCallbackReturnStopsTheSolveWithInterrupted) {
   ASSERT_EQ(sankhya_set_callback(model, stop_immediately, nullptr), SANKHYA_OK);
 
   SolutionHandle solution;
-  ASSERT_EQ(sankhya_solve(model, nullptr, &solution.handle), SANKHYA_OK) << sankhya_last_error();
+  ASSERT_EQ(sankhya_solve(model, nullptr, &solution.handle), SANKHYA_OK)
+      << sankhya_last_error();
   EXPECT_EQ(sankhya_solution_status(solution.handle), SANKHYA_INTERRUPTED);
 
   std::vector<double> values(2, -1.0);
@@ -449,7 +451,8 @@ TEST(CApi, ClearingTheCallbackWithNullStopsItBeingCalled) {
   ASSERT_EQ(sankhya_set_callback(model, nullptr, nullptr), SANKHYA_OK);
 
   SolutionHandle solution;
-  ASSERT_EQ(sankhya_solve(model, nullptr, &solution.handle), SANKHYA_OK) << sankhya_last_error();
+  ASSERT_EQ(sankhya_solve(model, nullptr, &solution.handle), SANKHYA_OK)
+      << sankhya_last_error();
   ASSERT_EQ(sankhya_solution_status(solution.handle), SANKHYA_OPTIMAL);
   EXPECT_EQ(calls, 0);
 }
@@ -477,7 +480,8 @@ TEST(CApi, PreSolveInterruptHasNoEffectOnThatSolve) {
   ASSERT_EQ(sankhya_model_interrupt(model), SANKHYA_OK);
 
   SolutionHandle solution;
-  ASSERT_EQ(sankhya_solve(model, nullptr, &solution.handle), SANKHYA_OK) << sankhya_last_error();
+  ASSERT_EQ(sankhya_solve(model, nullptr, &solution.handle), SANKHYA_OK)
+      << sankhya_last_error();
   EXPECT_EQ(sankhya_solution_status(solution.handle), SANKHYA_OPTIMAL);
 }
 

@@ -24,9 +24,10 @@
 namespace sankhya {
 namespace {
 
-Model make_lp(const std::vector<std::vector<double>>& rows, const std::vector<double>& row_lower,
-             const std::vector<double>& row_upper, const std::vector<double>& cost,
-             const std::vector<double>& col_lower, const std::vector<double>& col_upper) {
+Model make_lp(const std::vector<std::vector<double>>& rows,
+              const std::vector<double>& row_lower, const std::vector<double>& row_upper,
+              const std::vector<double>& cost, const std::vector<double>& col_lower,
+              const std::vector<double>& col_upper) {
   Model model;
   const auto n = static_cast<Index>(cost.size());
   const auto m = static_cast<Index>(rows.size());
@@ -107,7 +108,8 @@ TEST(SolveControl, CallbackRateIsBoundedByIterationCount) {
   // call here (elapsed_seconds pinned at 0.0, as a real 10,000-iteration LP that finishes
   // in under 100ms would also see) would be suppressed after the first, which would pass
   // trivially without exercising "every k iterations" at all.
-  control.set_throttle(/*every_iterations=*/200, /*every_nodes=*/1, /*min_interval_seconds=*/0.0);
+  control.set_throttle(/*every_iterations=*/200, /*every_nodes=*/1,
+                       /*min_interval_seconds=*/0.0);
 
   Progress progress;
   progress.phase = SolvePhase::kLp;
@@ -181,7 +183,8 @@ TEST(SolveControl, InterruptIsSeenImmediatelyEvenBetweenThrottledCallbackFirings
   control.interrupt();
   progress.iterations = 1;
   EXPECT_TRUE(control.poll(progress));
-  EXPECT_EQ(calls, 1) << "the callback was never called again - is_interrupted() short-circuits";
+  EXPECT_EQ(calls, 1)
+      << "the callback was never called again - is_interrupted() short-circuits";
 }
 
 TEST(SolveControl, ResetClearsInterruptAndThrottleHistoryButKeepsTheCallback) {

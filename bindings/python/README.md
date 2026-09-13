@@ -21,6 +21,48 @@ model = sankhya.Model.read("data/netlib/afiro.mps")
 print(model.solve().objective)   # -464.7531428571429
 ```
 
+## Progress and interruption (#223)
+
+A solve on a real planning model runs for minutes; `callback` is how you watch one, and how
+you stop one without losing what it has found so far. It is called at a bounded rate (by
+iteration/node count and to at most roughly every 100 ms), so even a chatty callback does not
+slow the solve down:
+
+```python
+def progress_bar(p: sankhya.Progress) -> bool:
+    width = 30
+    filled = int(width * min(1.0, 1.0 - min(p.gap, 1.0))) if p.gap else width
+    bar = "#" * filled + "-" * (width - filled)
+    print(f"\r[{bar}] {p.phase:>8}  node {p.nodes:>6}  "
+          f"incumbent {p.objective:.6g}  gap {p.gap:.2e}  {p.elapsed_seconds:6.1f}s",
+          end="", flush=True)
+    return False  # never asks the solve to stop; return True to do that
+
+result = model.solve(callback=progress_bar, mip_relative_gap=1e-6)
+print(f"\n{result.status} {result.objective}")
+```
+
+Ctrl-C during `solve()` is handled the same way: a progress callback is always installed
+internally (even when you don't pass one), which is what lets Python notice the SIGINT and
+ask the solve to stop while it is otherwise blocked inside the C library - so `solve()`
+returns the incumbent with `status == "interrupted"` rather than the raw `KeyboardInterrupt`
+tearing down whatever was running.
+
+`model.interrupt()` does the same thing from another thread, on purpose - it is meant to be
+called while a `solve()` on a different thread is running, not before one starts (each
+`solve()` begins with a clear flag, precisely so a stale `interrupt()` from an earlier,
+already-finished solve cannot silently kill a later, unrelated one on a reused `Model`):
+
+```python
+import threading
+
+worker = threading.Thread(target=lambda: results.append(model.solve()))
+worker.start()
+...
+model.interrupt()   # from the main thread, or anywhere else
+worker.join()
+```
+
 ## Install
 
 There is nothing to install and nothing to compile. Build the solver, then put the package
@@ -57,9 +99,10 @@ taken the interpreter down with it.
 
 | | |
 |---|---|
-| `Model` | `add_column`, `add_row`, `set_coefficient`, `set_quadratic`, `read`, `validate`, `solve` |
+| `Model` | `add_column`, `add_row`, `set_coefficient`, `set_quadratic`, `read`, `validate`, `solve`, `interrupt` |
 | `Options` | any option the CLI accepts, by name; types dispatched from the Python value |
 | `Result` | `status`, `objective`, `x`, `row_duals`, `reduced_costs`, `row_activities`, `iterations`, `nodes`, `seconds` |
+| `Progress` | `phase`, `iterations`, `nodes`, `open_nodes`, `objective`, `best_bound`, `gap`, `elapsed_seconds` - handed to `solve(callback=...)` |
 
 `Result` also exposes the **measured** quality of the point — `primal_infeasibility`,
 `dual_infeasibility`, `integrality_violation`. These are recomputed from the returned vectors
@@ -90,5 +133,5 @@ happily freeze in.
 
 ## Not yet
 
-Callbacks, warm starts, and basis in/out. Each is a surface worth designing rather than
-accreting; the C API does not expose them either.
+Warm starts and basis in/out. Each is a surface worth designing rather than accreting; the
+C API does not expose them either.

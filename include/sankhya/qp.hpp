@@ -21,7 +21,7 @@ namespace sankhya::qp {
 ///
 /// `control` (#223): optional progress/interrupt channel, polled at the same point the
 /// iteration loop already checks its time limit.
-[[nodiscard]] Solution solve_convex_qp(const Model& model, const Options& options, Logger& logger,
-                                       SolveControl* control = nullptr);
+[[nodiscard]] Solution solve_convex_qp(const Model& model, const Options& options,
+                                       Logger& logger, SolveControl* control = nullptr);
 
 }  // namespace sankhya::qp

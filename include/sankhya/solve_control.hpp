@@ -109,7 +109,7 @@ class SolveControl {
   /// `min_interval_seconds` to 0 and get a rate governed purely by the (deterministic)
   /// iteration/node count, rather than by how fast the machine running it happens to be.
   void set_throttle(Count every_iterations, Count every_nodes,
-                     double min_interval_seconds) noexcept {
+                    double min_interval_seconds) noexcept {
     every_iterations_ = every_iterations > 0 ? every_iterations : 1;
     every_nodes_ = every_nodes > 0 ? every_nodes : 1;
     min_interval_seconds_ = min_interval_seconds;
@@ -143,8 +143,8 @@ class SolveControl {
       const Count metric = tree ? progress.nodes : progress.iterations;
       const Count every = tree ? every_nodes_ : every_iterations_;
       const bool count_due = !fired_once_ || (metric - last_metric) >= every;
-      const bool time_due =
-          !fired_once_ || (progress.elapsed_seconds - last_call_seconds_) >= min_interval_seconds_;
+      const bool time_due = !fired_once_ || (progress.elapsed_seconds - last_call_seconds_) >=
+                                                min_interval_seconds_;
       if (!count_due || !time_due) return false;
       fired_once_ = true;
       last_metric = metric;

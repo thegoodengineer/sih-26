@@ -310,15 +310,14 @@ sankhya_status sankhya_set_callback(sankhya_model* model, sankhya_progress_callb
     // to the C sankhya_progress struct at the boundary, exactly the shape the rest of this
     // file uses for every other type crossing it.
     model->control.set_callback([callback, user_data](const sankhya::Progress& progress) {
-      const sankhya_progress c_progress{
-          static_cast<int>(progress.phase),
-          static_cast<long>(progress.iterations),
-          static_cast<long>(progress.nodes),
-          static_cast<long>(progress.open_nodes),
-          progress.objective,
-          progress.best_bound,
-          progress.gap,
-          progress.elapsed_seconds};
+      const sankhya_progress c_progress{static_cast<int>(progress.phase),
+                                        static_cast<long>(progress.iterations),
+                                        static_cast<long>(progress.nodes),
+                                        static_cast<long>(progress.open_nodes),
+                                        progress.objective,
+                                        progress.best_bound,
+                                        progress.gap,
+                                        progress.elapsed_seconds};
       return callback(&c_progress, user_data) != 0;
     });
     return ok();

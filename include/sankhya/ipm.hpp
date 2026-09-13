@@ -35,6 +35,7 @@ struct WarmStart {
 /// `control` (#223): optional progress/interrupt channel, honoured at every iteration and
 /// inside the normal-equations factorization exactly where the time limit already is.
 [[nodiscard]] Solution solve_ipm(const Model& model, const Options& options, Logger& logger,
-                                 const WarmStart* warm = nullptr, SolveControl* control = nullptr);
+                                 const WarmStart* warm = nullptr,
+                                 SolveControl* control = nullptr);
 
 }  // namespace sankhya::ipm

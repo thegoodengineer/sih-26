@@ -44,7 +44,7 @@ namespace {
 // second, poorer mechanism beside it.
 sankhya::SolveControl* g_solve_control_for_sigint = nullptr;
 static_assert(std::atomic<bool>::is_always_lock_free,
-             "SolveControl::interrupt() must be a plain atomic store to be signal-safe here");
+              "SolveControl::interrupt() must be a plain atomic store to be signal-safe here");
 
 extern "C" void record_sigint(int /*signal*/) {
   if (g_solve_control_for_sigint != nullptr) g_solve_control_for_sigint->interrupt();

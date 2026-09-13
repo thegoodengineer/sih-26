@@ -483,11 +483,12 @@ Solution Simplex::factorization_failed(Count iterations, const Timer& timer) {
     const std::string message =
         interrupted
             ? std::string("interrupted inside the basis factorization, which was abandoned")
-            : fmt::format("time limit {:g}s reached inside the basis factorization, which "
-                          "was abandoned",
-                          time_limit_);
+            : fmt::format(
+                  "time limit {:g}s reached inside the basis factorization, which "
+                  "was abandoned",
+                  time_limit_);
     return finish(interrupted ? SolveStatus::kInterrupted : SolveStatus::kTimeLimit, message,
-                 iterations, timer.elapsed_seconds());
+                  iterations, timer.elapsed_seconds());
   }
   return finish(SolveStatus::kNumericalError,
                 fmt::format("basis became singular at iteration {}", iterations), iterations,

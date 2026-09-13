@@ -713,14 +713,14 @@ Solution solve_pdhg(const Model& model, const Options& options, Logger& logger,
   } else {
     // PDHG stopping short is the normal case, not an exception. Report the residuals it
     // actually reached rather than implying the point is optimal.
-    solution.status = interrupted ? SolveStatus::kInterrupted
+    solution.status = interrupted                            ? SolveStatus::kInterrupted
                       : timer.elapsed_seconds() > time_limit ? SolveStatus::kTimeLimit
                                                              : SolveStatus::kIterationLimit;
     solution.message = fmt::format(
         "{}at relative primal {:.3e}, dual {:.3e}, gap {:.3e} after {} iterations "
         "and {} restarts (target {:.1e})",
-        interrupted ? "interrupted " : "stopped ", final_residuals.primal,
-        final_residuals.dual, final_residuals.gap, iteration, restarts, tolerance);
+        interrupted ? "interrupted " : "stopped ", final_residuals.primal, final_residuals.dual,
+        final_residuals.gap, iteration, restarts, tolerance);
   }
 
   // Only a verifiable point carries a dual bound. Anything else leaves it unknown, which is

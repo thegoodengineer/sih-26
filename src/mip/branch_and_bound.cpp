@@ -93,8 +93,11 @@ double fractionality(double value) {
 class BranchAndBound {
  public:
   BranchAndBound(const Model& model, const Options& options, Logger& logger,
-                SolveControl* control = nullptr)
-      : original_(model), working_(model), options_(options), logger_(logger),
+                 SolveControl* control = nullptr)
+      : original_(model),
+        working_(model),
+        options_(options),
+        logger_(logger),
         control_(control) {
     integrality_tolerance_ = options.get_double("integrality_tolerance");
     relative_gap_target_ = options.get_double("mip_relative_gap");
@@ -1157,10 +1160,10 @@ Solution BranchAndBound::run() {
       logged_table = true;
     }
     const double incumbent_report = have_incumbent_ ? reported(incumbent_internal_) : kInfinity;
-    const double node_table_gap =
-        have_incumbent_ ? std::fabs(incumbent_internal_ - best_open_bound) /
-                              std::max(1.0, std::fabs(incumbent_internal_))
-                        : kInfinity;
+    const double node_table_gap = have_incumbent_
+                                      ? std::fabs(incumbent_internal_ - best_open_bound) /
+                                            std::max(1.0, std::fabs(incumbent_internal_))
+                                      : kInfinity;
     if (nodes_explored_ % 20 == 1 || nodes_explored_ < 5) {
       logger_.node(nodes_explored_, static_cast<Count>(open_.size()), incumbent_report,
                    reported(best_open_bound), node_table_gap, timer_.elapsed_seconds());
@@ -1195,8 +1198,8 @@ Solution BranchAndBound::run() {
 
   if (!have_incumbent_) {
     solution.status = interrupted_by_control ? SolveStatus::kInterrupted
-                      : limit_hit             ? SolveStatus::kNodeLimit
-                                              : SolveStatus::kInfeasible;
+                      : limit_hit            ? SolveStatus::kNodeLimit
+                                             : SolveStatus::kInfeasible;
     if (!limit_hit) {
       solution.message = fmt::format(
           "the search closed with no integer feasible point after {} nodes", nodes_explored_);
@@ -1285,7 +1288,8 @@ Solution solve_branch_and_bound(const Model& model, const Options& options, Logg
   Model tightened = model;
   const RowTightening effect = tighten_integral_rows(&tightened, logger);
 
-  BranchAndBound search(effect.rows_tightened > 0 ? tightened : model, options, logger, control);
+  BranchAndBound search(effect.rows_tightened > 0 ? tightened : model, options, logger,
+                        control);
   return search.run();
 }
 
