@@ -361,9 +361,9 @@ void SparseLdl::solve(double* b) const {
 // -----------------------------------------------------------------------------------------
 // A Theta A^T + delta I, lower triangle
 // -----------------------------------------------------------------------------------------
-void normal_equations_lower(const SparseMatrix& a, const std::vector<double>& theta,
+bool normal_equations_lower(const SparseMatrix& a, const std::vector<double>& theta,
                             const std::vector<double>& row_shift, double delta,
-                            SparseMatrix* out) {
+                            SparseMatrix* out, const SparseLdl::ShouldStop& should_stop) {
   const Index m = a.num_rows();
   const Index n = a.num_cols();
   const bool have_shift = static_cast<Index>(row_shift.size()) == m;
@@ -374,6 +374,9 @@ void normal_equations_lower(const SparseMatrix& a, const std::vector<double>& th
   std::vector<Index> touched;
   out->reset(m, m);
   for (Index i = 0; i < m; ++i) {
+    // Every 256 rows: a row of the product costs the sum of its columns' lengths, so the
+    // check is amortised over thousands of multiply-adds and never decides arithmetic.
+    if (should_stop && (i & 255) == 0 && should_stop()) return false;
     touched.clear();
     // M(r, i) for r >= i: sum over columns j in row i of theta_j a_ij a_rj.
     const ColumnView row = by_row.row(i);
@@ -408,6 +411,7 @@ void normal_equations_lower(const SparseMatrix& a, const std::vector<double>& th
     }
   }
   out->finalize(0.0);
+  return true;
 }
 
 }  // namespace sankhya

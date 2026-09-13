@@ -120,8 +120,18 @@ class SparseLdl {
 /// diagonal over the rows (the logical block of [A | -I] Theta [A | -I]^T, or empty for
 /// none); delta a uniform shift. Rebuilt in full on every call; the pattern is the same
 /// each time, which is what lets the factorization's analysis be reused.
-void normal_equations_lower(const SparseMatrix& a, const std::vector<double>& theta,
-                            const std::vector<double>& row_shift, double delta,
-                            SparseMatrix* out);
+///
+/// Takes the same deadline as analyze() and factorize(), checked every 256 rows, and returns
+/// false when it fires, leaving `out` unusable (#232). The assembly is the one step of an
+/// interior-point iteration that ran BEFORE the ordering's deadline could be consulted: on
+/// the random scale family at 500,000 rows it took 90 s against a polish budget of 30, and
+/// at 1,000,000 rows 40 s more than the limit, because forming A Theta A^T for five
+/// nonzeros per column on a random pattern is itself most of a minute. Without a deadline
+/// the check never returns false and the output is identical.
+[[nodiscard]] bool normal_equations_lower(const SparseMatrix& a,
+                                          const std::vector<double>& theta,
+                                          const std::vector<double>& row_shift, double delta,
+                                          SparseMatrix* out,
+                                          const SparseLdl::ShouldStop& should_stop = {});
 
 }  // namespace sankhya

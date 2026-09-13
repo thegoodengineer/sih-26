@@ -211,7 +211,7 @@ TEST(SparseLdl, NormalEquationsMatchTheDenseProduct) {
   std::vector<double> theta(static_cast<std::size_t>(n));
   for (auto& t : theta) t = 0.1 + unit(rng);
   SparseMatrix lower;
-  normal_equations_lower(a, theta, {}, 0.5, &lower);
+  ASSERT_TRUE(normal_equations_lower(a, theta, {}, 0.5, &lower));
   ASSERT_EQ(lower.num_rows(), m);
   ASSERT_EQ(lower.num_cols(), m);
   double worst = 0.0;
@@ -254,6 +254,44 @@ TEST(SparseLdl, ADeadlineStopsTheOrderingAndSaysSoWasWhy) {
   empty.finalize();
   ASSERT_FALSE(unwanted.analyze(empty));
   EXPECT_FALSE(unwanted.stopped_early()) << "a bad matrix is not a deadline";
+}
+
+TEST(SparseLdl, ADeadlineStopsTheAssemblyOfTheNormalEquationsToo) {
+  // #232: the polish's clock reached the ordering (#197) and not the step before it. On the
+  // random scale family at 500,000 rows, forming A Theta A^T took 90 s against a budget of
+  // 30, all of it before analyze() could consult the deadline. So the assembly takes the
+  // same deadline, checked every 256 rows: with one that fires it returns false at once,
+  // and with one that never fires it returns true and produces exactly what it produces
+  // with no deadline at all.
+  std::mt19937_64 rng(232);
+  std::uniform_real_distribution<double> value(-3.0, 3.0);
+  std::uniform_int_distribution<Index> pick_row(0, 599);
+  const Index m = 600;
+  const Index n = 800;
+  SparseMatrix a(m, n);
+  for (Index j = 0; j < n; ++j) {
+    for (int k = 0; k < 5; ++k) a.add_entry(pick_row(rng), j, value(rng));
+  }
+  a.finalize(0.0);
+  std::vector<double> theta(static_cast<std::size_t>(n), 0.7);
+
+  SparseMatrix abandoned;
+  EXPECT_FALSE(normal_equations_lower(a, theta, {}, 0.5, &abandoned, [] { return true; }));
+
+  SparseMatrix plain;
+  SparseMatrix with_deadline;
+  ASSERT_TRUE(normal_equations_lower(a, theta, {}, 0.5, &plain));
+  ASSERT_TRUE(normal_equations_lower(a, theta, {}, 0.5, &with_deadline, [] { return false; }));
+  ASSERT_EQ(plain.num_nonzeros(), with_deadline.num_nonzeros());
+  for (Index j = 0; j < m; ++j) {
+    const ColumnView p = plain.column(j);
+    const ColumnView d = with_deadline.column(j);
+    ASSERT_EQ(p.size, d.size);
+    for (Index k = 0; k < p.size; ++k) {
+      EXPECT_EQ(p.rows[k], d.rows[k]);
+      EXPECT_EQ(p.values[k], d.values[k]);
+    }
+  }
 }
 
 TEST(SparseLdl, ADeadlineNeverAskedIsADeadlineThatChangesNothing) {
