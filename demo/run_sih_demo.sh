@@ -341,8 +341,18 @@ echo "and the caps on the two high-yield crudes. Lift any one of them and a plan
 echo "solution file carries a proof of both halves of that claim, and the sulphur limit is not"
 echo "named because it plays no part:"
 echo
-"$BIN" solve demo/crude_blend_infeasible.mps --option log_to_console=false \
-  --write-sol "$WORK/crude_blend_infeasible.sol" 2>&1 | grep -E '^(status|IIS) ' | sed 's/^/    /'
+# The CLI exits non-zero for an infeasible model - that is its contract, and under
+# `set -e` it would end the demo here - so the status is captured and checked, not ignored.
+set +e
+infeasible_report="$("$BIN" solve demo/crude_blend_infeasible.mps --option log_to_console=false \
+  --write-sol "$WORK/crude_blend_infeasible.sol" 2>&1)"
+infeasible_rc=$?
+set -e
+printf '%s\n' "$infeasible_report" | grep -E '^(status|IIS) ' | sed 's/^/    /'
+if [ "$infeasible_rc" -eq 0 ]; then
+  echo "    the over-constrained blend was reported solvable; that is a bug" >&2
+  exit 1
+fi
 echo
 echo "    tools/verify_solution.py checks the certificate and the IIS with its own arithmetic:"
 "$PYTHON" tools/verify_solution.py demo/crude_blend_infeasible.mps \
