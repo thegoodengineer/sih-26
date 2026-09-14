@@ -625,12 +625,16 @@ def verify_iis(model: Model, solution: Solution, report: Report, primal_tol: flo
         outside_rows = [model.row_names[i] for i, m in enumerate(y)
                         if m != 0.0 and model.row_names[i] not in rows]
         d = transpose_times(model, y)
-        scale = max([1.0] + [abs(v) for v in d])
+        term_scale = 1.0
+        for j in range(model.num_cols):
+            for i, value in model.entries[j]:
+                term_scale = max(term_scale, abs(value * y[i]))
+        zero = 1e-11 * term_scale  # the same zero as verify_farkas and the C++ checker
         outside_bounds = []
         for j in range(model.num_cols):
-            if d[j] > 1e-12 * scale and model.col_names[j] not in hi:
+            if d[j] > zero and model.col_names[j] not in hi:
                 outside_bounds.append(model.col_names[j] + " (upper)")
-            elif d[j] < -1e-12 * scale and model.col_names[j] not in lo:
+            elif d[j] < -zero and model.col_names[j] not in lo:
                 outside_bounds.append(model.col_names[j] + " (lower)")
         report.check(not outside_rows and not outside_bounds, "IIS is infeasible on its own",
                      "the certificate's multipliers and the bounds its aggregate leans on "
@@ -742,15 +746,25 @@ def verify_farkas(model: Model, solution: Solution, report: Report) -> Report:
                    for i in range(model.num_rows))
 
     d = transpose_times(model, y)
+    # A coefficient of the aggregate that is zero up to rounding is zero. The rows of the
+    # crude-blend demo aggregate to exactly 0 on one column - two terms of 0.577 that
+    # cancel - and floating point leaves 1e-17 behind; read as a sign, that "uses" a bound
+    # the column does not have and rejects a correct certificate. The same rule the C++
+    # checker applies (src/core/certificate.cpp): below 1e-11 of the largest term is zero.
+    term_scale = 1.0
+    for j in range(model.num_cols):
+        for i, value in model.entries[j]:
+            term_scale = max(term_scale, abs(value * y[i]))
+    zero = 1e-11 * term_scale
     reachable = 0.0
     free = []
     for j in range(model.num_cols):
-        if d[j] > 0.0:
+        if d[j] > zero:
             if not math.isfinite(model.col_upper[j]):
                 free.append(model.col_names[j])
             else:
                 reachable += d[j] * model.col_upper[j]
-        elif d[j] < 0.0:
+        elif d[j] < -zero:
             if not math.isfinite(model.col_lower[j]):
                 free.append(model.col_names[j])
             else:

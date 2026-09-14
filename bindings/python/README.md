@@ -88,7 +88,39 @@ layer, and the mistake it can make that the solver cannot is reading the right n
 the wrong field — which a test that captured its expectations from a previous run would
 happily freeze in.
 
+## Watching a solve, and stopping it
+
+`solve()` takes a `callback`, called at most every 100 ms with a `Progress` namedtuple:
+`phase` (`"presolve"`, `"lp"` or `"tree"`), `iterations`, `nodes`, `open_nodes`,
+`objective`, `best_bound`, `gap` and `elapsed_seconds`. Return a non-zero value to stop
+the solve at its next safe point; the result then has status `interrupted` and carries the
+point in hand, exactly as a time limit does. A progress bar for a MILP is a few lines:
+
+```python
+import sys
+import sankhya
+
+model = sankhya.Model.read("demo/blend_milp.mps")
+
+def progress(p):
+    gap = "" if p.gap == float("inf") else f"  gap {p.gap:.3g}"
+    sys.stderr.write(f"\r[{p.phase:>8}] {p.elapsed_seconds:6.1f}s  nodes {p.nodes:6d}"
+                     f"  open {p.open_nodes:5d}  incumbent {p.objective:.6g}{gap}")
+    return 1 if p.elapsed_seconds > 30.0 else 0   # non-zero interrupts the solve
+
+result = model.solve(callback=progress, log_to_console=False)
+sys.stderr.write("\n")
+print(result.status, result.objective)
+```
+
+(`log_to_console=False` keeps the solver's own log off the terminal so the bar is what you
+see. The demo MILP solves at its root node, so it reports once; a search of thousands of
+nodes reports every 100 ms.)
+
+An exception raised inside the callback interrupts the solve and is re-raised from
+`solve()`. `Model.interrupt()` does the same from another thread or a signal handler.
+
 ## Not yet
 
-Callbacks, warm starts, and basis in/out. Each is a surface worth designing rather than
-accreting; the C API does not expose them either.
+Warm starts and basis in/out. Each is a surface worth designing rather than accreting; the
+C API does not expose them either.

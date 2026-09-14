@@ -331,6 +331,25 @@ sed -n '/begin rows/,/end rows/p' "$WORK/crude_blend.sol" | grep -v '^begin\|^en
 
 # -------------------------------------------------------------------------------------------
 echo
+echo "--- When the plan cannot be met: which lines of the model fight each other ---------"
+echo
+echo "The same blend with the diesel commitment raised from 40 to 60 kbbl/day: no plan exists."
+echo "'Infeasible' alone sends a planner hunting through the model. The solver names an"
+echo "irreducible infeasible subsystem (#217) - a set of constraints that cannot hold together"
+echo "and from which no single one can be dropped: here the throughput window, the commitment"
+echo "and the caps on the two high-yield crudes. Lift any one of them and a plan exists. The"
+echo "solution file carries a proof of both halves of that claim, and the sulphur limit is not"
+echo "named because it plays no part:"
+echo
+"$BIN" solve demo/crude_blend_infeasible.mps --option log_to_console=false \
+  --write-sol "$WORK/crude_blend_infeasible.sol" 2>&1 | grep -E '^(status|IIS) ' | sed 's/^/    /'
+echo
+echo "    tools/verify_solution.py checks the certificate and the IIS with its own arithmetic:"
+"$PYTHON" tools/verify_solution.py demo/crude_blend_infeasible.mps \
+  "$WORK/crude_blend_infeasible.sol" 2>&1 | grep -E 'IIS|VERIFIED|REJECTED' | sed 's/^/    /'
+
+# -------------------------------------------------------------------------------------------
+echo
 echo "--- A MILP answer corroborated by exhaustion, not by itself ------------------------"
 echo
 cat <<'ORACLE'
