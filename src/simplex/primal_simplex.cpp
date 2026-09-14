@@ -730,7 +730,7 @@ void Simplex::compute_reduced_costs(bool phase_one) {
   }
 }
 
-Index Simplex::price(bool bland, int* direction) const {
+Index Simplex::price(bool bland, int* direction, Index skip) const {
   Index best = -1;
   // Seeded at zero, not at the dual tolerance: eligibility is now tested explicitly against
   // dual_tolerance_ below, because in devex mode this variable holds d^2 / w and comparing
@@ -741,6 +741,7 @@ Index Simplex::price(bool bland, int* direction) const {
     const auto u = static_cast<std::size_t>(k);
     if (basis_position_[u] >= 0) continue;
     if (status_[u] == BasisStatus::kFixed) continue;
+    if (k == skip) continue;
 
     const double d = reduced_cost_[u];
     int candidate_direction = 0;
@@ -1379,6 +1380,15 @@ Solution Simplex::primal_loop(Timer& timer, Count* iterations_io) {
   int degenerate_run = 0;
   bool bland = false;
   bool was_phase_one = true;
+  // When phase 1 finds "no blocking variable" even on fresh factors, the entering column's
+  // alpha is near-zero (the column is nearly in the span of the current basis). The right
+  // response is to skip that column and try the next eligible one. skip_entering names the
+  // column to exclude from the next call to price(); it is reset after a successful pivot.
+  // Bounded by kMaxPhase1NoBlocker to avoid an infinite loop when every eligible column is
+  // degenerate for the current basis.
+  Index skip_entering = -1;
+  int phase1_no_blocker_retries = 0;
+  static constexpr int kMaxPhase1NoBlocker = 5;
 
   for (;;) {
     // The phase decision is made on the largest single violation, not on their sum. The sum
@@ -1405,7 +1415,8 @@ Solution Simplex::primal_loop(Timer& timer, Count* iterations_io) {
     }
 
     int direction = 0;
-    const Index entering = price(bland, &direction);
+    const Index entering = price(bland, &direction, skip_entering);
+    skip_entering = -1;
 
     if (entering < 0) {
       if (phase_one) {
@@ -1546,6 +1557,33 @@ Solution Simplex::primal_loop(Timer& timer, Count* iterations_io) {
 
     if (ratio.unbounded) {
       if (phase_one) {
+        // Alpha is near-zero even on fresh factors: the entering column is nearly in the
+        // span of the current basis (column-space degeneracy). Skip it and re-price to
+        // find a column with nonzero alpha. Bounded by kMaxPhase1NoBlocker to ensure we
+        // give up rather than loop when every eligible column is degenerate for this basis.
+        if (phase1_no_blocker_retries < kMaxPhase1NoBlocker) {
+          ++phase1_no_blocker_retries;
+          skip_entering = entering;
+          logger_.verbose(
+              "iteration {}: phase 1 no blocker on fresh factors (column {}); "
+              "skipping and re-pricing (attempt {}/{})",
+              iterations, entering, phase1_no_blocker_retries, kMaxPhase1NoBlocker);
+          ++iterations;
+          if (iteration_limit >= 0 && iterations >= iteration_limit) {
+            compute_reduced_costs(false);
+            return finish(SolveStatus::kIterationLimit,
+                          fmt::format("iteration limit {} reached", iteration_limit),
+                          iterations, timer.elapsed_seconds());
+          }
+          const double skip_elapsed = timer.elapsed_seconds();
+          if (skip_elapsed > time_limit) {
+            compute_reduced_costs(false);
+            return finish(SolveStatus::kTimeLimit,
+                          fmt::format("time limit {:g}s reached", time_limit), iterations,
+                          skip_elapsed);
+          }
+          continue;
+        }
         return finish(SolveStatus::kNumericalError,
                       "phase 1 ratio test found no blocking variable, which cannot happen "
                       "for an objective bounded below by zero",
@@ -1607,6 +1645,7 @@ Solution Simplex::primal_loop(Timer& timer, Count* iterations_io) {
       degenerate_run = 0;
       bland = false;
     }
+    phase1_no_blocker_retries = 0;
 
     const auto e = static_cast<std::size_t>(entering);
     const double entering_value = nonbasic_value_[e] + static_cast<double>(direction) * step;

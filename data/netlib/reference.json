@@ -1,7 +1,7 @@
 {
   "available_instances": 89,
   "emps_sha256": "fee41f544f6873a5e12bc598947828dc9964ef0676162e4df55e915760e2be22",
-  "instance_set": "small",
+  "instance_set": "explicit",
   "instances": {
     "adlittle": {
       "has_bounds": false,
@@ -45,6 +45,20 @@
       "published_optimal": -30.812149846,
       "published_rows": 75
     },
+    "dfl001": {
+      "has_bounds": true,
+      "has_ranges": false,
+      "mps_bytes": 1465558,
+      "mps_sha256": "85d47c5f8a5fc53772eabac1805b7a1af72431cad9e14d26d673043980952730",
+      "name": "dfl001",
+      "optimal_is_approximate": true,
+      "packed_sha256": "72b94c3e25515c18eb50defe623f8563e299d5dcfb82050c69d86dc86d17e655",
+      "published_bytes": 353192,
+      "published_cols": 12230,
+      "published_nonzeros": 41873,
+      "published_optimal": 11266400.0,
+      "published_rows": 6072
+    },
     "israel": {
       "has_bounds": false,
       "has_ranges": false,
@@ -58,6 +72,48 @@
       "published_nonzeros": 2358,
       "published_optimal": -896644.82186,
       "published_rows": 175
+    },
+    "maros-r7": {
+      "has_bounds": false,
+      "has_ranges": false,
+      "mps_bytes": 4892894,
+      "mps_sha256": "e97f59ab32a8280526c26c210aacabd6e0c05300e67a0d4afd00b95d245f8db7",
+      "name": "maros-r7",
+      "optimal_is_approximate": false,
+      "packed_sha256": "aeb112c0ffe264c73f5f8cb09efc4428f51a99cbeb61bc991c7b78d11e7e3103",
+      "published_bytes": 4812587,
+      "published_cols": 9408,
+      "published_nonzeros": 151120,
+      "published_optimal": 1497185.1665,
+      "published_rows": 3137
+    },
+    "pilot": {
+      "has_bounds": true,
+      "has_ranges": false,
+      "mps_bytes": 1447076,
+      "mps_sha256": "26916951225f695c68c474adb2e1e052e4c1b3479d6a11fbd579fd20d4e7d2eb",
+      "name": "pilot",
+      "optimal_is_approximate": false,
+      "packed_sha256": "c5dde8c311f47e83f6f9d057639b957ad8dc1a2ccbe4a8a4835fd8289b73f3d8",
+      "published_bytes": 278593,
+      "published_cols": 3652,
+      "published_nonzeros": 43220,
+      "published_optimal": -557.40430007,
+      "published_rows": 1442
+    },
+    "pilot87": {
+      "has_bounds": true,
+      "has_ranges": false,
+      "mps_bytes": 2451962,
+      "mps_sha256": "0ecfcc173d82c8a0252f58a99b2a529d8ad0155ee9212b8451cc25c0e387caa4",
+      "name": "pilot87",
+      "optimal_is_approximate": false,
+      "packed_sha256": "b7c9fa4a97f9503c7b44faf96445d296eddb18ed5fc1eddac8ca47fb1f21489f",
+      "published_bytes": 514192,
+      "published_cols": 4883,
+      "published_nonzeros": 73804,
+      "published_optimal": 301.71072827,
+      "published_rows": 2031
     },
     "sc105": {
       "has_bounds": false,

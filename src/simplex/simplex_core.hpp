@@ -302,7 +302,8 @@ class Simplex {
   void compute_reduced_costs(bool phase_one);
 
   /// Choose an entering column. Returns -1 when none is eligible.
-  [[nodiscard]] Index price(bool bland, int* direction) const;
+  /// skip >= 0 excludes that column index from consideration for this one call.
+  [[nodiscard]] Index price(bool bland, int* direction, Index skip = -1) const;
 
   /// Reset every reference weight to 1, restarting the reference framework.
   void reset_devex();
