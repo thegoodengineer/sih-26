@@ -6,8 +6,8 @@
 // all want the same "where and why" string. Every error carries the file and the 1-based
 // line number so a judge pointing us at a broken instance gets a usable message.
 //
-// Every reader calls Model::validate() before returning success. Per CLAUDE.md a reader
-// that emits a subtly malformed model produces a plausible-looking wrong optimum rather
+// Every reader calls Model::validate() before returning success. Per ENGINEERING_RULES.md a
+// reader that emits a subtly malformed model produces a plausible-looking wrong optimum rather
 // than a crash, and that is the failure mode this project is most exposed to.
 #pragma once
 

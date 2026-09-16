@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SANKHYA - restarted primal-dual hybrid gradient for LP.
 //
-// References, all written from the papers. Per CLAUDE.md the source of PDLP, cuPDLP,
+// References, all written from the papers. Per ENGINEERING_RULES.md the source of PDLP, cuPDLP,
 // cuPDLP-C, cuPDLPx, OR-Tools and HiGHS was NOT consulted.
 //   [CP11]  Chambolle & Pock, "A first-order primal-dual algorithm for convex problems with
 //           applications to imaging", JMIV 40(1), 2011. Algorithm 1 is the iteration below.

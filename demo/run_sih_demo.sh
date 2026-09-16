@@ -7,7 +7,7 @@
 # a live result or an explicit admission that we do not have it yet. Every number printed
 # below is either produced by a command run during this script or read, by a script and
 # with its commit named beside it, from a results CSV committed under bench/results/.
-# Nothing is quoted from memory or typed in by hand - see CLAUDE.md, "Evidence rules".
+# Nothing is quoted from memory or typed in by hand - see ENGINEERING_RULES.md, "Evidence rules".
 #
 #   demo/run_sih_demo.sh              # the full walk
 #   demo/run_sih_demo.sh --quick      # skip the HiGHS comparison

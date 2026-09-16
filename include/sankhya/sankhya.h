@@ -10,8 +10,8 @@
  * THE SHAPE IS DELIBERATELY FAMILIAR. create / set / solve / query, string-named options,
  * integer status codes. That is the surface every industrial solver presents, and matching
  * it is what makes this drop-in adoptable for someone with existing CPLEX or Gurobi calling
- * code. Per CLAUDE.md that is interface compatibility, not derivation: it is written from
- * the public shape those APIs document, and no solver source was read to produce it.
+ * code. Per ENGINEERING_RULES.md that is interface compatibility, not derivation: it is written
+ * from the public shape those APIs document, and no solver source was read to produce it.
  *
  * ERRORS ARE RETURNED, NEVER THROWN. Every fallible call returns a sankhya_status. When one
  * is not SANKHYA_OK, sankhya_last_error() carries a human-readable reason for that thread.

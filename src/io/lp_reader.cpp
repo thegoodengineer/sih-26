@@ -2,8 +2,8 @@
 // SANKHYA - CPLEX LP format reader.
 //
 // Reference: the LP file format as documented in the public CPLEX and Gurobi reference
-// manuals. Per CLAUDE.md this is interface compatibility read from published documentation;
-// no solver source was consulted.
+// manuals. Per ENGINEERING_RULES.md this is interface compatibility read from published
+// documentation; no solver source was consulted.
 //
 // The format exists here for the Phase 10 case studies: a refinery blending model is far
 // more legible to a judge as `0.8 arab_light + 1.2 bonny <= 10` than as an MPS column

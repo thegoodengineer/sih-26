@@ -3,8 +3,8 @@
 //
 // THE GATE HERE IS THE ROUND TRIP, not the reduction counts. A presolve that removes nothing
 // is merely useless; a presolve whose postsolve is wrong returns a confident, feasible-
-// looking answer to a DIFFERENT problem, with no crash and no stack trace. CLAUDE.md names
-// that class of failure as the worst available outcome, alongside reporting a MILP's
+// looking answer to a DIFFERENT problem, with no crash and no stack trace. ENGINEERING_RULES.md
+// names that class of failure as the worst available outcome, alongside reporting a MILP's
 // fractional relaxation as optimal.
 //
 // So every test below solves the SAME model twice, with presolve on and off, and requires

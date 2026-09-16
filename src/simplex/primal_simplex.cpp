@@ -454,8 +454,8 @@ bool Simplex::refactorize() {
       // to recompute. A repair is the exception: it swaps columns, so x_basic_ must be
       // recomputed here rather than left to the caller. Without this the ratio test at the
       // accuracy-check site runs on values from the pre-repair basis, which is not a crash
-      // and not a warning - it is a plausible wrong number, the failure mode CLAUDE.md's
-      // evidence rules exist for.
+      // and not a warning - it is a plausible wrong number, the failure mode
+      // ENGINEERING_RULES.md's evidence rules exist for.
       compute_basic_values();
       return true;
     }
@@ -1775,9 +1775,9 @@ Solution Simplex::primal_loop(Timer& timer, Count* iterations_io) {
       // through etas differs from alpha through fresh factors in its last bits, and on a
       // degenerate model those bits pick the ratio-test winner. perold took 8120 iterations
       // in one run and 8948 in the next, on the same commit, and reported different duals.
-      // CLAUDE.md's evidence rules are worth nothing if a rerun can take a different path;
-      // the perturbation code turned down randomness for exactly this reason, and a timer is
-      // randomness with extra steps. Wall-clock may calibrate a constant. It may not decide.
+      // ENGINEERING_RULES.md's evidence rules are worth nothing if a rerun can take a different
+      // path; the perturbation code turned down randomness for exactly this reason, and a timer
+      // is randomness with extra steps. Wall-clock may calibrate a constant. It may not decide.
       //
       // The hard cap on eta count stays, as the bound on accumulated drift.
       eta_work_since_refactor_ += static_cast<double>(lu_.eta_nonzeros());

@@ -130,7 +130,7 @@ FAILURE_CLASSES = [
 def classify_failure(row: dict) -> str:
     """Name WHY an instance failed, from the solver's own message.
 
-    CLAUDE.md requires failures to be named rather than dropped. A list of names is only
+    ENGINEERING_RULES.md requires failures to be named rather than dropped. A list of names is only
     half of it - "24 failed: bandm, boeing1, ..." tells a reader nothing about whether the
     tool fits their model. Eighteen instances failing for one reason is a very different
     thing from eighteen failing for eighteen reasons, and only the second is alarming.
@@ -282,7 +282,7 @@ def comparison_section(path: Path | None) -> str:
             "\n"
             "`bench/runners/compare.py` is written and ready; it needs a HiGHS binary on the\n"
             "machine, which is invoked purely as an external subprocess and is never linked\n"
-            "into SANKHYA (see the red line in `CLAUDE.md`).\n"
+            "into SANKHYA (see the red line in `ENGINEERING_RULES.md`).\n"
             "\n"
             "```bash\n"
             "apt-get install highs      # or conda install -c conda-forge highs\n"
@@ -1382,7 +1382,7 @@ def main() -> int:
     # Both tiers, separately. Reporting only one was the whole of issue #53: the small set
     # is 8/8, which reads as a solved problem, and the medium tier is the number that says
     # what the solver can actually do. Publishing the first without the second is true and
-    # misleading, which CLAUDE.md's evidence rules treat as the same thing as false.
+    # misleading, which ENGINEERING_RULES.md's evidence rules treat as the same thing as false.
     small_csv = newest("netlib-small-*.csv")
     medium_csv = newest("netlib-medium-*.csv")
     full_csv = newest("netlib-full-*.csv")

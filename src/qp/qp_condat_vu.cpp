@@ -36,8 +36,8 @@
 // THIS IS A SEPARATE FILE FROM src/pdhg/ ON PURPOSE. That engine is tuned and verified
 // against the whole Netlib set; folding a quadratic term through its adaptive step size and
 // restart logic would put the LP path at risk to save duplication in a first QP engine.
-// CLAUDE.md is explicit that a wrong answer scores zero, and the LP path is the thing most
-// of the project's evidence rests on.
+// ENGINEERING_RULES.md is explicit that a wrong answer scores zero, and the LP path is the
+// thing most of the project's evidence rests on.
 
 #include "sankhya/qp.hpp"
 #include "sankhya/solve_control.hpp"

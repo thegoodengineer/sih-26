@@ -165,8 +165,8 @@ TEST(Pdhg, IsSelectedOnlyWhenAskedFor) {
 }
 
 TEST(Pdhg, GpuFlagFallsBackToCpuWithoutCrashing) {
-  // CLAUDE.md: the CPU build must work with zero CUDA installed, and --gpu must degrade
-  // silently rather than fail.
+  // ENGINEERING_RULES.md: the CPU build must work with zero CUDA installed, and --gpu must
+  // degrade silently rather than fail.
   const Model model = make_lp({{1.0, 1.0}}, {2.0}, {kInfinity}, {1.0, 1.0});
   Options options = pdhg_options(1e-8);
   options.set_bool("gpu", true);
@@ -517,7 +517,7 @@ TEST(SolveStatusGuard, TheMilpPathIsReconciledWithoutFalsePositives) {
   // last LP's reduced costs, so applying the dual test here would reject correct answers.
   //
   // Integrality replaces it: an engine reporting optimal while holding a fractional integer
-  // column has reported the relaxation, which is the failure CLAUDE.md singles out.
+  // column has reported the relaxation, which is the failure ENGINEERING_RULES.md singles out.
   Model model = make_blend_lp();
   model.col_type[0] = VarType::kInteger;
 

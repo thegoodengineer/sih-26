@@ -8,9 +8,9 @@
 // about, so a QP that converges to the wrong point looks exactly like one that converges to
 // the right point.
 //
-// The non-convex cases are as important as the convex ones. CLAUDE.md's rule is that a wrong
-// answer scores zero, and a non-convex QP solved to a local minimum and reported as optimal
-// is the wrong answer in its most convincing form.
+// The non-convex cases are as important as the convex ones. ENGINEERING_RULES.md's rule is that
+// a wrong answer scores zero, and a non-convex QP solved to a local minimum and reported as
+// optimal is the wrong answer in its most convincing form.
 
 #include <cmath>
 #include <vector>

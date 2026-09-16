@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Run SANKHYA over the fetched MIPLIB subset and record what happened.
 
-The MILP counterpart of netlib.py. Same CSV contract from CLAUDE.md - instance, sha256, our
+The MILP counterpart of netlib.py. Same CSV contract from ENGINEERING_RULES.md - instance, sha256, our
 objective, published optimum, gaps, status, time, git commit, machine - plus the two columns
 a MILP needs and an LP does not: NODES, and the bound.
 

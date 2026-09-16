@@ -9,7 +9,7 @@ track: [#16](https://github.com/thegoodengineer/sih-26/issues/16) plumbing,
 [#19](https://github.com/thegoodengineer/sih-26/issues/19) evidence. Nothing here replaces
 those; it sequences them for a machine we do not have yet and a deadline of 20 September.
 
-The rules that bind every step are the ones in `CLAUDE.md`: no number is reported that was
+The rules that bind every step are the ones in `ENGINEERING_RULES.md`: no number is reported that was
 not produced by a command in the session reporting it; every benchmark writes a CSV to
 `bench/results/`; `docs/BENCHMARKS.md` is generated from those CSVs; the CPU build works with
 zero CUDA installed; no solver source is read or copied - the GPU design references are the
@@ -109,7 +109,7 @@ the agreement test's terminal output in the PR.
 ### Step 3 - #19, the evidence
 
 `bench/runners/gpu_report.py`, next to `pdhg_report.py`, writing one CSV with every column
-`CLAUDE.md` requires plus `device`, `vram_bytes`, `iterations`, `gpu_seconds`, `cpu_seconds`
+`ENGINEERING_RULES.md` requires plus `device`, `vram_bytes`, `iterations`, `gpu_seconds`, `cpu_seconds`
 and the tolerance the row was run at. Then a `gpu_section()` in `make_benchmarks_doc.py` so
 `docs/BENCHMARKS.md` regenerates from it. The protocol:
 

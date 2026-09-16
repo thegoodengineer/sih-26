@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SANKHYA - the frozen model and solution interface.
 //
-// FROZEN INTERFACE (CLAUDE.md). Model is what every reader produces and every engine
+// FROZEN INTERFACE (ENGINEERING_RULES.md). Model is what every reader produces and every engine
 // consumes. Solution is what every engine produces. solve() is the single seam where the
 // simplex, PDHG, IPM, QP and branch-and-cut engines plug in. Changing anything in this
 // file breaks work in three directories at once, so it does not change without an explicit
@@ -198,7 +198,8 @@ class Model {
   /// Structural self-check. Returns an empty string when the model is well formed, or a
   /// one-line description of the first problem found. Every reader calls this before
   /// handing a model to an engine: a malformed model produces a plausible-looking wrong
-  /// answer rather than a crash, which is exactly the failure mode CLAUDE.md warns about.
+  /// answer rather than a crash, which is exactly the failure mode ENGINEERING_RULES.md warns
+  /// about.
   [[nodiscard]] std::string validate() const;
 };
 
@@ -392,7 +393,7 @@ class Solution {
   std::string message;
 
   /// True when the status says a point is reported; the same answer as
-  /// claims_a_point(status), kept because this interface is frozen (CLAUDE.md).
+  /// claims_a_point(status), kept because this interface is frozen (ENGINEERING_RULES.md).
   [[nodiscard]] bool has_primal_values() const noexcept { return claims_a_point(status); }
 
   /// Clear the vectors and quality measurements, leaving the status intact.

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // SANKHYA — every numerical tolerance in the solver, in one place.
 //
-// CLAUDE.md rule: no magic numbers in the numerical core. If a comparison against a small
-// constant appears anywhere in src/, the constant is declared here with a justification.
+// ENGINEERING_RULES.md rule: no magic numbers in the numerical core. If a comparison against a
+// small constant appears anywhere in src/, the constant is declared here with a justification.
 // Anything tunable at runtime is ALSO an entry in the option table (src/util/options.cpp)
 // whose default is one of these constants; these are the defaults, not the law.
 #pragma once
@@ -90,7 +90,8 @@ inline constexpr int kStrongBranchingIterations = 50;
 /// DECISION (#52): neither number moves.
 ///
 ///   * The verifier is NOT loosened. It is the independent check the whole evidence story
-///     rests on, and tuning it so we pass inverts its purpose. `CLAUDE.md` says so directly.
+///     rests on, and tuning it so we pass inverts its purpose. `ENGINEERING_RULES.md` says so
+///     directly.
 ///   * kDualityGap is NOT relaxed to cover the worst case either. As an expectation for a
 ///     genuinely converged basis, 1e-9 is right; the models that miss it are models whose
 ///     duals are not converged, and hiding that behind a looser constant is the same
@@ -155,7 +156,8 @@ inline constexpr double kHarrisRelaxation = 0.1 * kPrimalFeasibility;
 // First-order method (PDHG)
 // ---------------------------------------------------------------------------------------
 
-/// PDHG results are reported at BOTH of these, separately, never blended (CLAUDE.md).
+/// PDHG results are reported at BOTH of these, separately, never blended
+/// (ENGINEERING_RULES.md).
 inline constexpr double kPdhgLoose = 1e-4;
 inline constexpr double kPdhgTight = 1e-8;
 

@@ -1,4 +1,4 @@
-# SANKHYA — Claude Code operating rules
+# SANKHYA — engineering rules
 
 ## What this is
 

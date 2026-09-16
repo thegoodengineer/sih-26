@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SANKHYA — core scalar and index types.
 //
-// Every numerical quantity in the solver core is `double`. Per CLAUDE.md there is no
+// Every numerical quantity in the solver core is `double`. Per ENGINEERING_RULES.md there is no
 // `float` anywhere in src/. Indices are 32-bit signed: this caps us at ~2.1e9 nonzeros,
 // which is far beyond the "thousands to millions of variables" the problem statement
 // asks for, and signed indices keep -Wsign-compare honest at every loop boundary.

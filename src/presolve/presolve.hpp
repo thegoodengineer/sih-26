@@ -19,10 +19,10 @@
 //
 // THE DANGEROUS HALF IS POSTSOLVE. A reduction that is slightly wrong does not crash - it
 // returns a confident, feasible-looking answer to a DIFFERENT problem. That is the same
-// failure class CLAUDE.md names as the worst available outcome, alongside reporting a MILP's
-// fractional relaxation as optimal. Every reduction here therefore pushes a record onto a
-// stack, and postsolve replays that stack in reverse to rebuild a solution to the ORIGINAL
-// model. The round-trip is asserted against the exact rational oracle, not assumed.
+// failure class ENGINEERING_RULES.md names as the worst available outcome, alongside reporting
+// a MILP's fractional relaxation as optimal. Every reduction here therefore pushes a record
+// onto a stack, and postsolve replays that stack in reverse to rebuild a solution to the
+// ORIGINAL model. The round-trip is asserted against the exact rational oracle, not assumed.
 #pragma once
 
 #include <string>

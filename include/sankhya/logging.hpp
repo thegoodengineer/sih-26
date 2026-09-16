@@ -3,9 +3,9 @@
 //
 // The iteration table is deliberately shaped like the log an industrial solver prints,
 // because the judges for this problem statement read those logs daily and a familiar
-// layout is read faster than a novel one. Per CLAUDE.md this is interface familiarity,
-// not derivation: no solver source was consulted, only the shape everyone already knows
-// from published user manuals.
+// layout is read faster than a novel one. Per ENGINEERING_RULES.md this is interface
+// familiarity, not derivation: no solver source was consulted, only the shape everyone already
+// knows from published user manuals.
 //
 // A Logger is an object, not a global. Engines take a reference. Branch-and-cut runs
 // worker threads in Phase 7 and a global mutable sink would have to grow a lock at exactly

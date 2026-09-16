@@ -4,7 +4,7 @@
 
 HiGHS is invoked ONLY as an external subprocess binary. It is never linked into SANKHYA,
 never a build dependency, and no part of its source informs ours - see the red line in
-CLAUDE.md and section 1 of docs/PROVENANCE.md. This script shells out to whatever `highs`
+ENGINEERING_RULES.md and section 1 of docs/PROVENANCE.md. This script shells out to whatever `highs`
 executable the machine already has, reads its stdout, and compares numbers. That is the
 entire relationship.
 
@@ -119,7 +119,7 @@ def find_highspy():
 
     Still an external solver, still never linked into SANKHYA: `highspy` is a pip package
     that this benchmark script imports, and nothing in `src/` knows it exists. It is not a
-    build dependency and no part of HiGHS informs our code. See the red line in CLAUDE.md
+    build dependency and no part of HiGHS informs our code. See the red line in ENGINEERING_RULES.md
     and section 1 of docs/PROVENANCE.md.
     """
     try:
@@ -505,7 +505,7 @@ def main() -> int:
     #      not excluded from the "previous runs" set, and being the newest by mtime it became
     #      the baseline - so the run was compared against ITSELF and the --check regression
     #      gate could never fire. That is a gate that silently passes, on the evidence
-    #      CLAUDE.md says the project stands or falls by.
+    #      ENGINEERING_RULES.md says the project stands or falls by.
     #
     # Problem 2 was unreachable only because problem 1 crashed first. Fixing the traceback
     # alone would have exposed it.

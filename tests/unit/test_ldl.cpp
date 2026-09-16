@@ -333,8 +333,8 @@ TEST(SparseLdl, ADeadlineStopsTheAssemblyOfTheNormalEquationsToo) {
 }
 
 TEST(SparseLdl, ADeadlineNeverAskedIsADeadlineThatChangesNothing) {
-  // The property that makes this safe under CLAUDE.md's rule that wall-clock must never
-  // decide anything inside the solver: a factorization that COMPLETES does the same
+  // The property that makes this safe under ENGINEERING_RULES.md's rule that wall-clock must
+  // never decide anything inside the solver: a factorization that COMPLETES does the same
   // arithmetic and produces the same numbers whether or not a deadline was supplied. Only an
   // unfinished one is affected, and an unfinished one has no answer either way.
   std::mt19937_64 rng(11);

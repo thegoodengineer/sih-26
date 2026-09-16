@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // SANKHYA - SparseMatrix tests, fuzzed against a naive dense reference.
 //
-// The reference implementation lives in this file on purpose. CLAUDE.md forbids linking a
-// third-party matrix library into src/, and an oracle that shares code with the thing it
-// checks is worthless. DenseReference is written the obvious O(m*n) way, from the textbook
+// The reference implementation lives in this file on purpose. ENGINEERING_RULES.md forbids
+// linking a third-party matrix library into src/, and an oracle that shares code with the thing
+// it checks is worthless. DenseReference is written the obvious O(m*n) way, from the textbook
 // definition of a matrix product, so that a disagreement means the compressed code is wrong.
 
 #include <algorithm>

@@ -64,8 +64,8 @@ namespace {
 /// the record structurally ambiguous: nothing in `DEDO3 11 0 0.0246 at_lower` says whether
 /// the name is one field or two. That is not a reader bug to work around, it is an output
 /// format with an undecidable case, and tools/verify_solution.py consumes this file without
-/// linking any of our code (CLAUDE.md, "Frozen interfaces"), so both sides have to agree on
-/// something actually parseable.
+/// linking any of our code (ENGINEERING_RULES.md, "Frozen interfaces"), so both sides have to
+/// agree on something actually parseable.
 ///
 /// Quoting was chosen over fixed-width fields because it keeps the file readable by eye,
 /// which is most of the point of this format, and it costs nothing on the overwhelmingly

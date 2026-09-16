@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 // SANKHYA - Model and Solution implementation.
 //
-// recompute_quality() is the important function in this file. CLAUDE.md forbids reporting a
-// number the solver merely believes; every engine calls this immediately before returning,
-// so the infeasibility figures in the log and in the JSON blob are recomputed from the
-// primal and dual vectors rather than accumulated during the solve. An engine that has
+// recompute_quality() is the important function in this file. ENGINEERING_RULES.md forbids
+// reporting a number the solver merely believes; every engine calls this immediately before
+// returning, so the infeasibility figures in the log and in the JSON blob are recomputed from
+// the primal and dual vectors rather than accumulated during the solve. An engine that has
 // drifted is caught by its own report.
 
 #include "sankhya/model.hpp"

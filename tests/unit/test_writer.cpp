@@ -390,7 +390,8 @@ TEST(StatsWriter, CarriesTheKeysTheBenchmarkRunnersParse) {
   for (const char* key : {"version", "commit", "build_type", "compiler", "cuda_enabled"}) {
     EXPECT_TRUE(blob["sankhya"].contains(key)) << "sankhya." << key;
   }
-  // CLAUDE.md requires the commit in every benchmark record, so an empty one is a defect.
+  // ENGINEERING_RULES.md requires the commit in every benchmark record, so an empty one is a
+  // defect.
   EXPECT_FALSE(blob["sankhya"]["commit"].get<std::string>().empty());
 
   ASSERT_TRUE(blob.contains("model"));

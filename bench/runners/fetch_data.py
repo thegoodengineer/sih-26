@@ -14,7 +14,7 @@ only evidence if a judge can regenerate it.
     compile it at fetch time rather than vendoring it, so this repository contains no
     third-party source; the sha256 of everything downloaded is recorded in the manifest.
 
-``emps.c`` is a file-format converter, not a solver, so it is outside the CLAUDE.md red
+``emps.c`` is a file-format converter, not a solver, so it is outside the ENGINEERING_RULES.md red
 line. Nothing it produces is linked into SANKHYA; it runs once, offline, to turn Netlib's
 archive format into plain MPS.
 

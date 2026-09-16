@@ -51,7 +51,7 @@ if [ -n "$CXX_FOUND" ]; then
   pass "C++20 compiler        $CXX_FOUND"
 else
   blocker "no C++20 compiler found" \
-    "install MSYS2 UCRT64 GCC, or see the toolchain note in CLAUDE.md. Never let PATH
+    "install MSYS2 UCRT64 GCC, or see the toolchain note in ENGINEERING_RULES.md. Never let PATH
            order choose - one box here carries a MinGW 6.3.0 that predates C++20 entirely."
 fi
 

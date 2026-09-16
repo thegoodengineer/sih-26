@@ -6,9 +6,9 @@
 //   Phase 4  restarted PDHG          -> LP, large and sparse
 //   Phase 5  branch and cut          -> MILP
 //   Phase 8  Mehrotra IPM, convex QP -> LP and QP
-// A class with no engine returns kNotSolved and says so. Per CLAUDE.md an unimplemented
-// path reports the truth rather than a plausible zero - and in particular a MILP is NOT
-// quietly handed to the simplex and its fractional relaxation reported as optimal, which
+// A class with no engine returns kNotSolved and says so. Per ENGINEERING_RULES.md an
+// unimplemented path reports the truth rather than a plausible zero - and in particular a MILP
+// is NOT quietly handed to the simplex and its fractional relaxation reported as optimal, which
 // is the single most damaging thing this dispatcher could do.
 
 #include <algorithm>
@@ -281,7 +281,8 @@ void reconcile_status_with_measurement(Solution* solution, const Options& option
 
   // Integrality, for the same reason and with the same force. A branch-and-bound run that
   // reports optimal while holding a fractional integer variable has reported the relaxation,
-  // which CLAUDE.md names as the single most damaging thing this dispatcher could do.
+  // which ENGINEERING_RULES.md names as the single most damaging thing this dispatcher could
+  // do.
   if (solution->integrality_violation > integrality_tolerance) {
     const std::string detail = fmt::format(
         "engine reported {} but an integer column is fractional by {:.3e}, above the {:.1e} "
@@ -384,8 +385,9 @@ Solution solve(const Model& model, const Options& options, SolveControl* control
     }
 
     if (options.get_bool("gpu")) {
-      // Honest fallback, per CLAUDE.md: the CPU build must work with zero CUDA installed,
-      // and --gpu must never crash. No CUDA backend is compiled in yet, so say so once.
+      // Honest fallback, per ENGINEERING_RULES.md: the CPU build must work with zero CUDA
+      // installed, and --gpu must never crash. No CUDA backend is compiled in yet, so say so
+      // once.
       logger.warning(
           "--gpu requested but this build has no CUDA backend compiled in; running on CPU");
     }

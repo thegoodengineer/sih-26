@@ -48,11 +48,11 @@ class SparseLdl {
   /// 20,000-row model, one iteration took 813 s against a 120 s limit, most of it inside
   /// analyze(), which the loop had not returned from to look at the clock.
   ///
-  /// Returning true here abandons the work. That is safe in the sense CLAUDE.md means when it
-  /// says wall-clock must never decide anything inside the solver: a solve that COMPLETES
-  /// does exactly the arithmetic it always did, in the same order, and gets the same answer.
-  /// The clock only decides whether an unfinished solve keeps running, which is what a time
-  /// limit has always decided.
+  /// Returning true here abandons the work. That is safe in the sense ENGINEERING_RULES.md
+  /// means when it says wall-clock must never decide anything inside the solver: a solve that
+  /// COMPLETES does exactly the arithmetic it always did, in the same order, and gets the same
+  /// answer. The clock only decides whether an unfinished solve keeps running, which is what a
+  /// time limit has always decided.
   using ShouldStop = std::function<bool()>;
 
   /// Symbolic analysis of the lower triangle of a symmetric matrix (entries with

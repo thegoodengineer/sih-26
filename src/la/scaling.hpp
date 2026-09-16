@@ -10,7 +10,7 @@
 //     Gradient" (PDLP), section 4.1 - the combination used here, Ruiz followed by
 //     Pock-Chambolle with alpha = 1
 //
-// Written from the papers. No solver's source was consulted (CLAUDE.md red line).
+// Written from the papers. No solver's source was consulted (ENGINEERING_RULES.md red line).
 //
 // WHY THIS EXISTS AT ALL. PDHG converges at a rate governed by the operator norm of the
 // constraint matrix, so on a badly scaled model - a refinery LP mixing flows in tonnes with

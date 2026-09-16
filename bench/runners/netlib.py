@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Run SANKHYA over the fetched Netlib instances and emit the evidence CSV.
 
-Every column CLAUDE.md requires is here: instance, sha256 of the instance file, our
+Every column ENGINEERING_RULES.md requires is here: instance, sha256 of the instance file, our
 objective, the PUBLISHED reference objective, absolute and relative gap, status, wall time,
 iterations, git commit and a machine tag. Without the CSV there is no claim.
 
@@ -392,7 +392,7 @@ def main() -> int:
     #      not excluded from the "previous runs" set, and being the newest by mtime it became
     #      the baseline - so the run was compared against ITSELF and the --check regression
     #      gate could never fire. That is a gate that silently passes, on the evidence
-    #      CLAUDE.md says the project stands or falls by.
+    #      ENGINEERING_RULES.md says the project stands or falls by.
     #
     # Problem 2 was unreachable only because problem 1 crashed first. Fixing the traceback
     # alone would have exposed it.

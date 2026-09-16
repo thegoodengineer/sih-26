@@ -59,7 +59,7 @@ if(GIT_FOUND AND EXISTS "${PROJECT_SOURCE_DIR}/.git")
 endif()
 
 # -----------------------------------------------------------------------------------------
-# Dependencies. Per CLAUDE.md: non-solver libraries only. Each entry is justified in
+# Dependencies. Per ENGINEERING_RULES.md: non-solver libraries only. Each entry is justified in
 # docs/PROVENANCE.md, which is the artifact a judge reads.
 # -----------------------------------------------------------------------------------------
 

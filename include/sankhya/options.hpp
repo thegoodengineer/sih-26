@@ -8,7 +8,7 @@
 // going to be adding them concurrently.
 //
 // String-keyed options with typed storage is the surface shape every industrial solver
-// exposes. Per CLAUDE.md this is interface compatibility, not derivation.
+// exposes. Per ENGINEERING_RULES.md this is interface compatibility, not derivation.
 #pragma once
 
 #include <cstdint>

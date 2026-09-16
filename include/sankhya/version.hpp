@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SANKHYA - build identification.
 //
-// Every benchmark CSV records the git commit (CLAUDE.md), so the commit has to be
+// Every benchmark CSV records the git commit (ENGINEERING_RULES.md), so the commit has to be
 // reachable from inside the binary rather than from whatever shell produced the CSV.
 #pragma once
 

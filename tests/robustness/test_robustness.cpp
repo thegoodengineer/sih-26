@@ -376,7 +376,7 @@ TEST(Robustness, ConditioningSweepHoldsTheOptimumToASpreadOfTenToTheNine) {
   // solver, and the model that gets solved is not the model that was written: presolve
   // then correctly reports a row that "needs activity of at least 8e-06 but the column
   // bounds cap it at 0" - correct about the truncated model, wrong about the original.
-  // That is a documented convention (CLAUDE.md, tolerances.hpp), and a real limit: a
+  // That is a documented convention (ENGINEERING_RULES.md, tolerances.hpp), and a real limit: a
   // model whose answer depends on a coefficient below 1e-11 is outside this solver's
   // range, and the honest response is to say so rather than to lower the threshold and
   // move the cliff. To a spread of 1e9 every instance must come back to 1e-6 relative.

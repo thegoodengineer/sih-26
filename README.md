@@ -33,7 +33,7 @@ verified answer. **Non-convex** QP is the one class still refused, and refused d
 rather than approximated: it is decided by an LDL^T semidefiniteness test before any
 arithmetic starts, and a negative pivot is returned as the certificate. Reporting a local
 optimum as a global one is the single most damaging thing this dispatcher could do, so it
-does not — see the Evidence rules in [`CLAUDE.md`](CLAUDE.md).
+does not — see the Evidence rules in [`ENGINEERING_RULES.md`](ENGINEERING_RULES.md).
 
 Benchmark results against Netlib, headline first: **78 of 89** on the full set — matched
 to the published optimum to a relative 1e-6 *and* passed independent verification —

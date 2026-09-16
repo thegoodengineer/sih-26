@@ -4,8 +4,9 @@
 // A convex QP has a global minimum that first-order and interior-point methods actually
 // converge to. A NON-convex one has local minima, saddle points and possibly no finite
 // infimum at all, and every method here would still produce a point, print it, and call it
-// optimal. That is the failure mode CLAUDE.md opens with, so a Hessian that is not provably
-// positive semidefinite is REFUSED rather than solved to whatever the iteration lands on.
+// optimal. That is the failure mode ENGINEERING_RULES.md opens with, so a Hessian that is not
+// provably positive semidefinite is REFUSED rather than solved to whatever the iteration lands
+// on.
 //
 // The test is an LDL^T factorization with symmetric pivoting on the DIAGONAL only. Q is
 // positive semidefinite exactly when such a factorization exists with every d_i >= 0, and

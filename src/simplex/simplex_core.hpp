@@ -81,9 +81,9 @@ constexpr int kPerturbationTrigger = kStallLimit / 2;
 
 /// Deterministic per-variable shift in (0, kPerturbationSize].
 ///
-/// Deterministic and not random: CLAUDE.md's evidence rules are worth nothing if a rerun of
-/// the same commit on the same instance can take a different path. A fixed hash of the index
-/// gives every variable a DIFFERENT shift, which is the property that actually breaks the
+/// Deterministic and not random: ENGINEERING_RULES.md's evidence rules are worth nothing if a
+/// rerun of the same commit on the same instance can take a different path. A fixed hash of the
+/// index gives every variable a DIFFERENT shift, which is the property that actually breaks the
 /// ties, without making the run irreproducible.
 [[nodiscard]] inline double perturbation_for(Index k) noexcept {
   // UINT64_C and not a ULL suffix: uint64_t is unsigned long on Linux and unsigned long long
@@ -533,7 +533,7 @@ class Simplex {
   // This matches what #67's own comment thread already found when Harris was first tried
   // against devex ("measures null") - it is not a devex-specific interaction, it reproduces
   // under plain Dantzig too. The textbook rule stays the default so the medium pass rate does
-  // not drop (CLAUDE.md); Harris is implemented, cited, tested and selectable
+  // not drop (ENGINEERING_RULES.md); Harris is implemented, cited, tested and selectable
   // (--option ratio_test=harris) so this can be re-measured the moment something else in the
   // basis-conditioning chain changes, without reimplementing it from scratch.
   bool harris_ratio_test_ = false;

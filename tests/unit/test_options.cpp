@@ -70,7 +70,7 @@ TEST(Options, DeclaredTypeMatchesTheStoredDefault) {
 }
 
 TEST(Options, DefaultsComeFromTolerancesHeader) {
-  // CLAUDE.md: one numerical source of truth. If someone re-types a literal into the
+  // ENGINEERING_RULES.md: one numerical source of truth. If someone re-types a literal into the
   // registry, this test is what catches the drift.
   const Options options;
   EXPECT_DOUBLE_EQ(options.get_double("primal_feasibility_tolerance"), tol::kPrimalFeasibility);

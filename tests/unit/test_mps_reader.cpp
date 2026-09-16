@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // SANKHYA - MPS reader tests.
 //
-// These are the tests CLAUDE.md says must never be cut. RANGES and BOUNDS are the two
-// places in the MPS format where a plausible misreading yields a well-formed model of a
+// These are the tests ENGINEERING_RULES.md says must never be cut. RANGES and BOUNDS are the
+// two places in the MPS format where a plausible misreading yields a well-formed model of a
 // DIFFERENT problem, which then solves cleanly and reports a confident wrong optimum. Every
 // row type crossed with every range sign, and every bound type including the two whose
 // conventions are counter-intuitive, is pinned down here by construction rather than by

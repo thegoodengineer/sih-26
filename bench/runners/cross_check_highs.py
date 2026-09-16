@@ -29,7 +29,7 @@ stays the reference netlib.py measures against, because a project cannot be allo
 itself against a solver it chose. This produces EVIDENCE, in a CSV, for reading alongside the
 benchmark - so a disagreement can be attributed rather than merely counted.
 
-HiGHS is used here as a reference solver for comparison, which is what CLAUDE.md's dependency
+HiGHS is used here as a reference solver for comparison, which is what ENGINEERING_RULES.md's dependency
 policy permits and what bench/runners/compare.py already does. No HiGHS source is read,
 vendored, or derived from.
 
