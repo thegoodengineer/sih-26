@@ -123,7 +123,7 @@ def build_document() -> dict:
         "name": "sankhya",
         "SPDXID": spdx_id("sankhya"),
         "versionInfo": version,
-        "downloadLocation": "https://github.com/thegoodengineer/sih-26",
+        "downloadLocation": "https://github.com/thegoodengineers/SANKHYA",
         "filesAnalyzed": False,
         "licenseConcluded": "Apache-2.0",
         "licenseDeclared": "Apache-2.0",
@@ -192,7 +192,7 @@ def build_document() -> dict:
         "dataLicense": "CC0-1.0",
         "SPDXID": "SPDXRef-DOCUMENT",
         "name": f"sankhya-{version}",
-        "documentNamespace": f"https://github.com/thegoodengineer/sih-26/spdx/sankhya-{version}",
+        "documentNamespace": f"https://github.com/thegoodengineers/SANKHYA/spdx/sankhya-{version}",
         "creationInfo": {
             "created": created,
             "creators": ["Tool: tools/make_sbom.py", "Organization: SANKHYA (SIH 2026 PS26119)"],

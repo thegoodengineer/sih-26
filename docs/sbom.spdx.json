@@ -2,21 +2,21 @@
   "SPDXID": "SPDXRef-DOCUMENT",
   "creationInfo": {
     "comment": "Generated from the FetchContent_Declare blocks of CMakeLists.txt and the dependency table of docs/PROVENANCE.md. Not a binary scan: it states what the build declares, which is the thing a reader can check against the source. `ldd` output for the built binary is printed by the provenance job of .github/workflows/ci.yml and is the complementary check.",
-    "created": "2026-09-07T13:25:49Z",
+    "created": "2026-09-16T17:47:32Z",
     "creators": [
       "Tool: tools/make_sbom.py",
       "Organization: SANKHYA (SIH 2026 PS26119)"
     ]
   },
   "dataLicense": "CC0-1.0",
-  "documentNamespace": "https://github.com/thegoodengineer/sih-26/spdx/sankhya-0.1.0",
+  "documentNamespace": "https://github.com/thegoodengineers/SANKHYA/spdx/sankhya-0.1.0",
   "name": "sankhya-0.1.0",
   "packages": [
     {
       "SPDXID": "SPDXRef-Package-sankhya",
       "copyrightText": "NOASSERTION",
       "description": "A mathematical optimization solver core (LP, MILP, convex QP, MIQP) written from mathematical foundations in C++20.",
-      "downloadLocation": "https://github.com/thegoodengineer/sih-26",
+      "downloadLocation": "https://github.com/thegoodengineers/SANKHYA",
       "filesAnalyzed": false,
       "licenseConcluded": "Apache-2.0",
       "licenseDeclared": "Apache-2.0",
