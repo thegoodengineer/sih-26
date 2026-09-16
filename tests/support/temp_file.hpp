@@ -8,7 +8,9 @@
 // later.
 #pragma once
 
+#include <cstdint>
 #include <cstdio>
+#include <random>
 #include <string>
 #include <string_view>
 
@@ -21,7 +23,19 @@ class TempFile {
   /// Write `contents` to a uniquely named file with the given extension.
   TempFile(std::string_view contents, const char* extension = ".mps") {
     static int counter = 0;
-    path_ = std::string("sankhya_test_") + std::to_string(counter++) + extension;
+    static const std::uint64_t process_nonce = []() {
+      std::random_device rd;
+      std::seed_seq seq{rd(), rd(), rd(), rd()};
+      std::mt19937_64 gen(seq);
+      std::uniform_int_distribution<std::uint64_t> dist;
+      return dist(gen);
+    }();
+
+    char suffix[32];
+    std::snprintf(suffix, sizeof(suffix), "_%016llx",
+                  static_cast<unsigned long long>(process_nonce));
+
+    path_ = std::string("sankhya_test_") + std::to_string(counter++) + suffix + extension;
     std::FILE* out = std::fopen(path_.c_str(), "wb");
     if (out == nullptr) {
       ADD_FAILURE() << "cannot create scratch file " << path_;
