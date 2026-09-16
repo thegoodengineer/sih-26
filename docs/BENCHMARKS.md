@@ -336,8 +336,8 @@ A ratio above 1 means restarts saved iterations on that instance.
 Every tier above is Netlib-sized: the largest instance in the full set has 12,230 columns, and
 most have a few hundred, so none of them speaks to the size PS26119 asks about.
 
-Source CSV: `bench/results/scale-f7ca7e9.csv`  
-Commit `f7ca7e9` · machine `Windows-AMD64` · 120.0s per solve
+Source CSV: `bench/results/scale-41eddbf.csv`  
+Commit `41eddbf` · machine `Windows-AMD64` · 120.0s per solve
 
 PS26119 asks for **thousands to millions of variables**, and this is the section that answers it with a file rather than an adjective. The instances are generated backwards from a primal-dual pair that already satisfies the KKT conditions, from integer data, so the optimum is known EXACTLY before the solver sees the model (`bench/runners/generate_large_lp.py`). A large random instance would prove nothing: nobody would know whether the answer was right.
 
@@ -345,24 +345,24 @@ PS26119 asks for **thousands to millions of variables**, and this is the section
 
 | size (rows x cols) | engine | status | objective | relative error | iterations | seconds |
 |---:|---|---|---:|---:|---:|---:|
-| 1,000 | `dual-simplex` | optimal | -362 | 3.8e-14 | 3656 | 1.1 |
-| 1,000 | `ipm` | optimal | -361.9999994 | 1.6e-09 | 19 | 0.7 |
-| 1,000 | `pdhg` | optimal | -362 | 6.0e-13 | 71200 | 2.8 |
-| 5,000 | `dual-simplex` | time limit | 1819.789785 | 8.2e-01 | 18338 | 120.5 |
-| 5,000 | `ipm` | time limit | 9945.001602 | 1.6e-07 | 23 | 120.1 |
-| 5,000 | `pdhg` | time limit | 9944.999998 | 1.8e-10 | 291612 | 114.2 |
-| 20,000 | `dual-simplex` | time limit | -252644.3002 | 8.5e+00 | 8415 | 120.3 |
-| 20,000 | `ipm` | time limit | 27091.64405 | 2.0e+00 | 0 | 120.4 |
-| 20,000 | `pdhg` | time limit | -26591.99972 | 1.0e-08 | 63098 | 87.9 |
-| 100,000 | `dual-simplex` | time limit | -6322592.512 | 7.5e+01 | 1194 | 125.3 |
-| 100,000 | `ipm` | time limit | 166557.9183 | 3.0e+00 | 0 | 122.7 |
-| 100,000 | `pdhg` | time limit | -83109.99246 | 9.1e-08 | 11371 | 115.5 |
+| 1,000 | `dual-simplex` | optimal | -362 | 3.5e-14 | 6757 | 1.2 |
+| 1,000 | `ipm` | optimal | -361.9999994 | 1.6e-09 | 19 | 0.6 |
+| 1,000 | `pdhg` | optimal | -362 | 6.0e-13 | 71200 | 2.5 |
+| 5,000 | `dual-simplex` | time limit | 24637.52716 | 1.5e+00 | 24316 | 120.1 |
+| 5,000 | `ipm` | time limit | 9945.000027 | 2.7e-09 | 24 | 120.1 |
+| 5,000 | `pdhg` | time limit | 9944.999998 | 1.8e-10 | 356680 | 114.5 |
+| 20,000 | `dual-simplex` | time limit | -127847.1017 | 3.8e+00 | 28564 | 120.2 |
+| 20,000 | `ipm` | time limit | 27091.64405 | 2.0e+00 | 0 | 120.5 |
+| 20,000 | `pdhg` | time limit | -26591.99944 | 2.1e-08 | 87227 | 87.5 |
+| 100,000 | `dual-simplex` | time limit | -2694428.902 | 3.1e+01 | 13745 | 121.0 |
+| 100,000 | `ipm` | no output | - | - | - | 221.3 |
+| 100,000 | `pdhg` | time limit | -83109.99102 | 1.1e-07 | 19032 | 114.9 |
 
 **7 of 12** solves reached the analytic optimum to a relative 1e-06.
 
-- `dual-simplex` reached it at **1,000** rows and columns (optimal, 1.1 s).
+- `dual-simplex` reached it at **1,000** rows and columns (optimal, 1.2 s).
 - `ipm` reached it at **5,000** rows and columns (time limit, 120.1 s).
-- `pdhg` reached it at **100,000** rows and columns (time limit, 115.5 s).
+- `pdhg` reached it at **100,000** rows and columns (time limit, 114.9 s).
 
 **Reaching the answer and proving it are different things, and at this scale they come apart.** `ipm` at 5,000, `pdhg` at 5,000, `pdhg` at 20,000, `pdhg` at 100,000 landed on the analytic optimum and still stopped at the limit, because the convergence test had not been satisfied when the clock ran out. Reported as what it is - not `optimal` - and worth knowing: a first-order method is useful long before it can certify itself.
 
@@ -435,30 +435,30 @@ Commit `f7ca7e9` · machine `Windows-AMD64` · 120.0s per solve · staircase str
 | `ipm` | 5,000 | 20,000 |
 | `pdhg` | 100,000 | 100,000 |
 
-**Structure is what a direct method needs, and the table shows it:** `ipm` from 5,000 to 20,000. Nothing about the solver changed between the two families. What changed between the shapes is whether the matrix has small separators, and the measurements behind that - the ordering time and the fill in the factor at the same size on both shapes - are in #193. The lesson for the section above is that its random family is a fair test of the first-order engine and an unfair one of the other two.
+**Structure is what a direct method needs, and the table shows it:** `ipm` from 5,000 to 20,000. The two families were measured at different commits - random at `41eddbf`, staircase at `f7ca7e9` - so the solver is not identical between them; each table stands on its own commit, and the comparison is of shapes, not of versions. What changed between the shapes is whether the matrix has small separators, and the measurements behind that - the ordering time and the fill in the factor at the same size on both shapes - are in #193. The lesson for the section above is that its random family is a fair test of the first-order engine and an unfair one of the other two.
 
 The 20,000-row `ipm` row is the one to read against the first measurement of this family, `bench/results/scale-staircase-bb4eefa.csv`, where it was a numerical failure after 300 iterations. Running that row is what found the defect fixed in #205 - the method had converged to a relative gap of 1e-7 and then iterated on a NaN that overwrote the answer - and here it reports feasible at a relative error of 1.4e-08 in 27 iterations. Same instance, same hash; the stopping rule is what changed.
 
 #### 1f.3 A refinery planning model, by the year
 
-Source CSV: `bench/results/scale-refinery-f7ca7e9.csv`  
-Commit `f7ca7e9` · machine `Windows-AMD64` · 120.0s per solve · refinery structure
+Source CSV: `bench/results/scale-refinery-41eddbf.csv`  
+Commit `41eddbf` · machine `Windows-AMD64` · 120.0s per solve · refinery structure
 
 **A refinery planning model, rolled out over T periods** (`bench/runners/generate_refinery_lp.py`, #211): crude purchases, distillation throughput and crude tanks per crude; production by yields, sales and product tanks per product; distillation and unit capacities, quality budgets and delivery commitments per period; inventory balances coupling each period to the next. The operating plan is chosen first and the prices derived from the KKT conditions, so the optimum is exact by construction, as for the other two families. Rows are what the generator built - T = 12 is a monthly year, 365 a daily one, 8,760 hourly.
 
 | periods | rows x cols | engine | status | objective | relative error | iterations | seconds |
 |---:|---:|---|---|---:|---:|---:|---:|
-| 12 | 1,068 x 1,656 | `dual-simplex` | optimal | -61203.88791 | 7.1e-16 | 5468 | 1.3 |
+| 12 | 1,068 x 1,656 | `dual-simplex` | optimal | -61203.88791 | 2.4e-16 | 4395 | 0.5 |
 | 12 | 1,068 x 1,656 | `ipm` | optimal | -61203.88791 | 1.4e-13 | 36 | 0.3 |
 | 12 | 1,068 x 1,656 | `pdhg` | optimal | -61203.88791 | 5.5e-13 | 17720 | 1.2 |
-| 365 | 32,485 x 50,370 | `dual-simplex` | time limit | -79628426.64 | 5.0e+01 | 8110 | 121.0 |
-| 365 | 32,485 x 50,370 | `ipm` | optimal | -1571173.846 | 6.8e-12 | 45 | 92.6 |
-| 365 | 32,485 x 50,370 | `pdhg` | optimal | -1571173.846 | 1.5e-16 | 31226 (of which 5 polish) | 95.4 |
-| 8760 | 779,640 x 1,208,880 | `dual-simplex` | time limit | -1213604809 | 3.2e+01 | 1 | 208.4 |
-| 8760 | 779,640 x 1,208,880 | `ipm` | time limit | -475650568.5 | 1.2e+01 | 1 | 155.0 |
-| 8760 | 779,640 x 1,208,880 | `pdhg` | time limit | -36893706.86 | 1.1e-06 | 1120 | 134.0 |
+| 365 | 32,485 x 50,370 | `dual-simplex` | time limit | -2917077.938 | 8.6e-01 | 33057 | 120.8 |
+| 365 | 32,485 x 50,370 | `ipm` | optimal | -1571173.846 | 6.8e-12 | 45 | 77.5 |
+| 365 | 32,485 x 50,370 | `pdhg` | optimal | -1571173.846 | 8.9e-16 | 29746 (of which 5 polish) | 92.8 |
+| 8760 | 779,640 x 1,208,880 | `dual-simplex` | time limit | -1216296420 | 3.2e+01 | 1558 | 136.1 |
+| 8760 | 779,640 x 1,208,880 | `ipm` | time limit | -475650568.5 | 1.2e+01 | 1 | 139.0 |
+| 8760 | 779,640 x 1,208,880 | `pdhg` | time limit | -36893719.77 | 7.9e-07 | 1427 | 113.2 |
 
-**5 of 9** solves reached the analytic optimum to a relative 1e-06 on this model; the largest solved is 32,485 rows.
+**6 of 9** solves reached the analytic optimum to a relative 1e-06 on this model; the largest solved is 779,640 rows.
 
 ---
 
