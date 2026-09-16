@@ -330,7 +330,19 @@ const std::vector<OptionSpec>& Options::registry() {
                  false,
                  "MILP/MIQP: keep searching past the optimum until the pool provably holds "
                  "the pool_size best assignments (within pool_gap). Costs nodes; off by "
-                 "default, which reports only what the ordinary search found.",
+                 "default, which reports only what the ordinary search found. With "
+                 "pool_diversity on it cannot prune and enumerates every integer-feasible "
+                 "assignment, so combine the two only on small models or with pool_gap.",
+                 0.0,
+                 0.0,
+                 {}});
+    s.push_back({"pool_write_all_columns",
+                 OptionType::Bool,
+                 false,
+                 "MILP/MIQP: write every column of each pool member to the .sol file, not "
+                 "only the integer ones, so tools/verify_solution.py can check every row of "
+                 "every member exactly. Off by default because on a large model the pool "
+                 "section would repeat the whole point pool_size times.",
                  0.0,
                  0.0,
                  {}});

@@ -886,33 +886,38 @@ def verify_pool(model: Model, solution: Solution, report: Report, x: list[float]
                 objective: float, primal_tol: float, integer_tol: float) -> None:
     """The solution pool (#225), checked from what the file says and nothing else.
 
-    The file carries only the INTEGER columns of each member, so what can be proved depends
-    on the model. On a pure-integer model every member is a full point and is checked the
-    way the main solution is: bounds, integrality, every row, and the objective recomputed.
-    With continuous columns present, the integer part is checked exactly and each row is
-    checked for whether the continuous columns' own bounds can still close it - a necessary
-    condition, not a proof that one continuous completion satisfies every row at once, and
-    the check says so rather than claiming more.
+    By default the file carries only the INTEGER columns of each member, so what can be
+    proved depends on the model. When every member is a full point - a pure-integer model, or
+    a file written with pool_write_all_columns - each is checked the way the main solution
+    is: bounds, integrality, every row, and the objective recomputed. With continuous columns
+    missing, the integer part is checked exactly and each row is checked for whether the
+    continuous columns' own bounds can still close it - a necessary condition, not a proof
+    that one continuous completion satisfies every row at once, and the check says so rather
+    than claiming more.
     """
     sigma = -1.0 if model.maximize else 1.0
     integer_names = [n for j, n in enumerate(model.col_names) if model.col_integer[j]]
     members = solution.pool
     ranks = [rank for rank, _, _ in members]
-    complete = all(set(values) == set(integer_names) for _, _, values in members)
+    all_names = set(model.col_names)
+    full = bool(members) and all(set(values) == all_names for _, _, values in members)
+    complete = full or all(set(values) == set(integer_names) for _, _, values in members)
+    written = model.col_names if full else integer_names
     report.check(ranks == list(range(1, len(members) + 1)) and complete, "pool: structure",
-                 f"{len(members)} member(s), each listing all {len(integer_names)} integer "
-                 "columns" if complete else f"{len(members)} member(s); ranks {ranks[:5]}, "
-                 "or a member missing integer columns")
+                 (f"{len(members)} member(s), each listing all {len(written)} "
+                  + ("columns" if full else "integer columns")) if complete
+                 else f"{len(members)} member(s); ranks {ranks[:5]}, or a member listing "
+                      "neither every integer column nor every column")
     if not complete:
         return
 
     first = members[0]
-    worst_first = max((abs(first[2][n] - x[model.col_index[n]]) for n in integer_names),
-                      default=0.0)
+    worst_first = max((abs(first[2][n] - x[model.col_index[n]])
+                       / max(1.0, abs(x[model.col_index[n]])) for n in written), default=0.0)
     scale = max(1.0, abs(objective))
     report.check(worst_first <= integer_tol and abs(first[1] - objective) <= 1e-9 * scale,
                  "pool: first member is the reported solution",
-                 f"integer values differ by at most {worst_first:.3e}, objective "
+                 f"values differ by at most {worst_first:.3e} (relative), objective "
                  f"{first[1]:.12e} against {objective:.12e}")
 
     order_ok = all(sigma * members[k + 1][1] >= sigma * members[k][1]
@@ -926,31 +931,35 @@ def verify_pool(model: Model, solution: Solution, report: Report, x: list[float]
 
     worst_integrality, worst_bound = 0.0, 0.0
     for _, _, values in members:
-        for n in integer_names:
+        for n in written:
             j = model.col_index[n]
             v = values[n]
-            worst_integrality = max(worst_integrality, abs(v - round(v)))
-            worst_bound = max(worst_bound, model.col_lower[j] - v, v - model.col_upper[j])
+            if model.col_integer[j]:
+                worst_integrality = max(worst_integrality, abs(v - round(v)))
+            worst_bound = max(worst_bound,
+                              (model.col_lower[j] - v) / max(1.0, abs(v)),
+                              (v - model.col_upper[j]) / max(1.0, abs(v)))
     report.check(worst_integrality <= integer_tol and worst_bound <= primal_tol,
                  "pool: integrality and column bounds",
                  f"worst integrality {worst_integrality:.3e}, worst bound violation "
                  f"{max(worst_bound, 0.0):.3e}")
 
-    # Rows: the integer part is fixed; each continuous column contributes an interval.
-    continuous = [j for j in range(model.num_cols) if not model.col_integer[j]]
+    # Rows: the written part is fixed; each unwritten continuous column contributes an interval.
+    continuous = [] if full else [j for j in range(model.num_cols) if not model.col_integer[j]]
+    known = [full or model.col_integer[j] for j in range(model.num_cols)]
     by_row: list[list[tuple[int, float]]] = [[] for _ in range(model.num_rows)]
     for j in range(model.num_cols):
         for i, a in model.entries[j]:
             by_row[i].append((j, a))
     mixed_rows = sum(1 for i in range(model.num_rows)
-                     if any(not model.col_integer[j] for j, _ in by_row[i]))
+                     if any(not known[j] for j, _ in by_row[i]))
     worst_row, where = 0.0, ""
     for rank, _, values in members:
         for i in range(model.num_rows):
             low = high = 0.0
             magnitude = 1.0
             for j, a in by_row[i]:
-                if model.col_integer[j]:
+                if known[j]:
                     term = a * values[model.col_names[j]]
                     low += term
                     high += term
@@ -966,14 +975,17 @@ def verify_pool(model: Model, solution: Solution, report: Report, x: list[float]
             if scaled > worst_row:
                 worst_row, where = scaled, f"{model.row_names[i]} in member {rank}"
     report.check(worst_row <= primal_tol, "pool: rows",
-                 (f"exact on all {model.num_rows} rows (no continuous columns)" if not continuous
+                 (f"exact on all {model.num_rows} rows ("
+                  + ("every column written" if full else "no continuous columns") + ")"
+                  if not continuous
                   else f"{model.num_rows - mixed_rows} row(s) exact; on {mixed_rows} row(s) with "
                        "continuous columns, only that their bounds can still close the row")
                  + f"; worst {worst_row:.3e}" + (f" on {where}" if where else ""))
 
     if continuous:
         report.note("pool: objectives",
-                    "not recomputed: the continuous values are not written, by design")
+                    "not recomputed: the continuous values are not written, by design "
+                    "(pool_write_all_columns writes them)")
         return
     worst_objective = 0.0
     for _, claimed, values in members:

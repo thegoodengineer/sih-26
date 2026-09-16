@@ -296,5 +296,46 @@ TEST(SolutionPool, TheSolFileCarriesThePoolIntegersOnly) {
   EXPECT_NE(text.find("end pool\n"), std::string::npos);
 }
 
+TEST(SolutionPool, PoolWriteAllColumnsWritesTheContinuousColumnsToo) {
+  // maximise z - 4y, z - 10y <= 0, y binary, 0 <= z <= 10: two plans, (1, 10) and (0, 0).
+  Model model;
+  model.sense = ObjSense::kMaximize;
+  model.col_cost = {-4.0, 1.0};
+  model.col_lower = {0.0, 0.0};
+  model.col_upper = {1.0, 10.0};
+  model.col_type = {VarType::kInteger, VarType::kContinuous};
+  model.row_lower = {-kInfinity};
+  model.row_upper = {0.0};
+  model.matrix.reset(1, 2);
+  model.matrix.add_entry(0, 0, -10.0);
+  model.matrix.add_entry(0, 1, 1.0);
+  model.matrix.finalize();
+  model.hessian.reset(2, 2);
+  model.hessian.finalize();
+
+  Options options = pool_options(5, true);
+  const Solution s = solve(model, options);
+  ASSERT_EQ(s.status, SolveStatus::kOptimal) << s.message;
+  expect_pool_invariants(model, s);
+  ASSERT_EQ(s.pool.size(), 2u);
+
+  const auto written = [&](const Options& with) {
+    const TempFile file("", ".sol");
+    std::string error;
+    EXPECT_TRUE(io::write_solution(file.path(), model, s, with, &error)) << error;
+    std::string text;
+    if (std::FILE* in = std::fopen(file.path().c_str(), "rb")) {
+      char buffer[4096];
+      std::size_t got = 0;
+      while ((got = std::fread(buffer, 1, sizeof buffer, in)) > 0) text.append(buffer, got);
+      std::fclose(in);
+    }
+    return text;
+  };
+  EXPECT_NE(written(options).find("begin pool 2 1\n"), std::string::npos);
+  options.set_bool("pool_write_all_columns", true);
+  EXPECT_NE(written(options).find("begin pool 2 2\n"), std::string::npos);
+}
+
 }  // namespace
 }  // namespace sankhya

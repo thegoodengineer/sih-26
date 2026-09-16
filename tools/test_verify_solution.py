@@ -719,6 +719,75 @@ def test_a_pool_that_does_not_start_with_the_solution_is_rejected() -> None:
           "a pool not led by the reported solution is rejected", f"failed: {_failed(report)}")
 
 
+# A mixed model, where writing only the integers leaves a row the verifier cannot check:
+#   maximise z - 4y  subject to  z - 10y <= 0,  y binary, 0 <= z <= 10.
+#   y = 1, z = 10 gives 6; y = 0 forces z = 0 and gives 0.
+MIXED_POOL_MPS = "\n".join([
+    "NAME          POOLMIX",
+    "OBJSENSE",
+    "    MAXIMIZE",
+    "ROWS",
+    " N  VALUE",
+    " L  LINK",
+    "COLUMNS",
+    "    MARKER                 'MARKER'                 'INTORG'",
+    "    y         VALUE        -4.0   LINK        -10.0",
+    "    MARKER                 'MARKER'                 'INTEND'",
+    "    z         VALUE         1.0   LINK          1.0",
+    "RHS",
+    "    RHS       LINK          0.0",
+    "BOUNDS",
+    " UP BND       y             1.0",
+    " UP BND       z            10.0",
+    "ENDATA",
+]) + "\n"
+
+
+def _mixed_pool_sol(members, all_columns: bool) -> str:
+    lines = ["# SANKHYA solution file", "model POOLMIX", "status optimal", "objective 6",
+             "dual_bound 6", "mip_relative_gap 0.0001", "mip_absolute_gap 1e-06",
+             "objective_offset 0", "certificate none", "",
+             "begin columns 2", "y 1 0 basic", "z 10 0 at_upper", "end columns", "",
+             "begin rows 1", "LINK 0 0 at_upper", "end rows", "",
+             f"begin pool {len(members)} {2 if all_columns else 1}"]
+    for rank, (objective, y, z) in enumerate(members, start=1):
+        lines += [f"solution {rank} {objective}", f"y {y}"] + ([f"z {z}"] if all_columns else [])
+    lines.append("end pool")
+    return "\n".join(lines) + "\n"
+
+
+def _verify_mixed_pool(members, all_columns: bool):
+    with tempfile.TemporaryDirectory() as tmp:
+        mps = Path(tmp) / "mix.mps"
+        sol = Path(tmp) / "mix.sol"
+        mps.write_text(MIXED_POOL_MPS)
+        sol.write_text(_mixed_pool_sol(members, all_columns))
+        return vs.verify(vs.parse_mps(mps), vs.parse_sol(sol), 1e-7, 1e-7, 1e-6, 1e-6)
+
+
+def test_a_full_column_pool_is_checked_exactly() -> None:
+    report = _verify_mixed_pool([(6, 1, 10), (0, 0, 0)], all_columns=True)
+    rows = [detail for _, name, detail in report.lines if name == "pool: rows"]
+    check(report.failures == 0, "a pool written with every column verifies",
+          f"failed: {_failed(report)}")
+    check(bool(rows) and "exact on all 1 rows" in rows[0],
+          "with every column written the rows are checked exactly", f"{rows}")
+
+
+def test_a_continuous_value_breaking_a_row_is_caught_only_with_every_column() -> None:
+    # y = 0 forces z = 0; this member claims z = 5, objective 5. Written with integers only,
+    # the verifier can only see y = 0 and z's own bounds, which could close the row - so it
+    # cannot catch this, and says what it checked. Written in full, it must.
+    tampered = [(6, 1, 10), (5, 0, 5)]
+    full = _verify_mixed_pool(tampered, all_columns=True)
+    check("pool: rows" in _failed(full), "a continuous value breaking a row is rejected when "
+          "every column is written", f"failed: {_failed(full)}")
+    partial = _verify_mixed_pool(tampered, all_columns=False)
+    check("pool: rows" not in _failed(partial), "with integers only the same member cannot be "
+          "caught, which is why the output says the row check is only necessary",
+          f"failed: {_failed(partial)}")
+
+
 def main() -> int:
     print("test_fixed_format_row_name_with_space")
     test_fixed_format_row_name_with_space()
@@ -754,6 +823,8 @@ def main() -> int:
     test_a_pool_member_that_breaks_a_row_is_rejected()
     test_a_pool_member_with_the_wrong_objective_is_rejected()
     test_a_pool_that_does_not_start_with_the_solution_is_rejected()
+    test_a_full_column_pool_is_checked_exactly()
+    test_a_continuous_value_breaking_a_row_is_caught_only_with_every_column()
     print()
     if FAILURES == 0:
         print("ALL TESTS PASSED")
