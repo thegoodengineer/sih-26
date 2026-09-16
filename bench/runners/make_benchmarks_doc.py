@@ -1159,10 +1159,17 @@ def structured_scale_section(random_path: Path | None, staircase_path: Path | No
             f"this family, `bench/results/scale-staircase-bb4eefa.csv`, where it was a "
             f"numerical failure after 300 iterations. Running that row is what found the "
             f"defect fixed in #205 - the method had converged to a relative gap of 1e-7 and "
-            f"then iterated on a NaN that overwrote the answer - and here it reports "
+            f"then iterated on a NaN that overwrote the answer - and the cause in #209: as "
+            f"the barrier vanishes the normal equations go singular and thousands of pivots "
+            f"hit the regularization floor in one factorization. Since #241 that spike ends "
+            f"the solve on the iterate before it. Here the row reports "
             f"{twenty_k.get('status', '').replace('_', ' ')} at a relative error of "
             f"{as_float(twenty_k, 'relative_error'):.1e} in {twenty_k.get('iterations')} "
-            f"iterations. Same instance, same hash; the stopping rule is what changed.",
+            f"iterations. Same instance, same hash; the stopping rule is what changed."
+            + (" `feasible`, not `optimal`, because the status guard measures the point's "
+               "dual side against the 1e-7 tolerance and it misses; a converged interior "
+               "point with no basis has no cheaper way to close that than crossover (#219)."
+               if twenty_k.get("status") == "feasible" else ""),
             "",
         ]
     return chr(10).join(out)

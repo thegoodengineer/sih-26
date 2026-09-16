@@ -407,25 +407,25 @@ Only the first-order method is measured here, and deliberately. The simplex and 
 
 #### 1f.2 The same sizes on a second shape
 
-Source CSV: `bench/results/scale-staircase-f7ca7e9.csv`  
-Commit `f7ca7e9` · machine `Windows-AMD64` · 120.0s per solve · staircase structure
+Source CSV: `bench/results/scale-staircase-54fcb6f.csv`  
+Commit `54fcb6f` · machine `Windows-AMD64` · 120.0s per solve · staircase structure
 
 **Same construction, same sizes, same nonzeros per column, different pattern.** The random family above draws each column's rows uniformly, which makes an expander graph: no small separators, so every elimination ordering fills catastrophically. That is the worst case for a method that factorizes and it looks nothing like an industrial model. This family is a staircase, each column in its own period with one coupling into the next - a multi-period planning model, which is the shape PS26119's own domain produces. The optimum is exact by construction either way.
 
 | size (rows x cols) | engine | status | objective | relative error | iterations | seconds |
 |---:|---|---|---:|---:|---:|---:|
-| 1,000 | `dual-simplex` | optimal | -5821 | 0.0e+00 | 5149 | 8.0 |
+| 1,000 | `dual-simplex` | optimal | -5821 | 1.4e-15 | 5668 | 1.0 |
 | 1,000 | `ipm` | optimal | -5820.999999 | 1.3e-10 | 18 | 0.8 |
-| 1,000 | `pdhg` | optimal | -5821 | 4.1e-11 | 76560 | 22.2 |
-| 5,000 | `dual-simplex` | time limit | -15872.791 | 1.3e-01 | 13761 | 120.1 |
-| 5,000 | `ipm` | optimal | -14008 | 1.1e-10 | 24 | 6.4 |
-| 5,000 | `pdhg` | optimal | -14008 | 7.8e-12 | 155280 | 47.9 |
-| 20,000 | `dual-simplex` | time limit | -150394.8844 | 2.1e+01 | 10144 | 120.7 |
-| 20,000 | `ipm` | feasible | 7459.000101 | 1.4e-08 | 27 | 25.9 |
-| 20,000 | `pdhg` | feasible | 7459.000138 | 1.9e-08 | 73833 (of which 19 polish) | 103.2 |
-| 100,000 | `dual-simplex` | time limit | -6012310.933 | 6.2e+01 | 1453 | 121.4 |
-| 100,000 | `ipm` | time limit | 98432.69589 | 1.9e-04 | 24 | 121.1 |
-| 100,000 | `pdhg` | time limit | 98413.93037 | 7.1e-07 | 13907 (of which 5 polish) | 115.1 |
+| 1,000 | `pdhg` | optimal | -5821 | 4.1e-11 | 76560 | 2.8 |
+| 5,000 | `dual-simplex` | time limit | -14410.96382 | 2.9e-02 | 29662 | 120.2 |
+| 5,000 | `ipm` | optimal | -14008 | 1.1e-10 | 24 | 7.8 |
+| 5,000 | `pdhg` | optimal | -14008 | 7.8e-12 | 155280 | 78.2 |
+| 20,000 | `dual-simplex` | time limit | -92544.80188 | 1.3e+01 | 16023 | 120.4 |
+| 20,000 | `ipm` | feasible | 7459.000101 | 1.4e-08 | 26 | 69.0 |
+| 20,000 | `pdhg` | time limit | 7458.995707 | 5.8e-07 | 35766 (of which 10 polish) | 114.5 |
+| 100,000 | `dual-simplex` | time limit | -4806770.251 | 5.0e+01 | 4308 | 122.3 |
+| 100,000 | `ipm` | time limit | 220026.3888 | 1.2e+00 | 8 | 121.9 |
+| 100,000 | `pdhg` | time limit | 98413.93558 | 6.5e-07 | 6244 (of which 1 polish) | 115.9 |
 
 **8 of 12** solves reached the analytic optimum to a relative 1e-06 on this shape.
 
@@ -435,9 +435,9 @@ Commit `f7ca7e9` · machine `Windows-AMD64` · 120.0s per solve · staircase str
 | `ipm` | 5,000 | 20,000 |
 | `pdhg` | 100,000 | 100,000 |
 
-**Structure is what a direct method needs, and the table shows it:** `ipm` from 5,000 to 20,000. Nothing about the solver changed between the two families. What changed between the shapes is whether the matrix has small separators, and the measurements behind that - the ordering time and the fill in the factor at the same size on both shapes - are in #193. The lesson for the section above is that its random family is a fair test of the first-order engine and an unfair one of the other two.
+**Structure is what a direct method needs, and the table shows it:** `ipm` from 5,000 to 20,000. The two families were measured at different commits - random at `f7ca7e9`, staircase at `54fcb6f` - so the solver is not identical between them; each table stands on its own commit, and the comparison is of shapes, not of versions. What changed between the shapes is whether the matrix has small separators, and the measurements behind that - the ordering time and the fill in the factor at the same size on both shapes - are in #193. The lesson for the section above is that its random family is a fair test of the first-order engine and an unfair one of the other two.
 
-The 20,000-row `ipm` row is the one to read against the first measurement of this family, `bench/results/scale-staircase-bb4eefa.csv`, where it was a numerical failure after 300 iterations. Running that row is what found the defect fixed in #205 - the method had converged to a relative gap of 1e-7 and then iterated on a NaN that overwrote the answer - and here it reports feasible at a relative error of 1.4e-08 in 27 iterations. Same instance, same hash; the stopping rule is what changed.
+The 20,000-row `ipm` row is the one to read against the first measurement of this family, `bench/results/scale-staircase-bb4eefa.csv`, where it was a numerical failure after 300 iterations. Running that row is what found the defect fixed in #205 - the method had converged to a relative gap of 1e-7 and then iterated on a NaN that overwrote the answer - and the cause in #209: as the barrier vanishes the normal equations go singular and thousands of pivots hit the regularization floor in one factorization. Since #241 that spike ends the solve on the iterate before it. Here the row reports feasible at a relative error of 1.4e-08 in 26 iterations. Same instance, same hash; the stopping rule is what changed. `feasible`, not `optimal`, because the status guard measures the point's dual side against the 1e-7 tolerance and it misses; a converged interior point with no basis has no cheaper way to close that than crossover (#219).
 
 #### 1f.3 A refinery planning model, by the year
 
