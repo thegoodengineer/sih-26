@@ -9,6 +9,9 @@ mathematical foundations.**
 Smart India Hackathon 2026, problem statement **SIH26119**, issued by Mangalore Refinery and
 Petrochemicals Limited.
 
+Project site: [sankhya-solver.vercel.app](https://sankhya-solver.vercel.app) — the problem
+statement, what is different, the evidence, how to use it, and the team, on one page.
+
 > Not built on top of any open-source solver. See [`docs/PROVENANCE.md`](docs/PROVENANCE.md)
 > for the dependency table, the full link line, the linked-library dump, and the CI job that
 > fails the build if a solver library ever appears in the binary.
