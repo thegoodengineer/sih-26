@@ -7,6 +7,9 @@ Smart India Hackathon 2026 · Mangalore Refinery and Petrochemicals Limited (MRP
 foundations. Its first-order engine is built for the GPU; the GPU backend itself is not on
 `main` yet (see below).**
 
+*The first line above is the problem statement's title, quoted as issued. The line under
+the name is ours, and says only what is on `main`.*
+
 Smart India Hackathon 2026, problem statement **SIH26119**, issued by Mangalore Refinery and
 Petrochemicals Limited.
 
