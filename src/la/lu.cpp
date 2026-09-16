@@ -284,8 +284,41 @@ bool SparseLu::factorize(const std::vector<LuColumn>& columns, Index m, double p
     entry = step;
   }
   build_column_u();
+  build_row_l();
   base_nonzeros_ = factor_nonzeros();
   return true;
+}
+
+void SparseLu::build_row_l() {
+  // Transpose L from step-major (step k holds the rows its multipliers touch) into
+  // row-major by STEP: for the row retired at step k, the earlier steps j < k that hold a
+  // multiplier on it. A multiplier of step j lives on a row still active after step j, so
+  // that row's own step is later than j and the map is well defined.
+  const Index m = m_;
+  std::vector<Index> step_of_row(static_cast<std::size_t>(m), -1);
+  for (Index k = 0; k < m; ++k) {
+    step_of_row[static_cast<std::size_t>(pivot_row_[static_cast<std::size_t>(k)])] = k;
+  }
+  lr_start_.assign(static_cast<std::size_t>(m) + 1, 0);
+  for (const Index row : l_rows_) {
+    ++lr_start_[static_cast<std::size_t>(step_of_row[static_cast<std::size_t>(row)]) + 1];
+  }
+  for (Index k = 0; k < m; ++k) {
+    lr_start_[static_cast<std::size_t>(k) + 1] += lr_start_[static_cast<std::size_t>(k)];
+  }
+  lr_steps_.assign(static_cast<std::size_t>(lr_start_[static_cast<std::size_t>(m)]), 0);
+  lr_values_.assign(lr_steps_.size(), 0.0);
+  std::vector<Index> fill(lr_start_.begin(), lr_start_.end() - 1);
+  for (Index j = 0; j < m; ++j) {
+    for (Index p = l_start_[static_cast<std::size_t>(j)];
+         p < l_start_[static_cast<std::size_t>(j) + 1]; ++p) {
+      const auto up = static_cast<std::size_t>(p);
+      const Index k = step_of_row[static_cast<std::size_t>(l_rows_[up])];
+      const auto slot = static_cast<std::size_t>(fill[static_cast<std::size_t>(k)]++);
+      lr_steps_[slot] = j;
+      lr_values_[slot] = l_values_[up];
+    }
+  }
 }
 
 void SparseLu::build_column_u() {
@@ -841,9 +874,7 @@ void SparseLu::solve_reference(double* b) const {
   apply_etas(b);
 }
 
-void SparseLu::solve_transpose(double* b) const {
-  if (m_ == 0) return;
-
+void SparseLu::apply_etas_transposed(double* b) const {
   // The updates come FIRST here and in the REVERSE order to FTRAN:
   // x = B_0^-T (E_1^-T ... E_k^-T b). Applying E^-T touches one component,
   // v_p <- (v_p - sum_{i != p} alpha_i v_i) / alpha_p, leaving the rest alone.
@@ -859,14 +890,11 @@ void SparseLu::solve_transpose(double* b) const {
     const auto pivot_index = static_cast<std::size_t>(eta_pivot_position_[uk]);
     b[pivot_index] = (b[pivot_index] - accumulated) / eta_pivot_value_[uk];
   }
+}
 
-  // Forward-substitute through U^T in increasing k, in push form. work_ is indexed by step
-  // and holds the right-hand side as it is consumed.
-  for (Index k = 0; k < m_; ++k) {
-    work_[static_cast<std::size_t>(k)] =
-        b[static_cast<std::size_t>(pivot_col_[static_cast<std::size_t>(k)])];
-  }
-
+void SparseLu::forward_u_transposed() const {
+  // Forward-substitute through U^T in increasing k, in push form, on work_ indexed by step.
+  // A step whose result is exactly zero pushes nothing.
   std::vector<double>& z = work_;
   for (Index k = 0; k < m_; ++k) {
     const auto uk = static_cast<std::size_t>(k);
@@ -882,10 +910,61 @@ void SparseLu::solve_transpose(double* b) const {
       z[static_cast<std::size_t>(step)] -= u_values_[up] * value;
     }
   }
+}
+
+void SparseLu::solve_transpose(double* b) const {
+  if (m_ == 0) return;
+  apply_etas_transposed(b);
+
+  // work_ is indexed by step from here to the end: the right-hand side enters through the
+  // pivot columns and the answer leaves through the pivot rows, and both triangular passes
+  // run in step space in between, so nothing is scattered to row order and gathered back.
+  for (Index k = 0; k < m_; ++k) {
+    work_[static_cast<std::size_t>(k)] =
+        b[static_cast<std::size_t>(pivot_col_[static_cast<std::size_t>(k)])];
+  }
+  forward_u_transposed();
+
+  // HYPER-SPARSE TRANSPOSED ELIMINATION (#243; Gilbert & Peierls 1988). Apply M_k^T in
+  // DECREASING k. M_k^T subtracts, from the component on pivot row r_k, the multipliers of
+  // step k times the components on the rows they touch; every row a step-k multiplier
+  // touches is retired at a LATER step, so in decreasing k the component on r_k is final
+  // the moment step k is reached and can be pushed into every earlier step that holds a
+  // multiplier on r_k - which is exactly what the row-wise L lists. A zero component
+  // pushes nothing, so a sparse rho costs the rows it reaches rather than the whole of L,
+  // which the gather in solve_transpose_reference() reads regardless.
+  std::vector<double>& z = work_;
+  for (Index k = m_ - 1; k >= 0; --k) {
+    const auto uk = static_cast<std::size_t>(k);
+    const double value = z[uk];
+    if (value == 0.0) continue;
+    const Index begin = lr_start_[uk];
+    const Index end = lr_start_[uk + 1];
+    for (Index p = begin; p < end; ++p) {
+      const auto up = static_cast<std::size_t>(p);
+      z[static_cast<std::size_t>(lr_steps_[up])] -= lr_values_[up] * value;
+    }
+  }
+
+  for (Index k = 0; k < m_; ++k) {
+    b[static_cast<std::size_t>(pivot_row_[static_cast<std::size_t>(k)])] =
+        z[static_cast<std::size_t>(k)];
+  }
+}
+
+void SparseLu::solve_transpose_reference(double* b) const {
+  if (m_ == 0) return;
+  apply_etas_transposed(b);
+
+  for (Index k = 0; k < m_; ++k) {
+    work_[static_cast<std::size_t>(k)] =
+        b[static_cast<std::size_t>(pivot_col_[static_cast<std::size_t>(k)])];
+  }
+  forward_u_transposed();
 
   // z is indexed by step and belongs on the pivot ROWS; place it there before applying the
   // transposed elimination factors, which are indexed by row.
-  for (Index i = 0; i < m_; ++i) b[static_cast<std::size_t>(i)] = 0.0;
+  std::vector<double>& z = work_;
   for (Index k = 0; k < m_; ++k) {
     b[static_cast<std::size_t>(pivot_row_[static_cast<std::size_t>(k)])] =
         z[static_cast<std::size_t>(k)];
@@ -893,7 +972,8 @@ void SparseLu::solve_transpose(double* b) const {
 
   // Apply M_k^T in DECREASING k - the reverse of FTRAN, and the half of this file most
   // likely to be "corrected" into agreement with solve() by someone who has not read the
-  // derivation above.
+  // derivation above. This is the gather form: every entry of L is read whatever the
+  // density of the result.
   for (Index k = m_ - 1; k >= 0; --k) {
     const auto uk = static_cast<std::size_t>(k);
     const Index begin = l_start_[uk];

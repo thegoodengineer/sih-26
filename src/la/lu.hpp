@@ -107,6 +107,10 @@ class SparseLu {
 
   /// Solve B^T z = b in place. BTRAN.
   void solve_transpose(double* b) const;
+  /// The same solve with the transposed elimination factors applied as a gather over every
+  /// entry of L, kept as the reference the hyper-sparse push form is tested against (#243).
+  /// Tests only.
+  void solve_transpose_reference(double* b) const;
 
   // -------------------------------------------------------------------------------------
   // Basis update (product form of the inverse)
@@ -212,9 +216,22 @@ class SparseLu {
   std::vector<Index> uc_steps_;
   std::vector<double> uc_values_;
   void build_column_u();
+  /// L BY ROW (#243): for step k, the steps j < k whose multiplier vector has a nonzero on
+  /// row pivot_row_[k], and the values. This is what lets solve_transpose() apply the
+  /// transposed elimination factors in push form - each nonzero of the result pushes into
+  /// the earlier steps it feeds and a zero pushes nothing - instead of gathering over the
+  /// whole of L for every one of the m steps. Built beside the column-wise U; the
+  /// product-form update never touches L, so it stays valid until the next factorization.
+  std::vector<Index> lr_start_;  ///< m_ + 1 entries
+  std::vector<Index> lr_steps_;
+  std::vector<double> lr_values_;
+  void build_row_l();
   /// The three passes of solve(), so the reference and the hyper-sparse form share two.
   void forward_l(double* b) const;
   void apply_etas(double* b) const;
+  /// The two passes of solve_transpose() that the reference form shares with it.
+  void apply_etas_transposed(double* b) const;
+  void forward_u_transposed() const;
 
   /// Eta file: one entry per update, stored sparsely. eta_pivot_position_[k] is the basis
   /// position that changed, and the (row, value) pairs are the nonzeros of alpha.
