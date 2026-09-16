@@ -4,9 +4,9 @@
 
 WHY NOT THE OBVIOUS THINGS. Two of them were tried here and both are wrong:
 
-  Sorting by FILENAME sorts the commit sha as text, which is meaningless. It put
-  `netlib-medium-5fa6acc.csv` after `netlib-medium-f3b4c02.csv` purely because `e` follows
-  `a`, so the demo reported 40/50 from a superseded run when the current one said 41/50.
+  Sorting by FILENAME sorts the commit sha as text, which is meaningless: a hash says
+  nothing about which run is newer. It once put a superseded medium-tier CSV after the
+  current one, so the demo reported 40/50 when the current run said 41/50.
 
   Sorting by MODIFICATION TIME is right on the machine that produced the files and wrong
   everywhere else: git does not record mtimes, so a fresh clone stamps every file with the
