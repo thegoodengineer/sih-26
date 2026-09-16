@@ -269,6 +269,48 @@ state as much as to the solver.
 The reproducible comparison is iteration count, where the gap narrowed by a third when
 devex pricing became the default (#66); HiGHS's devex still takes fewer.
 
+## What still needs doing
+
+The list above is what the solver does not do; this is the work that would change it, as it
+stands on `main` at the time of writing, each item with the issue that carries its
+evidence and its acceptance criteria. Three kinds: things to **create** that do not exist,
+things to **improve** that exist and are measured short, and work to **finish** that is
+started. Nothing here is a claim; every row points at where the claim would have to be
+earned.
+
+### Create
+
+| what | issue | why it matters, and what it takes |
+|---|---|---|
+| **CUDA backend for PDHG** | [#16](https://github.com/thegoodengineer/sih-26/issues/16), [#17](https://github.com/thegoodengineer/sih-26/issues/17), [#19](https://github.com/thegoodengineer/sih-26/issues/19); PR [#153](https://github.com/thegoodengineer/sih-26/pull/153) | The "GPU-accelerated" in the problem statement's title. The CPU engine is shaped for it (two sparse matrix-vector products and componentwise projections per iteration, no serial dependency); the build plumbing, the kernels and the CPU-vs-GPU crossover evidence are unwritten. Blocked on a machine with the card: the PR exists and cannot be built or measured here. |
+| **Crossover** | [#219](https://github.com/thegoodengineer/sih-26/issues/219) | The interior point is the engine that scales, and its answer has no basis, so it cannot certify infeasibility, warm-start branch and bound, or feed sensitivity ranging (#220's ranges need a basis). Push its point to a vertex with a few simplex pivots. Also what would let #209's "feasible" become "optimal" on the 20,000-row staircase model. |
+| **Warm start and in-place modification** | [#218](https://github.com/thegoodengineer/sih-26/issues/218) | A planner re-solves twenty times before lunch; today every solve is cold from a file. The dual simplex already re-solves from a basis in a handful of pivots inside branch and bound (#65); the API does not expose it. |
+| **Branch-and-cut proper** | [#221](https://github.com/thegoodengineer/sih-26/issues/221) | Mixed-integer rounding cuts, and cuts below the root. Root Gomory and cover cuts exist and are off by default because they cost a proof on MIPLIB; MIR cuts from original rows are the standard remedy for the loose root bounds that keep the MIPLIB proof count where it is. |
+| **Parallel tree search** | [#222](https://github.com/thegoodengineer/sih-26/issues/222) | Branch and bound uses one of eight cores. Node LPs are independent; only the incumbent, the bound and the queue are shared. The most mechanical speedup left. |
+| **Solution pool** | [#225](https://github.com/thegoodengineer/sih-26/issues/225) | Keep the good integer solutions the tree found, not only the best; the second-best plan is often the one that survives a constraint the model does not know about. |
+| **Convex NLP behind the `solve()` seam** | [#226](https://github.com/thegoodengineer/sih-26/issues/226) | The one PS26119 line still marked partial for a reason: the seam dispatches four classes cleanly and no nonlinear engine sits behind it. Convex, separable objective by callbacks; not general nonconvex, not MINLP. |
+| **Certificates and gap targets in the C API and Python** | [#207](https://github.com/thegoodengineer/sih-26/issues/207) | The Farkas vector, the ray, the IIS and the gap tolerances are all in the `.sol` file and checked by the verifier, and none is reachable from C or Python. Accessors only. |
+
+### Improve
+
+| what | issue | where it stands |
+|---|---|---|
+| **The dual simplex's cost per iteration at size** | [#210](https://github.com/thegoodengineer/sih-26/issues/210), [#243](https://github.com/thegoodengineer/sih-26/issues/243) | #242 removed two O(m)-per-step sweeps from the factorization and the per-iteration recomputation of the basic values and duals; the per-phase clock it added (verbose log) now puts the pivot row - a BTRAN of a unit vector plus a gather over every column - at a quarter to a third of an iteration at 20,000 rows. A hyper-sparse transposed solve and a row-wise copy of A are the standard remedies (#243). None of the four 5,000- and 20,000-row scale models reaches the optimum in 120 s yet. |
+| **The unscaled retry on badly scaled generated models** | [#244](https://github.com/thegoodengineer/sih-26/issues/244) | When the scaled dual simplex times out, the unscaled retry repairs singular bases and hands over to the primal on a fresh-factor pivot disagreement. The dual ratio test accepts any pivot above an absolute 1e-9; a relative floor with a Harris pass is what production codes do. |
+| **Netlib 78 of 89** | [#214](https://github.com/thegoodengineer/sih-26/issues/214) | `maros-r7` is documented rather than solved (#247: the basis the dual hands over decays under the primal, and the run now says so as a numerical error with the numbers instead of running out the clock); `pilot87` and `dfl001` are time limits that #210's speed work is the lever for; `pilot` needs a written numerical argument on its dual residual, or iterative refinement. The full-set re-run on `main` is not done. |
+| **Mittelmann 0 of 8** | [#216](https://github.com/thegoodengineer/sih-26/issues/216) | The only benchmark line where nothing finishes. `brazil3` and `qap15` are the two within reach; the rest are size. |
+| **MIPLIB: 13 of 30 reach the optimum, 9 prove it** | [#215](https://github.com/thegoodengineer/sih-26/issues/215) | The weakest number in the project, and the issue says where each of the other instances stands. The levers are #221 and #222. |
+| **Interior point on the largest random model** | [#246](https://github.com/thegoodengineer/sih-26/issues/246) | On the 100,000-row random scale model it dies of `std::bad_alloc` 170 s past its 120 s limit with no status and no stats file, on an 8 GB machine: an out-of-memory condition must come back as a status, and the ordering needs a memory budget the way the polish has a factor budget. |
+| **Interior point: stop before the barrier breaks the factorization** | [#209](https://github.com/thegoodengineer/sih-26/issues/209) | #241 reads the regularization spike as convergence and stops one factorization earlier; the answer is `feasible`, not `optimal`, because its dual side misses the tolerance by 12%, which crossover (#219) is the honest way to close. |
+
+### Finish
+
+| what | where it stands |
+|---|---|
+| **A measurement pass on `main`** | The scale families (random, staircase, refinery at its documented 12 / 365 / 8,760 periods) and Mittelmann have to be re-measured on `main` after #240, #241 and #242, committed to `bench/results/`, and `docs/BENCHMARKS.md` regenerated from them; that closes the last acceptance box of #208, #209 and #210. It needs the machine alone for about an hour, on mains, and both attempts so far died with the session that launched them. |
+| **The final read** ([#213](https://github.com/thegoodengineer/sih-26/issues/213)) | A person reading the submission cold with the problem statement open, before 20 September. Not a code task. Two automated audits found and fixed stale and contradictory claims; a third pair of eyes is the point. |
+| **The demo recording** ([#73](https://github.com/thegoodengineer/sih-26/issues/73)) | The one open box of the packaging issue, for the PS metadata's YouTube field. `demo/run_sih_demo.sh --quick` is what to record. |
+
 ## Licence
 
 Apache-2.0.
