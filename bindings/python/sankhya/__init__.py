@@ -200,6 +200,17 @@ class Result:
         return _library().sankhya_solution_dual_bound(self._handle)
 
     @property
+    def absolute_gap(self) -> float:
+        """objective - dual_bound when the solve stopped. Zero for a solved LP."""
+        return _library().sankhya_solution_absolute_gap(self._handle)
+
+    @property
+    def relative_gap(self) -> float:
+        """The relative gap reached. A MILP reported optimal met mip_relative_gap or closed
+        the tree; this says which gap it actually finished at."""
+        return _library().sankhya_solution_relative_gap(self._handle)
+
+    @property
     def iterations(self) -> int:
         return _library().sankhya_solution_iterations(self._handle)
 
@@ -257,6 +268,50 @@ class Result:
     @property
     def reduced_costs(self) -> list[float]:
         return self._vector(_library().sankhya_solution_col_duals, self._cols, "reduced costs")
+
+    # ---- Certificates ----------------------------------------------------------------------
+
+    @property
+    def claims_a_point(self) -> bool:
+        """Whether this result carries a point at all. Check it before reading ``x``.
+
+        True for optimal, feasible, a limit that found an incumbent, and unbounded (whose
+        point is where ``primal_ray`` starts). A status with no point is written with no
+        point, so ``x`` would hold nothing meaningful.
+        """
+        return bool(_library().sankhya_solution_claims_a_point(self._handle))
+
+    def _certificate(self, length_function, copy_function, what: str) -> list[float] | None:
+        count = length_function(self._handle)
+        if count == 0:
+            # None, not []: an empty list reads as "a certificate with no entries", which is
+            # a different - and false - claim from "no certificate was produced".
+            return None
+        buffer = (ctypes.c_double * count)()
+        _check(copy_function(self._handle, buffer, count), f"reading {what}")
+        return list(buffer)
+
+    @property
+    def farkas_dual(self) -> list[float] | None:
+        """Farkas multipliers, one per row, when an infeasible verdict carries a proof.
+
+        Aggregating the rows with these weights gives an inequality no point in the variable
+        bounds can satisfy - the answer to "why is my model infeasible": the rows that
+        conflict, weighted. ``None`` when no certificate was produced, which is a legitimate
+        outcome (presolve can conclude infeasibility from bounds and explain it in
+        ``message`` instead).
+        """
+        lib = _library()
+        return self._certificate(lib.sankhya_solution_farkas_dual_length,
+                                 lib.sankhya_solution_farkas_dual, "Farkas multipliers")
+
+    @property
+    def primal_ray(self) -> list[float] | None:
+        """A direction of unbounded improvement, one entry per column, when the verdict is
+        unbounded. It starts from ``x``. ``None`` otherwise."""
+        lib = _library()
+        return self._certificate(lib.sankhya_solution_primal_ray_length,
+                                 lib.sankhya_solution_primal_ray, "unbounded ray")
 
     def __repr__(self) -> str:
         return f"<sankhya.Result {self.status} objective={self.objective:.10g}>"

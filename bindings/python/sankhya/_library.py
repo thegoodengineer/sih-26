@@ -188,6 +188,7 @@ def _declare(lib: ctypes.CDLL) -> None:
     lib.sankhya_solution_message.argtypes = [solution_p]
     lib.sankhya_solution_message.restype = ctypes.c_char_p
     for name in ("sankhya_solution_objective", "sankhya_solution_dual_bound",
+                 "sankhya_solution_absolute_gap", "sankhya_solution_relative_gap",
                  "sankhya_solution_seconds", "sankhya_solution_primal_infeasibility",
                  "sankhya_solution_dual_infeasibility",
                  "sankhya_solution_integrality_violation"):
@@ -198,6 +199,13 @@ def _declare(lib: ctypes.CDLL) -> None:
         getattr(lib, name).restype = ctypes.c_int64
     for name in ("sankhya_solution_col_values", "sankhya_solution_row_activities",
                  "sankhya_solution_row_duals", "sankhya_solution_col_duals"):
+        getattr(lib, name).argtypes = [solution_p, c_double_p, ctypes.c_int]
+        getattr(lib, name).restype = ctypes.c_int
+    for name in ("sankhya_solution_claims_a_point", "sankhya_solution_farkas_dual_length",
+                 "sankhya_solution_primal_ray_length"):
+        getattr(lib, name).argtypes = [solution_p]
+        getattr(lib, name).restype = ctypes.c_int
+    for name in ("sankhya_solution_farkas_dual", "sankhya_solution_primal_ray"):
         getattr(lib, name).argtypes = [solution_p, c_double_p, ctypes.c_int]
         getattr(lib, name).restype = ctypes.c_int
 

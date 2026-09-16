@@ -534,6 +534,14 @@ double sankhya_solution_dual_bound(const sankhya_solution* solution) {
   return solution == nullptr ? 0.0 : solution->solution.dual_bound;
 }
 
+double sankhya_solution_absolute_gap(const sankhya_solution* solution) {
+  return solution == nullptr ? 0.0 : solution->solution.absolute_gap;
+}
+
+double sankhya_solution_relative_gap(const sankhya_solution* solution) {
+  return solution == nullptr ? 0.0 : solution->solution.relative_gap;
+}
+
 int64_t sankhya_solution_iterations(const sankhya_solution* solution) {
   return solution == nullptr ? 0 : static_cast<int64_t>(solution->solution.iterations);
 }
@@ -580,6 +588,48 @@ sankhya_status sankhya_solution_col_duals(const sankhya_solution* solution, doub
                                           int count) {
   if (solution == nullptr) return fail(SANKHYA_ERROR_ARGUMENT, "solution is null");
   return copy_vector(solution->solution.col_dual, values, count, "column duals");
+}
+
+int sankhya_solution_claims_a_point(const sankhya_solution* solution) {
+  if (solution == nullptr) return 0;
+  return sankhya::claims_a_point(solution->solution) ? 1 : 0;
+}
+
+namespace {
+
+/// Copy a certificate, which unlike the other vectors may legitimately be EMPTY.
+///
+/// copy_vector refuses a null destination, which is right for col_values - the model always
+/// has columns - and wrong here, where a length of 0 is an ordinary answer and a caller that
+/// has correctly asked for it should not have to invent a buffer to be told so.
+sankhya_status copy_certificate(const std::vector<double>& source, double* destination,
+                                int count, const char* what) {
+  if (source.empty() && count == 0) return ok();
+  return copy_vector(source, destination, count, what);
+}
+
+}  // namespace
+
+int sankhya_solution_farkas_dual_length(const sankhya_solution* solution) {
+  if (solution == nullptr) return 0;
+  return static_cast<int>(solution->solution.farkas_dual.size());
+}
+
+sankhya_status sankhya_solution_farkas_dual(const sankhya_solution* solution, double* values,
+                                            int count) {
+  if (solution == nullptr) return fail(SANKHYA_ERROR_ARGUMENT, "solution is null");
+  return copy_certificate(solution->solution.farkas_dual, values, count, "Farkas multipliers");
+}
+
+int sankhya_solution_primal_ray_length(const sankhya_solution* solution) {
+  if (solution == nullptr) return 0;
+  return static_cast<int>(solution->solution.primal_ray.size());
+}
+
+sankhya_status sankhya_solution_primal_ray(const sankhya_solution* solution, double* values,
+                                           int count) {
+  if (solution == nullptr) return fail(SANKHYA_ERROR_ARGUMENT, "solution is null");
+  return copy_certificate(solution->solution.primal_ray, values, count, "unbounded ray");
 }
 
 }  // extern "C"
