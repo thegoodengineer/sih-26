@@ -256,12 +256,72 @@ Index Simplex::choose_leaving_row() const {
   return best;
 }
 
+/// Below this fraction of the rows, rho is sparse enough that scattering its support
+/// through the row-wise copy of A beats gathering every column (#243). Measured on the
+/// four scale models: see the PR.
+constexpr double kSparsePivotRowFraction = 0.1;
+
 void Simplex::compute_pivot_row(Index leaving_slot) {
+  Timer clock;
   std::fill(rho_.begin(), rho_.end(), 0.0);
   rho_[static_cast<std::size_t>(leaving_slot)] = 1.0;
   lu_.solve_transpose(rho_.data());
-  // pivot_row_[k] = e_r^T B^-1 a_k = rho . a_k; for a logical, a_k = -e_i, so it is -rho_i.
-  // A gather per column, deterministic at any thread count (#57).
+  pivot_row_btran_seconds_ += clock.elapsed_seconds();
+  clock.reset();
+
+  Index rho_nonzeros = 0;
+  for (const double v : rho_) rho_nonzeros += v != 0.0 ? 1 : 0;
+  rho_nonzeros_total_ += static_cast<double>(rho_nonzeros);
+  ++pivot_rows_computed_;
+
+  const bool sparse =
+      static_cast<double>(rho_nonzeros) <= kSparsePivotRowFraction * static_cast<double>(m_);
+  if (sparse) {
+    // pivot_row_[k] = rho . a_k, from the rows of A that rho touches. Every entry the
+    // previous pass wrote is zeroed first: the touched list when that pass was sparse, the
+    // whole row when it was dense and left values everywhere.
+    ++pivot_rows_sparse_;
+    if (pivot_row_held_sparse_) {
+      for (const Index k : pivot_row_touched_) {
+        pivot_row_[static_cast<std::size_t>(k)] = 0.0;
+        pivot_row_marked_[static_cast<std::size_t>(k)] = 0;
+      }
+    } else {
+      std::fill(pivot_row_.begin(), pivot_row_.end(), 0.0);
+    }
+    pivot_row_touched_.clear();
+    pivot_row_held_sparse_ = true;
+    const auto touch = [&](Index k, double value) {
+      const auto u = static_cast<std::size_t>(k);
+      if (pivot_row_marked_[u] == 0) {
+        pivot_row_marked_[u] = 1;
+        pivot_row_touched_.push_back(k);
+        pivot_row_[u] = value;
+      } else {
+        pivot_row_[u] += value;
+      }
+    };
+    for (Index i = 0; i < m_; ++i) {
+      const double rho_i = rho_[static_cast<std::size_t>(i)];
+      if (rho_i == 0.0) continue;
+      // The logical column of row i is -e_i, so its entry is -rho_i.
+      if (basis_position_[static_cast<std::size_t>(n_ + i)] < 0) touch(n_ + i, -rho_i);
+      const ColumnView row = by_row_.row(i);
+      for (Index q = 0; q < row.size; ++q) {
+        const Index j = row.rows[q];  // a column index: CsrView reuses the ColumnView layout
+        if (basis_position_[static_cast<std::size_t>(j)] >= 0) continue;
+        touch(j, rho_i * row.values[q]);
+      }
+    }
+    pivot_row_gather_seconds_ += clock.elapsed_seconds();
+    return;
+  }
+
+  // Dense rho: a gather per column, deterministic at any thread count (#57). Every entry
+  // is written, so the sparse pass's bookkeeping is cleared rather than trusted.
+  for (const Index k : pivot_row_touched_) pivot_row_marked_[static_cast<std::size_t>(k)] = 0;
+  pivot_row_touched_.clear();
+  pivot_row_held_sparse_ = false;
 #ifdef SANKHYA_HAVE_OPENMP
 #pragma omp parallel for schedule(static)
 #endif
@@ -277,6 +337,7 @@ void Simplex::compute_pivot_row(Index leaving_slot) {
     });
     pivot_row_[u] = dot;
   }
+  pivot_row_gather_seconds_ += clock.elapsed_seconds();
 }
 
 void Simplex::update_dual_weights(Index leaving_slot, double pivot) {
@@ -416,6 +477,10 @@ DualRatioResult Simplex::dual_ratio_test(Index leaving_slot, bool leaving_to_upp
 std::optional<Solution> Simplex::dual_loop(Timer& timer, Count* iterations_io) {
   Count& iterations = *iterations_io;
   pivot_row_.assign(static_cast<std::size_t>(total_), 0.0);
+  pivot_row_marked_.assign(static_cast<std::size_t>(total_), 0);
+  pivot_row_touched_.clear();
+  pivot_row_held_sparse_ = false;
+  by_row_.build(model_.matrix);  // once per solve; the pattern never changes (#243)
   compute_reduced_costs(false);
   make_dual_feasible();
   reset_dual_weights();
