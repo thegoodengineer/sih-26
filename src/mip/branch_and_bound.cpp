@@ -214,10 +214,10 @@ class BranchAndBound {
   bool offer_incumbent(const std::vector<double>& x);
 
   /// pool_complete (#225): an integral relaxation closes a node for the OPTIMUM, not for the
-  /// pool - the node's region can still hold the second-best assignment. Split it on an
-  /// integer column that is not yet fixed, into x <= v-1, x == v and x >= v+1 around the
-  /// relaxation's value v. Returns false, with the node's bounds still entered, when every
-  /// integer column is fixed and the node really is a single assignment.
+  /// pool - the node's region can still hold the second-best assignment. Partition the rest
+  /// of the region around the relaxation's point, every unfixed integer column at once (see
+  /// the definition). Returns false, with the node's bounds still entered, when every integer
+  /// column is fixed and the node really is a single assignment.
   bool split_integral_node(Index node_index, const Solution& relaxation);
 
   /// Is a bound worth exploring given the incumbent?
@@ -779,29 +779,42 @@ bool BranchAndBound::offer_incumbent(const std::vector<double>& x) {
 }
 
 bool BranchAndBound::split_integral_node(Index node_index, const Solution& relaxation) {
-  // Danna, Fenelon, Gu & Wunderling (IPCO 2007) continue the tree past integral leaves the
-  // same way. Three children rather than two because the middle one keeps the point just
-  // found and FIXES the column, so each split strictly shrinks the node's integer box and the
-  // recursion ends when every integer column is fixed.
-  Index column = -1;
-  double lower = 0.0;
-  double upper = 0.0;
+  // Danna, Fenelon, Gu & Wunderling (IPCO 2007) continue the tree past integral leaves.
+  //
+  // THE PARTITION. Let j1..jk be the integer columns this node has not fixed and v the
+  // relaxation's (integral) point. The node's integer points split, exactly and without
+  // overlap, into
+  //
+  //   x_j1 <= v1-1        x_j1 >= v1+1
+  //   x_j1 == v1, x_j2 <= v2-1        x_j1 == v1, x_j2 >= v2+1
+  //   ...
+  //   x_j1..x_j(k-1) == v, x_jk <= vk-1        ... x_jk >= vk+1
+  //   x_j1..x_jk == v        <- the single assignment of the point just found
+  //
+  // The last piece is never opened: its relaxation optimum is the point already offered,
+  // because that point was optimal over the whole node and lies inside the piece. Splitting
+  // one column at a time instead - x <= v-1, x == v, x >= v+1, recursing on the middle -
+  // re-solves that same point once per unfixed column before it becomes a leaf (Chirag's
+  // review of #258); here all 2k side children are created at once and the point costs no
+  // further LP.
+  //
+  // Propagation can leave a fractional bound on an integer column; the integers inside it
+  // are what count.
+  struct Free {
+    Index column;
+    double value;
+    double lower;
+    double upper;
+  };
+  std::vector<Free> free;
   for (const Index j : integer_columns_) {
     const auto u = static_cast<std::size_t>(j);
-    // Propagation can leave a fractional bound on an integer column; the integers inside it
-    // are what count.
     const double lo = std::ceil(working_.col_lower[u] - integrality_tolerance_);
     const double hi = std::floor(working_.col_upper[u] + integrality_tolerance_);
-    if (hi > lo) {
-      column = j;
-      lower = lo;
-      upper = hi;
-      break;
-    }
+    if (hi > lo) free.push_back({j, std::round(relaxation.col_value[u]), lo, hi});
   }
-  if (column < 0) return false;
+  if (free.empty()) return false;
 
-  const double value = std::round(relaxation.col_value[static_cast<std::size_t>(column)]);
   const Index depth = nodes_[static_cast<std::size_t>(node_index)].depth + 1;
   const double bound = internal_objective(relaxation.col_value);
   const WarmStart warm = basis_of(relaxation);
@@ -814,18 +827,22 @@ bool BranchAndBound::split_integral_node(Index node_index, const Solution& relax
     child.change = change;
     child.bound = bound;
     child.depth = depth;
-    child.warm = warm;
+    if (open) child.warm = warm;  // a link is never solved and needs no basis
     nodes_.push_back(std::move(child));
     const auto index = static_cast<Index>(nodes_.size() - 1);
     if (open) open_.push_back(index);
     return index;
   };
-  if (value - 1.0 >= lower) add(node_index, DomainChange{column, true, value - 1.0}, true);
-  if (value + 1.0 <= upper) add(node_index, DomainChange{column, false, value + 1.0}, true);
-  // x == v needs two bound changes and a node carries one, so the lower half is a link that
-  // is never opened; enter() walks parents regardless of whether they were ever solved.
-  const Index link = add(node_index, DomainChange{column, false, value}, false);
-  add(link, DomainChange{column, true, value}, true);
+  // `fixed` is the tail of a chain of links fixing the columns handled so far; enter() walks
+  // parents whether or not they were ever opened, so a child hung off it inherits every fix.
+  Index fixed = node_index;
+  for (const Free& f : free) {
+    if (f.value - 1.0 >= f.lower) add(fixed, DomainChange{f.column, true, f.value - 1.0}, true);
+    if (f.value + 1.0 <= f.upper)
+      add(fixed, DomainChange{f.column, false, f.value + 1.0}, true);
+    fixed = add(fixed, DomainChange{f.column, false, f.value}, false);
+    fixed = add(fixed, DomainChange{f.column, true, f.value}, false);
+  }
   return true;
 }
 

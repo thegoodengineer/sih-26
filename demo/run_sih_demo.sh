@@ -382,7 +382,7 @@ changes against the best:
 
 POOL_INTRO
 solve_case "lot_sizing_pool" "$CASES/lot_sizing.mps" \
-  --option pool_complete=true --option pool_size=3
+  --option pool_complete=true --option pool_size=3 --option pool_write_all_columns=true
 "$PYTHON" - "$WORK/lot_sizing_pool.sol" <<'POOL'
 import sys
 plans, block = [], False
@@ -395,18 +395,19 @@ for line in open(sys.argv[1]):
     elif block and len(fields) == 3 and fields[0] == "solution":
         plans.append((float(fields[2]), {}))
     elif block and len(fields) == 2 and plans:
-        plans[-1][1][fields[0]] = round(float(fields[1]))
+        plans[-1][1][fields[0]] = round(float(fields[1]), 6)
 best = plans[0][1]
 for rank, (cost, plan) in enumerate(plans, start=1):
-    setups = " ".join(name for name, value in plan.items() if value) or "(none)"
-    changed = [f"{name} {best[name]}->{value}" for name, value in plan.items()
+    # Y1..Y4 are this model's set-up binaries; X (production) and S (stock) follow from them.
+    setups = " ".join(n for n, v in plan.items() if n.startswith("Y") and v) or "(none)"
+    changed = [f"{name} {best[name]:g}->{value:g}" for name, value in plan.items()
                if value != best[name]]
     print(f"    plan {rank}: cost {cost:10.2f}   set up in {setups:<24}"
           + ("  (the optimum)" if rank == 1 else f"  +{cost - plans[0][0]:.2f}; changes " +
              ", ".join(changed)))
 POOL
 echo
-echo "    Independently checked (every plan integral, within bounds, ordered, distinct):"
+echo "    Independently checked (every plan integral, within bounds, every row, ordered, distinct):"
 echo "    $("$PYTHON" tools/verify_solution.py "$CASES/lot_sizing.mps" \
         "$WORK/lot_sizing_pool.sol" --quiet 2>&1 | tail -1)"
 
