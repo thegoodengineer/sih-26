@@ -332,6 +332,8 @@ bool Simplex::refactorize() {
   // Reset at entry rather than at the successful return, so every exit path - the ladder,
   // a repair, a failure - leaves the counter consistent with whatever factors are in use.
   eta_work_since_refactor_ = 0.0;
+  // A column judged dependent on the previous factors is eligible again on these.
+  std::fill(numerically_dependent_.begin(), numerically_dependent_.end(), 0);
   // Phase 2 materialised a dense m x m array here and threw it away again on every pivot:
   // O(m^2) of memory traffic and O(m^3) of arithmetic to factorize a matrix that is better
   // than 99% structural zeros at any realistic size. Nothing is materialised now. A
@@ -742,6 +744,7 @@ Index Simplex::price(bool bland, int* direction) const {
     const auto u = static_cast<std::size_t>(k);
     if (basis_position_[u] >= 0) continue;
     if (status_[u] == BasisStatus::kFixed) continue;
+    if (!numerically_dependent_.empty() && numerically_dependent_[u] != 0) continue;
 
     const double d = reduced_cost_[u];
     int candidate_direction = 0;
@@ -1381,12 +1384,31 @@ Solution Simplex::primal_loop(Timer& timer, Count* iterations_io) {
   int degenerate_run = 0;
   bool bland = false;
   bool was_phase_one = true;
+  numerically_dependent_.assign(static_cast<std::size_t>(total_), 0);
+  // A PHASE 1 THAT EXPLODES IS A BROKEN BASIS, NOT A LONG SOLVE (#214). Each phase-1 pivot
+  // lowers the sum of violations in exact arithmetic, so the largest violation cannot grow
+  // without bound; on maros-r7 it went from 3.1e+04 to 2.7e+10 while the update was refused
+  // as unsafe on three iterations in four, and the run then sat on a meaningless point until
+  // the time limit, which a reader takes for "needs more time". Six orders of magnitude
+  // above the least violation seen is the failure it is, reported as one.
+  static constexpr double kPhaseOneDivergence = 1e6;
+  double least_infeasibility = std::numeric_limits<double>::infinity();
 
   for (;;) {
     // The phase decision is made on the largest single violation, not on their sum. The sum
     // is still computed for the iteration log, where it is the objective being minimised.
     const double infeasibility = max_infeasibility();
     const bool phase_one = infeasibility > primal_tolerance_;
+    least_infeasibility = std::min(least_infeasibility, infeasibility);
+    if (phase_one && infeasibility > kPhaseOneDivergence * std::max(1.0, least_infeasibility)) {
+      compute_reduced_costs(false);
+      return finish(SolveStatus::kNumericalError,
+                    fmt::format("phase 1 diverged: the largest bound violation grew to {:.3e} "
+                                "from a least of {:.3e}, which cannot happen on faithful "
+                                "factors; the basis is numerically lost",
+                                infeasibility, least_infeasibility),
+                    iterations, timer.elapsed_seconds());
+    }
     if (was_phase_one && !phase_one) {
       logger_.info("Phase 1 complete after {} iterations: primal feasible", iterations);
       degenerate_run = 0;
@@ -1536,6 +1558,25 @@ Solution Simplex::primal_loop(Timer& timer, Count* iterations_io) {
     if (ratio.unbounded && lu_.eta_count() > 0) {
       if (!refactorize()) return factorization_failed(iterations, timer);
       ++refactorizations_;
+      // THE PRICE THAT CHOSE THIS COLUMN CAME THROUGH THE SAME ETA FILE. Re-examining alpha
+      // on fresh factors while keeping a reduced cost computed on the old ones compares two
+      // different bases; on maros-r7 (#214) that produced "no blocking variable" for a
+      // column priced at -4.15 whose fresh alpha reached 1.0 - the price was the eta file's
+      // opinion, the alpha the truth. So the point and the prices are recomputed on the
+      // fresh factors first, and a column that no longer prices as improving is not
+      // pivoted on: the iteration is taken again from the top, on factors that agree.
+      compute_basic_values();
+      compute_reduced_costs(phase_one);
+      const double fresh_price = reduced_cost_[static_cast<std::size_t>(entering)];
+      const bool still_improving =
+          direction > 0 ? fresh_price < -dual_tolerance_ : fresh_price > dual_tolerance_;
+      if (!still_improving) {
+        logger_.verbose(
+            "iteration {}: no blocking variable through the eta file, and on fresh factors "
+            "column {} no longer prices as improving ({:.3e}); re-pricing",
+            iterations, entering, fresh_price);
+        continue;
+      }
       ftran_entering_column(entering);
       ratio = ratio_test(entering, direction, phase_one);
       if (!ratio.unbounded) {
@@ -1548,9 +1589,34 @@ Solution Simplex::primal_loop(Timer& timer, Count* iterations_io) {
 
     if (ratio.unbounded) {
       if (phase_one) {
+        // NO BLOCKER ON FRESH FACTORS, in phase 1. The phase-1 objective is bounded below
+        // by zero, so a direction that lowers it must move some violated variable toward
+        // its bound, and the ratio test would have found it - unless every entry of alpha
+        // is below the pivot tolerance the test ignores. Then the reduced cost that priced
+        // this column is a sum of thousands of such entries: rounding, not an improving
+        // direction, and the column is one the basis already spans to working precision.
+        // Measured on maros-r7 (#214) after the dual hands over its basis. Such a column
+        // is set aside until the next factorization; pricing continues with the rest.
+        // Anything else - a real alpha and still no blocker - is the numerical failure the
+        // message describes, and now carries the numbers.
+        double alpha_max = 0.0;
+        for (const double a : alpha_) alpha_max = std::max(alpha_max, std::fabs(a));
+        const double d_q = reduced_cost_[static_cast<std::size_t>(entering)];
+        if (alpha_max <= tol::kPivotTolerance) {
+          numerically_dependent_[static_cast<std::size_t>(entering)] = 1;
+          ++dependent_columns_skipped_;
+          logger_.verbose(
+              "iteration {}: column {} priced at reduced cost {:.3e} but max |alpha| is "
+              "{:.3e} on fresh factors, below the pivot tolerance: the basis already spans "
+              "it; set aside until the next factorization",
+              iterations, entering, d_q, alpha_max);
+          continue;
+        }
         return finish(SolveStatus::kNumericalError,
-                      "phase 1 ratio test found no blocking variable, which cannot happen "
-                      "for an objective bounded below by zero",
+                      fmt::format("phase 1 ratio test found no blocking variable for column "
+                                  "{} (reduced cost {:.3e}, max |alpha| {:.3e}), which cannot "
+                                  "happen for an objective bounded below by zero",
+                                  entering, d_q, alpha_max),
                       iterations, timer.elapsed_seconds());
       }
       // Only a claim whose ray checks out is made. Measured on maros-r7, whose optimum is

@@ -302,7 +302,8 @@ class Simplex {
   /// price every nonbasic column into reduced_cost_.
   void compute_reduced_costs(bool phase_one);
 
-  /// Choose an entering column. Returns -1 when none is eligible.
+  /// Choose an entering column. Returns -1 when none is eligible. A column flagged in
+  /// numerically_dependent_ is not eligible until the next factorization.
   [[nodiscard]] Index price(bool bland, int* direction) const;
 
   /// Reset every reference weight to 1, restarting the reference framework.
@@ -436,6 +437,14 @@ class Simplex {
   /// Effort counters for the solve log. rejected_updates_ is the interesting one: a basis
   /// that keeps producing unsafe pivots is badly conditioned, and that is worth seeing.
   Count refactorizations_ = 0;
+  /// A COLUMN THE BASIS ALREADY SPANS, to working precision (#214, maros-r7). Phase 1 priced
+  /// it as improving because its reduced cost is a sum of thousands of terms each below the
+  /// pivot tolerance, and the ratio test then found nothing that moves - every entry of
+  /// alpha = B^-1 a_q is below that tolerance - on fresh factors. That is not a proof that
+  /// phase 1 is unbounded; it is a column whose reduced cost is rounding. It is set aside
+  /// here, one flag per column, until refactorize() judges the next basis afresh.
+  std::vector<char> numerically_dependent_;
+  Count dependent_columns_skipped_ = 0;
   /// WHERE A DUAL ITERATION'S TIME GOES (#210). Seconds accumulated per phase over the dual
   /// loop and reported at verbose level by finish(): the scale tables showed the iteration
   /// rate falling 38x for a 5x larger model, and the only honest way to say why is to
