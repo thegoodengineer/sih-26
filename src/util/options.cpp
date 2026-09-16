@@ -300,6 +300,40 @@ const std::vector<OptionSpec>& Options::registry() {
                  0.0,
                  kNoLimit,
                  {}});
+    // ---- Solution pool (#225) ----
+    s.push_back({"pool_size",
+                 OptionType::Int,
+                 std::int64_t{10},
+                 "MILP/MIQP: how many integer-feasible solutions with different integer "
+                 "assignments to keep and report, best first; 0 keeps none.",
+                 0.0,
+                 1e6,
+                 {}});
+    s.push_back({"pool_gap",
+                 OptionType::Double,
+                 kNoLimit,
+                 "MILP/MIQP: report only pool members whose objective is within this relative "
+                 "gap of the solution (relative to max(1, |objective|)); default keeps all.",
+                 0.0,
+                 kNoLimit,
+                 {}});
+    s.push_back({"pool_diversity",
+                 OptionType::Bool,
+                 false,
+                 "MILP/MIQP: when the pool is full, drop the member nearest the others in "
+                 "Hamming distance on the integer assignment instead of the worst one.",
+                 0.0,
+                 0.0,
+                 {}});
+    s.push_back({"pool_complete",
+                 OptionType::Bool,
+                 false,
+                 "MILP/MIQP: keep searching past the optimum until the pool provably holds "
+                 "the pool_size best assignments (within pool_gap). Costs nodes; off by "
+                 "default, which reports only what the ordinary search found.",
+                 0.0,
+                 0.0,
+                 {}});
     s.push_back({"pdhg_restart",
                  OptionType::Bool,
                  true,

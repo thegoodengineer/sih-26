@@ -371,6 +371,47 @@ echo "    side keeps the blend, moved 1.1x of it changes the blend."
 
 # -------------------------------------------------------------------------------------------
 echo
+echo "--- The second-best plan: a solution pool on production planning (#225) -----------"
+echo
+cat <<'POOL_INTRO'
+A model never knows everything. If the set-up the optimal plan needs cannot happen - the line
+is down that month - the planner wants the next plan, already costed, not a re-run. The branch
+and bound keeps the integer plans it finds; with pool_complete it keeps searching until the
+pool provably holds the best ones. Top three plans for the lot-sizing model, and what each
+changes against the best:
+
+POOL_INTRO
+solve_case "lot_sizing_pool" "$CASES/lot_sizing.mps" \
+  --option pool_complete=true --option pool_size=3
+"$PYTHON" - "$WORK/lot_sizing_pool.sol" <<'POOL'
+import sys
+plans, block = [], False
+for line in open(sys.argv[1]):
+    fields = line.split()
+    if fields[:2] == ["begin", "pool"]:
+        block = True
+    elif fields[:2] == ["end", "pool"]:
+        block = False
+    elif block and len(fields) == 3 and fields[0] == "solution":
+        plans.append((float(fields[2]), {}))
+    elif block and len(fields) == 2 and plans:
+        plans[-1][1][fields[0]] = round(float(fields[1]))
+best = plans[0][1]
+for rank, (cost, plan) in enumerate(plans, start=1):
+    setups = " ".join(name for name, value in plan.items() if value) or "(none)"
+    changed = [f"{name} {best[name]}->{value}" for name, value in plan.items()
+               if value != best[name]]
+    print(f"    plan {rank}: cost {cost:10.2f}   set up in {setups:<24}"
+          + ("  (the optimum)" if rank == 1 else f"  +{cost - plans[0][0]:.2f}; changes " +
+             ", ".join(changed)))
+POOL
+echo
+echo "    Independently checked (every plan integral, within bounds, ordered, distinct):"
+echo "    $("$PYTHON" tools/verify_solution.py "$CASES/lot_sizing.mps" \
+        "$WORK/lot_sizing_pool.sol" --quiet 2>&1 | tail -1)"
+
+# -------------------------------------------------------------------------------------------
+echo
 echo "--- When the plan cannot be met: which lines of the model fight each other ---------"
 echo
 echo "The same blend with the diesel commitment raised from 40 to 60 kbbl/day: no plan exists."

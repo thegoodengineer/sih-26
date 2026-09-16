@@ -28,6 +28,7 @@
 #include "sankhya/solve_control.hpp"
 
 #include "cuts.hpp"
+#include "solution_pool.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -146,6 +147,15 @@ class BranchAndBound {
         integer_columns_.push_back(j);
       }
     }
+
+    // The solution pool (#225). Built after integer_columns_, because an assignment is what
+    // makes two points the same plan.
+    pool_ =
+        SolutionPool(integer_columns_, static_cast<std::size_t>(options.get_int("pool_size")),
+                     options.get_bool("pool_diversity"));
+    pool_gap_ = options.get_double("pool_gap");
+    // A complete search with nowhere to keep what it finds would enumerate for nothing.
+    pool_complete_ = options.get_bool("pool_complete") && pool_.enabled();
   }
 
   Solution run();
@@ -202,6 +212,13 @@ class BranchAndBound {
 
   /// Accept a candidate if it is integral, feasible and better than the incumbent.
   bool offer_incumbent(const std::vector<double>& x);
+
+  /// pool_complete (#225): an integral relaxation closes a node for the OPTIMUM, not for the
+  /// pool - the node's region can still hold the second-best assignment. Split it on an
+  /// integer column that is not yet fixed, into x <= v-1, x == v and x >= v+1 around the
+  /// relaxation's value v. Returns false, with the node's bounds still entered, when every
+  /// integer column is fixed and the node really is a single assignment.
+  bool split_integral_node(Index node_index, const Solution& relaxation);
 
   /// Is a bound worth exploring given the incumbent?
   /// Solve the current node's relaxation with whichever engine the model calls for.
@@ -260,14 +277,29 @@ class BranchAndBound {
   }
 
   [[nodiscard]] bool can_prune(double bound) const {
-    if (!have_incumbent_) return false;
     // Minimise space throughout: a node whose bound is no better than the incumbent, to
     // within the absolute gap target, cannot contain an improving solution.
     // The margin is widened for a QP node by the tolerance its bound is only accurate to.
     // Pruning too little costs nodes; pruning too much loses the optimum silently.
     const double margin =
         quadratic_ ? std::max(absolute_gap_target_, kMiqpNodeTolerance) : absolute_gap_target_;
+    if (pool_complete_) return bound >= pool_cutoff() - margin;
+    if (!have_incumbent_) return false;
     return bound >= incumbent_internal_ - margin;
+  }
+
+  /// What a node must beat to matter when the search is filling the pool (#225): the worst
+  /// member of a full pool, and never worse than pool_gap past the incumbent. +infinity while
+  /// neither applies, which means nothing is pruned - the price of a complete pool. The
+  /// incumbent-relative limit only tightens as the incumbent improves, so a node pruned on it
+  /// stays prunable.
+  [[nodiscard]] double pool_cutoff() const {
+    double cutoff = pool_.cutoff();
+    if (have_incumbent_ && pool_gap_ < kNoPoolGap) {
+      cutoff = std::min(cutoff, incumbent_internal_ +
+                                    pool_gap_ * std::max(1.0, std::fabs(incumbent_internal_)));
+    }
+    return cutoff;
   }
 
   /// Objective at `x` in minimise space, excluding the offset.
@@ -360,6 +392,14 @@ class BranchAndBound {
   bool have_incumbent_ = false;
   double incumbent_internal_ = std::numeric_limits<double>::infinity();
   std::vector<double> incumbent_x_;
+
+  /// Every integer-feasible point offer_incumbent() found feasible, not only the improving
+  /// ones (#225).
+  SolutionPool pool_;
+  double pool_gap_ = std::numeric_limits<double>::max();
+  bool pool_complete_ = false;
+  /// pool_gap at or above this is the option's keep-everything default.
+  static constexpr double kNoPoolGap = 1e300;
 
   Count nodes_explored_ = 0;
   Count nodes_pruned_ = 0;
@@ -728,11 +768,64 @@ bool BranchAndBound::offer_incumbent(const std::vector<double>& x) {
   }
 
   const double objective = internal_objective(x);
+  // Feasible, so it is a plan whether or not it improves: the pool keeps it (#225).
+  pool_.offer(objective, x);
   if (have_incumbent_ && objective >= incumbent_internal_ - 1e-12) return false;
 
   have_incumbent_ = true;
   incumbent_internal_ = objective;
   incumbent_x_ = x;
+  return true;
+}
+
+bool BranchAndBound::split_integral_node(Index node_index, const Solution& relaxation) {
+  // Danna, Fenelon, Gu & Wunderling (IPCO 2007) continue the tree past integral leaves the
+  // same way. Three children rather than two because the middle one keeps the point just
+  // found and FIXES the column, so each split strictly shrinks the node's integer box and the
+  // recursion ends when every integer column is fixed.
+  Index column = -1;
+  double lower = 0.0;
+  double upper = 0.0;
+  for (const Index j : integer_columns_) {
+    const auto u = static_cast<std::size_t>(j);
+    // Propagation can leave a fractional bound on an integer column; the integers inside it
+    // are what count.
+    const double lo = std::ceil(working_.col_lower[u] - integrality_tolerance_);
+    const double hi = std::floor(working_.col_upper[u] + integrality_tolerance_);
+    if (hi > lo) {
+      column = j;
+      lower = lo;
+      upper = hi;
+      break;
+    }
+  }
+  if (column < 0) return false;
+
+  const double value = std::round(relaxation.col_value[static_cast<std::size_t>(column)]);
+  const Index depth = nodes_[static_cast<std::size_t>(node_index)].depth + 1;
+  const double bound = internal_objective(relaxation.col_value);
+  const WarmStart warm = basis_of(relaxation);
+  leave();
+
+  const auto add = [&](Index from, DomainChange change, bool open) {
+    TreeNode child;
+    child.parent = from;
+    child.has_change = true;
+    child.change = change;
+    child.bound = bound;
+    child.depth = depth;
+    child.warm = warm;
+    nodes_.push_back(std::move(child));
+    const auto index = static_cast<Index>(nodes_.size() - 1);
+    if (open) open_.push_back(index);
+    return index;
+  };
+  if (value - 1.0 >= lower) add(node_index, DomainChange{column, true, value - 1.0}, true);
+  if (value + 1.0 <= upper) add(node_index, DomainChange{column, false, value + 1.0}, true);
+  // x == v needs two bound changes and a node carries one, so the lower half is a link that
+  // is never opened; enter() walks parents regardless of whether they were ever solved.
+  const Index link = add(node_index, DomainChange{column, false, value}, false);
+  add(link, DomainChange{column, true, value}, true);
   return true;
 }
 
@@ -918,7 +1011,9 @@ Solution BranchAndBound::run() {
     // genuinely better solution than the current incumbent, which is not what a relative
     // gap means - it bounds how far the reported answer may be from proven optimal, not
     // which nodes are worth visiting.
-    if (have_incumbent_) {
+    // Not while filling the pool: meeting the gap target proves the incumbent, not that the
+    // pool holds the best alternatives, and pool_complete promises the second.
+    if (have_incumbent_ && !pool_complete_) {
       const double gap = incumbent_internal_ - open_bound;
       // gap <= 0 means open_bound already >= the incumbent: every node still in the tree
       // is one can_prune() would fathom the moment it is popped, so nothing open can beat
@@ -1122,6 +1217,7 @@ Solution BranchAndBound::run() {
     if (most_fractional(relaxation.col_value) < 0) {
       // Integral relaxation: this node's optimum is a MILP solution.
       offer_incumbent(relaxation.col_value);
+      if (pool_complete_ && split_integral_node(node_index, relaxation)) continue;
       leave();
       continue;
     }
@@ -1290,6 +1386,22 @@ Solution BranchAndBound::run() {
     solution.dual_bound = reported(final_bound);
   }
   solution.recompute_quality(original_);
+
+  if (pool_.enabled()) {
+    for (SolutionPool::Entry& entry :
+         pool_.finish(incumbent_internal_, incumbent_x_, pool_gap_)) {
+      Solution::PoolEntry member;
+      member.objective = original_.evaluate_objective(entry.x.data());
+      member.col_value = std::move(entry.x);
+      solution.pool.push_back(std::move(member));
+    }
+    // pool[0] IS the solution: the same vector, and the objective as recompute_quality wrote
+    // it, so a reader comparing the two never meets a last-bit difference.
+    solution.pool.front().objective = solution.objective;
+    logger_.info("Solution pool: {} plan(s), objectives {:.10g} to {:.10g}{}",
+                 solution.pool.size(), solution.pool.front().objective,
+                 solution.pool.back().objective, pool_complete_ ? " (complete)" : "");
+  }
 
   logger_.info("");
   logger_.info("Status: {}   objective {:.10g}   bound {:.10g}   nodes {}   time {:.3f}s",

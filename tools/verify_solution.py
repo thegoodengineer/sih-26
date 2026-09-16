@@ -417,6 +417,8 @@ class Solution:
         self.iis: list[tuple[str, str]] = []
         # One witness per IIS element: (kind, name, {column name: value}).
         self.iis_witnesses: list[tuple[str, str, dict[str, float]]] = []
+        # The solution pool (#225): (rank, objective, {integer column name: value}).
+        self.pool: list[tuple[int, float, dict[str, float]]] = []
 
     @property
     def status(self) -> str:
@@ -495,6 +497,10 @@ def parse_sol(path: Path) -> Solution:
                 solution.farkas[fields[0]] = float(fields[1])
             elif block == "ray" and len(fields) >= 2:
                 solution.ray[fields[0]] = float(fields[1])
+            elif block == "pool" and len(fields) == 3 and fields[0] == "solution":
+                solution.pool.append((int(fields[1]), float(fields[2]), {}))
+            elif block == "pool" and len(fields) == 2 and solution.pool:
+                solution.pool[-1][2][fields[0]] = float(fields[1])
             elif block == "iis" and len(fields) >= 2:
                 solution.iis.append((fields[0], fields[1]))
             elif block == "iis_witness" and len(fields) >= 2 and solution.iis_witnesses:
@@ -876,6 +882,111 @@ STATUSES_WITH_A_POINT = ("optimal", "feasible", "unbounded", "iteration_limit", 
 STATUSES_ASSERTING_FEASIBILITY = ("optimal", "feasible", "unbounded")
 
 
+def verify_pool(model: Model, solution: Solution, report: Report, x: list[float],
+                objective: float, primal_tol: float, integer_tol: float) -> None:
+    """The solution pool (#225), checked from what the file says and nothing else.
+
+    The file carries only the INTEGER columns of each member, so what can be proved depends
+    on the model. On a pure-integer model every member is a full point and is checked the
+    way the main solution is: bounds, integrality, every row, and the objective recomputed.
+    With continuous columns present, the integer part is checked exactly and each row is
+    checked for whether the continuous columns' own bounds can still close it - a necessary
+    condition, not a proof that one continuous completion satisfies every row at once, and
+    the check says so rather than claiming more.
+    """
+    sigma = -1.0 if model.maximize else 1.0
+    integer_names = [n for j, n in enumerate(model.col_names) if model.col_integer[j]]
+    members = solution.pool
+    ranks = [rank for rank, _, _ in members]
+    complete = all(set(values) == set(integer_names) for _, _, values in members)
+    report.check(ranks == list(range(1, len(members) + 1)) and complete, "pool: structure",
+                 f"{len(members)} member(s), each listing all {len(integer_names)} integer "
+                 "columns" if complete else f"{len(members)} member(s); ranks {ranks[:5]}, "
+                 "or a member missing integer columns")
+    if not complete:
+        return
+
+    first = members[0]
+    worst_first = max((abs(first[2][n] - x[model.col_index[n]]) for n in integer_names),
+                      default=0.0)
+    scale = max(1.0, abs(objective))
+    report.check(worst_first <= integer_tol and abs(first[1] - objective) <= 1e-9 * scale,
+                 "pool: first member is the reported solution",
+                 f"integer values differ by at most {worst_first:.3e}, objective "
+                 f"{first[1]:.12e} against {objective:.12e}")
+
+    order_ok = all(sigma * members[k + 1][1] >= sigma * members[k][1]
+                   - 1e-9 * max(1.0, abs(members[k][1])) for k in range(len(members) - 1))
+    report.check(order_ok, "pool: best first",
+                 "objectives " + ", ".join(f"{obj:.10g}" for _, obj, _ in members[:10]))
+
+    keys = [tuple(round(values[n]) for n in integer_names) for _, _, values in members]
+    report.check(len(set(keys)) == len(keys), "pool: distinct integer assignments",
+                 f"{len(set(keys))} distinct of {len(keys)}")
+
+    worst_integrality, worst_bound = 0.0, 0.0
+    for _, _, values in members:
+        for n in integer_names:
+            j = model.col_index[n]
+            v = values[n]
+            worst_integrality = max(worst_integrality, abs(v - round(v)))
+            worst_bound = max(worst_bound, model.col_lower[j] - v, v - model.col_upper[j])
+    report.check(worst_integrality <= integer_tol and worst_bound <= primal_tol,
+                 "pool: integrality and column bounds",
+                 f"worst integrality {worst_integrality:.3e}, worst bound violation "
+                 f"{max(worst_bound, 0.0):.3e}")
+
+    # Rows: the integer part is fixed; each continuous column contributes an interval.
+    continuous = [j for j in range(model.num_cols) if not model.col_integer[j]]
+    by_row: list[list[tuple[int, float]]] = [[] for _ in range(model.num_rows)]
+    for j in range(model.num_cols):
+        for i, a in model.entries[j]:
+            by_row[i].append((j, a))
+    mixed_rows = sum(1 for i in range(model.num_rows)
+                     if any(not model.col_integer[j] for j, _ in by_row[i]))
+    worst_row, where = 0.0, ""
+    for rank, _, values in members:
+        for i in range(model.num_rows):
+            low = high = 0.0
+            magnitude = 1.0
+            for j, a in by_row[i]:
+                if model.col_integer[j]:
+                    term = a * values[model.col_names[j]]
+                    low += term
+                    high += term
+                    magnitude = max(magnitude, abs(term))
+                else:
+                    lo, hi = model.col_lower[j], model.col_upper[j]
+                    low += a * lo if a > 0 else a * hi
+                    high += a * hi if a > 0 else a * lo
+            violation = max(model.row_lower[i] - high, low - model.row_upper[i], 0.0)
+            if math.isnan(violation):
+                continue
+            scaled = violation / magnitude
+            if scaled > worst_row:
+                worst_row, where = scaled, f"{model.row_names[i]} in member {rank}"
+    report.check(worst_row <= primal_tol, "pool: rows",
+                 (f"exact on all {model.num_rows} rows (no continuous columns)" if not continuous
+                  else f"{model.num_rows - mixed_rows} row(s) exact; on {mixed_rows} row(s) with "
+                       "continuous columns, only that their bounds can still close the row")
+                 + f"; worst {worst_row:.3e}" + (f" on {where}" if where else ""))
+
+    if continuous:
+        report.note("pool: objectives",
+                    "not recomputed: the continuous values are not written, by design")
+        return
+    worst_objective = 0.0
+    for _, claimed, values in members:
+        point = [values[n] for n in model.col_names]
+        recomputed = (model.objective_offset
+                      + sum(model.col_cost[j] * point[j] for j in range(model.num_cols))
+                      + model.quadratic_objective(point))
+        worst_objective = max(worst_objective,
+                              abs(recomputed - claimed) / max(1.0, abs(recomputed)))
+    report.check(worst_objective <= 1e-9, "pool: objectives recomputed",
+                 f"worst relative difference {worst_objective:.3e}")
+
+
 def verify(model: Model, solution: Solution, primal_tol: float, dual_tol: float,
            integer_tol: float, duality_tol: float) -> Report:
     report = Report()
@@ -1058,6 +1169,9 @@ def verify(model: Model, solution: Solution, primal_tol: float, dual_tol: float,
         report.check(abs(objective - claimed) <= 1e-9 * scale, "objective",
                      f"recomputed {objective:.12e}, solver said {claimed:.12e}, "
                      f"difference {abs(objective - claimed):.3e}")
+
+    if solution.pool:
+        verify_pool(model, solution, report, x, objective, primal_tol, integer_tol)
 
     if solution.status != "optimal":
         # Strong duality is a test of OPTIMALITY. A solver reporting kFeasible is explicitly
