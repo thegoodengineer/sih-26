@@ -1119,6 +1119,15 @@ Solution Simplex::finish(SolveStatus status, const std::string& message, Count i
     }
     logger_.verbose("dual simplex time by phase over {} iterations and {} refactorizations: {}",
                     iterations, refactorizations_, breakdown);
+    if (pivot_rows_computed_ > 0) {
+      logger_.verbose(
+          "pivot row split (#243): btran {:.2f}s, gather {:.2f}s; rho has {:.1f}% of the rows "
+          "nonzero on average; {} of {} pivot rows took the row-wise path",
+          pivot_row_btran_seconds_, pivot_row_gather_seconds_,
+          100.0 * rho_nonzeros_total_ /
+              (static_cast<double>(pivot_rows_computed_) * std::max<double>(1.0, m_)),
+          pivot_rows_sparse_, pivot_rows_computed_);
+    }
   }
   // EVERY EXIT, not just the optimal one. The perturbation relaxes bounds, so any point
   // reported while it is active belongs to a problem whose feasible region is slightly

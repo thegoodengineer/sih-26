@@ -22,6 +22,7 @@
 #include <vector>
 
 #include "sankhya/solve_control.hpp"
+#include "sankhya/sparse.hpp"
 #include "sankhya/timer.hpp"
 #include "sankhya/tolerances.hpp"
 
@@ -561,8 +562,24 @@ class Simplex {
   // to sit at is given an ARTIFICIAL one so that it can. Those bounds are bookkept here and
   // removed before any answer is reported: a point at an artificial bound is a point of a
   // different problem, and the primal loop finishes from that basis instead.
-  std::vector<double> dual_weight_;     ///< dual devex weight per basic slot
-  std::vector<double> pivot_row_;       ///< row r of B^-1 [A | -I] over every column
+  std::vector<double> dual_weight_;  ///< dual devex weight per basic slot
+  std::vector<double> pivot_row_;    ///< row r of B^-1 [A | -I] over every column
+  /// THE PIVOT ROW, ROW-WISE (#243). pivot_row_[k] = rho . a_k is a gather over every
+  /// nonbasic column, O(nnz(A)) per iteration however sparse rho is. When rho is sparse -
+  /// and on a planning model it is - the same numbers come from rho's support: for each
+  /// row i with rho_i != 0, scatter rho_i times row i of A. by_row_ is that row-wise copy,
+  /// built once per solve; pivot_row_touched_ names the entries the last scatter wrote so
+  /// the next can zero them without a pass over every column.
+  CsrView by_row_;
+  std::vector<Index> pivot_row_touched_;
+  std::vector<char> pivot_row_marked_;
+  bool pivot_row_held_sparse_ = false;  ///< the last pass left zeros everywhere but touched
+  /// Where the pivot row's time goes, and how sparse rho is, for the verbose report.
+  double pivot_row_btran_seconds_ = 0.0;
+  double pivot_row_gather_seconds_ = 0.0;
+  double rho_nonzeros_total_ = 0.0;
+  Count pivot_rows_computed_ = 0;
+  Count pivot_rows_sparse_ = 0;
   std::vector<char> artificial_lower_;  ///< lower_[k] is an artificial bound
   std::vector<char> artificial_upper_;  ///< upper_[k] is an artificial bound
   Count dual_iterations_ = 0;
