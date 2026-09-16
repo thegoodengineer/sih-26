@@ -82,6 +82,10 @@ def test_milp() -> None:
           f"{result.integrality_violation:.3e}")
     check(all(abs(v) < 1e-6 or abs(v - 1.0) < 1e-6 for v in result.x), "values are integral",
           str(result.x))
+    check(0.0 <= result.relative_gap <= 1e-4, "optimal MILP finished within its gap target",
+          f"{result.relative_gap:.3e}")
+    check(near(result.absolute_gap, abs(result.objective - result.dual_bound), 1e-9),
+          "absolute gap is objective minus bound", f"{result.absolute_gap:.3e}")
 
 
 def test_qp() -> None:
@@ -181,6 +185,52 @@ def test_infeasible_returns_rather_than_raising() -> None:
     result = model.solve(log_to_console=False)
     check(result.status in ("infeasible", "infeasible_or_unbounded"),
           "infeasible is returned, not raised", result.status)
+
+
+def test_certificates_reach_python() -> None:
+    # #207: the proofs behind `infeasible` and `unbounded` are returned, and each is None
+    # (not []) when the solver has no proof to attach. The checks below are the proofs
+    # themselves, worked by hand for these two tiny models, so a binding wired to the wrong
+    # field fails here rather than handing back a plausible vector of the right length.
+    infinity = sankhya.INFINITY
+
+    # x free, x >= 5 and x <= 2. Presolve off: with it on, presolve settles this from bound
+    # arithmetic and no engine runs, so no Farkas vector exists.
+    model = sankhya.Model()
+    x = model.add_column(cost=1.0, lower=-infinity, name="x")
+    model.add_row({x: 1.0}, lower=5.0, name="lo")
+    model.add_row({x: 1.0}, upper=2.0, name="hi")
+    result = model.solve(log_to_console=False, presolve=False)
+    check(result.status == "infeasible", "certificate model is infeasible", result.status)
+    check(not result.claims_a_point, "infeasible claims no point")
+    check(result.primal_ray is None, "no ray on an infeasible model", str(result.primal_ray))
+    y = result.farkas_dual
+    check(y is not None and len(y) == 2, "one Farkas multiplier per row", str(y))
+    if y is not None and len(y) == 2:
+        # y_lo > 0 selects row lo's lower bound, y_hi < 0 row hi's upper bound. x is free, so
+        # the aggregate's column coefficient must vanish, and the bound sum must be positive.
+        check(y[0] > 0.0 and y[1] < 0.0, "multiplier signs select existing bounds", str(y))
+        check(abs(y[0] + y[1]) <= 1e-9 * max(1.0, abs(y[0])), "A'y = 0 on the free column",
+              str(y))
+        check(y[0] * 5.0 + y[1] * 2.0 > 0.0, "aggregated bounds contradict", str(y))
+
+    with_presolve = model.solve(log_to_console=False)
+    check(with_presolve.status == "infeasible", "infeasible with presolve",
+          with_presolve.status)
+    check(with_presolve.farkas_dual is None or len(with_presolve.farkas_dual) == 2,
+          "no certificate reads as None, never []", str(with_presolve.farkas_dual))
+
+    # minimise -x, x >= 1: unbounded along +x from a feasible start.
+    model = sankhya.Model()
+    model.add_column(cost=-1.0, lower=1.0, name="x")
+    result = model.solve(log_to_console=False)
+    check(result.status == "unbounded", "ray model is unbounded", result.status)
+    check(result.claims_a_point, "unbounded carries its feasible starting point")
+    check(result.farkas_dual is None, "no Farkas vector on an unbounded model",
+          str(result.farkas_dual))
+    d = result.primal_ray
+    check(d is not None and len(d) == 1 and d[0] > 0.0, "ray points along +x", str(d))
+    check(result.x[0] >= 1.0 - 1e-7, "ray starts from a feasible point", str(result.x))
 
 
 def test_handles_are_released() -> None:

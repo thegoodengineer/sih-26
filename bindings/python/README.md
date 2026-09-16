@@ -59,7 +59,7 @@ taken the interpreter down with it.
 |---|---|
 | `Model` | `add_column`, `add_row`, `set_coefficient`, `set_quadratic`, `read`, `validate`, `solve` |
 | `Options` | any option the CLI accepts, by name; types dispatched from the Python value |
-| `Result` | `status`, `objective`, `x`, `row_duals`, `reduced_costs`, `row_activities`, `iterations`, `nodes`, `seconds` |
+| `Result` | `status`, `objective`, `x`, `row_duals`, `reduced_costs`, `row_activities`, `iterations`, `nodes`, `seconds`, `absolute_gap`, `relative_gap`, `claims_a_point`, `farkas_dual` and `primal_ray` (each `None` when the solver attached no proof) |
 
 `Result` also exposes the **measured** quality of the point — `primal_infeasibility`,
 `dual_infeasibility`, `integrality_violation`. These are recomputed from the returned vectors

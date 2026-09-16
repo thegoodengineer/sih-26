@@ -320,6 +320,13 @@ TEST(CApi, SolvesAMilpAndReportsIntegrality) {
       << sankhya_solution_message(solution.handle);
   EXPECT_NEAR(sankhya_solution_objective(solution.handle), 1.0, 1e-9);
   EXPECT_LE(sankhya_solution_integrality_violation(solution.handle), 1e-6);
+  // The gap it finished at (#207): within the default 1e-4 target, since it says optimal,
+  // and the absolute gap is the distance between the two numbers the API already returns.
+  EXPECT_LE(sankhya_solution_relative_gap(solution.handle), 1e-4);
+  EXPECT_NEAR(sankhya_solution_absolute_gap(solution.handle),
+              std::fabs(sankhya_solution_objective(solution.handle) -
+                        sankhya_solution_dual_bound(solution.handle)),
+              1e-9);
 
   std::vector<double> values(2, 0.0);
   ASSERT_EQ(sankhya_solution_col_values(solution.handle, values.data(), 2), SANKHYA_OK);

@@ -242,6 +242,15 @@ double sankhya_solution_objective(const sankhya_solution* solution);
 /** Best proven bound. Equals the objective when optimality was proved. */
 double sankhya_solution_dual_bound(const sankhya_solution* solution);
 
+/**
+ * The gap the solve finished with: objective minus dual bound, absolute and relative (#207).
+ * Zero for a solved LP. For a MILP stopped on its gap target this is the gap it actually
+ * reached, which is what distinguishes `optimal within 1e-4` from `optimal, tree exhausted`.
+ * The target itself is the mip_relative_gap / mip_absolute_gap option the caller passed.
+ */
+double sankhya_solution_absolute_gap(const sankhya_solution* solution);
+double sankhya_solution_relative_gap(const sankhya_solution* solution);
+
 int64_t sankhya_solution_iterations(const sankhya_solution* solution);
 int64_t sankhya_solution_nodes(const sankhya_solution* solution);
 double sankhya_solution_seconds(const sankhya_solution* solution);
@@ -278,6 +287,51 @@ sankhya_status sankhya_solution_row_duals(const sankhya_solution* solution, doub
 /** Column reduced costs, same contract. */
 sankhya_status sankhya_solution_col_duals(const sankhya_solution* solution, double* values,
                                           int count);
+
+/* ---- Whether there is a point, and the certificates behind a verdict ------------------ */
+
+/**
+ * 1 when the status carries a point - optimal, feasible, a limit with an incumbent, and
+ * unbounded (whose point is where the ray starts) - and 0 otherwise.
+ *
+ * Ask this BEFORE reading sankhya_solution_col_values. A status with no point is written with
+ * no point, so the vector would hold nothing meaningful; without this an API caller could
+ * only tell the two kinds of status apart by knowing the list by heart.
+ */
+int sankhya_solution_claims_a_point(const sankhya_solution* solution);
+
+/**
+ * Length of the Farkas certificate: the model's row count when an infeasible verdict carries
+ * a proof, and 0 otherwise.
+ *
+ * 0 IS NOT AN ERROR. A verdict can be correct with no certificate - presolve concludes
+ * infeasibility from bound arithmetic and gives its reason in the message instead - so
+ * "no multipliers" is an ordinary answer, reported as a length rather than as a failure.
+ */
+int sankhya_solution_farkas_dual_length(const sankhya_solution* solution);
+
+/**
+ * Copy the Farkas multipliers, one per row. Aggregating the rows with these weights yields an
+ * inequality no point in the column box satisfies, which is the answer to "why is my model
+ * infeasible": the rows that conflict, weighted.
+ *
+ * Same contract as sankhya_solution_col_values, with `count` equal to
+ * sankhya_solution_farkas_dual_length. When that length is 0, `values` may be NULL.
+ */
+sankhya_status sankhya_solution_farkas_dual(const sankhya_solution* solution, double* values,
+                                            int count);
+
+/** Length of the unbounded ray: the column count when the verdict is unbounded, else 0. */
+int sankhya_solution_primal_ray_length(const sankhya_solution* solution);
+
+/**
+ * Copy the ray, one entry per column: a direction no bound blocks along which the objective
+ * improves without limit. It starts from the point sankhya_solution_col_values returns.
+ *
+ * Same contract as sankhya_solution_farkas_dual.
+ */
+sankhya_status sankhya_solution_primal_ray(const sankhya_solution* solution, double* values,
+                                           int count);
 
 #ifdef __cplusplus
 } /* extern "C" */
