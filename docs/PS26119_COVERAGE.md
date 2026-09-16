@@ -5,7 +5,7 @@ One place to see what PS26119 asks for against what exists on `main`, cross-chec
 tracker previously kept only in issue #54's body — a repo file is diffable and reviewable the
 way an issue body is not, and every status here was checked against a specific commit.
 
-**Refreshed 2026-09-16 at `54fcb6f` (the #213 read); every number cites the CSV it comes from, and the CSV it cites is the one the number came from. One exception is named where it sits: the interior point's full Netlib CSV was measured at `59ac6e3`, a commit that is not on `main`.**
+**Refreshed 2026-09-16 at `41eddbf` (the #213 read, rebased onto #252); every number cites the CSV it comes from, and the CSV it cites is the one the number came from. One exception is named where it sits: the interior point's full Netlib CSV was measured at `59ac6e3`, a commit that is not on `main`.**
 
 ## Problem classes
 
