@@ -199,6 +199,14 @@ reports the incumbent as what it is. Time limits reach inside the sparse LDL^T f
 rather than when the factorization happens to finish; the sparse LU used by the simplex
 does not yet honour it the same way (#208).
 
+A MILP also reports a **solution pool** (#225): up to `pool_size` (default 10) integer plans
+the search found, each a different integer assignment, the solution first and the rest best
+first, written to the `.sol` file's `pool` section (integer columns only) and checked by
+`tools/verify_solution.py`. By default it is what the ordinary search happened to find, and
+the search is unchanged; `--option pool_complete=true` keeps searching until the pool
+provably holds the best plans, at the cost of nodes, and `pool_diversity` / `pool_gap` shape
+which ones. The demo's production-planning scene prints the top three.
+
 `--progress-out` appends one JSON line per logged iteration or node to a file as the solve
 runs, flushed immediately - an operator can `tail -f` it during a long solve to watch the
 bound close in on the answer without waiting for the final report.
@@ -290,9 +298,9 @@ earned.
 | **Warm start and in-place modification** | [#218](https://github.com/thegoodengineers/SANKHYA/issues/218) | A planner re-solves twenty times before lunch; today every solve is cold from a file. The dual simplex already re-solves from a basis in a handful of pivots inside branch and bound (#65); the API does not expose it. |
 | **Branch-and-cut proper** | [#221](https://github.com/thegoodengineers/SANKHYA/issues/221) | Mixed-integer rounding cuts, and cuts below the root. Root Gomory and cover cuts exist and are off by default because they cost a proof on MIPLIB; MIR cuts from original rows are the standard remedy for the loose root bounds that keep the MIPLIB proof count where it is. |
 | **Parallel tree search** | [#222](https://github.com/thegoodengineers/SANKHYA/issues/222) | Branch and bound uses one of eight cores. Node LPs are independent; only the incumbent, the bound and the queue are shared. The most mechanical speedup left. |
-| **Solution pool** | [#225](https://github.com/thegoodengineers/SANKHYA/issues/225) | Keep the good integer solutions the tree found, not only the best; the second-best plan is often the one that survives a constraint the model does not know about. |
 | **Convex NLP behind the `solve()` seam** | [#226](https://github.com/thegoodengineers/SANKHYA/issues/226) | The one PS26119 line still marked partial for a reason: the seam dispatches four classes cleanly and no nonlinear engine sits behind it. Convex, separable objective by callbacks; not general nonconvex, not MINLP. |
 | **Certificates and gap targets in the C API and Python** | [#207](https://github.com/thegoodengineers/SANKHYA/issues/207) | The Farkas vector, the ray, the IIS and the gap tolerances are all in the `.sol` file and checked by the verifier, and none is reachable from C or Python. Accessors only. |
+)
 
 ### Improve
 

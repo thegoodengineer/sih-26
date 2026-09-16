@@ -312,6 +312,23 @@ class Solution {
   /// may not be irreducible, and the .sol file says `iis_irreducible not-claimed`.
   bool iis_inconclusive = false;
 
+  // ---- Solution pool (#225) --------------------------------------------------------------
+  //
+  // An ADDITION to this frozen interface, called out here as farkas_dual was in #191. Empty
+  // unless branch and bound produced it; every existing consumer ignores it.
+  //
+  // The integer-feasible points the search found, each a different integer assignment, the
+  // reported solution first and the rest best first. pool[0] carries exactly `col_value` and
+  // `objective`, so a reader of the main solution sees no change. Every member passed the same
+  // feasibility test against the original model that the incumbent passes. Objectives are in
+  // the model's own sense and include the offset. Options: pool_size, pool_gap,
+  // pool_diversity, pool_complete.
+  struct PoolEntry {
+    double objective = 0.0;
+    std::vector<double> col_value;
+  };
+  std::vector<PoolEntry> pool;
+
   // ---- Reported quality. Never assumed - always measured before reporting. -------------
 
   double primal_infeasibility = 0.0;  ///< max violation over row and column bounds
@@ -411,6 +428,7 @@ class Solution {
     dual_infeasibility = 0.0;
     dual_infeasibility_scaled = 0.0;
     integrality_violation = 0.0;
+    pool.clear();
   }
 
   /// Allocate every vector to match `model`, filled with zeros / kUnknown.

@@ -602,6 +602,123 @@ def test_an_optimal_answer_is_still_held_to_feasibility() -> None:
           "; ".join(f"{n}: {d}" for ok, n, d in report.lines))
 
 
+# =============================================================================================
+# The solution pool (#225). A three-item knapsack small enough to list every plan by hand:
+#   maximise 10a + 7b + 4c  subject to  5a + 4b + 3c <= 9,  a, b, c binary.
+#   {a, b} = 17 (weight 9), {a, c} = 14 (8), {b, c} = 11 (7), {a} = 10, {b} = 7, ...
+# The valid pool verifies; each way of breaking it must fail the check named for it, and only
+# a check that has been seen to fail is evidence that it can.
+# =============================================================================================
+
+POOL_MPS = "\n".join([
+    "NAME          POOLKNAP",
+    "OBJSENSE",
+    "    MAXIMIZE",
+    "ROWS",
+    " N  VALUE",
+    " L  CAP",
+    "COLUMNS",
+    "    MARKER                 'MARKER'                 'INTORG'",
+    "    a         VALUE        10.0   CAP          5.0",
+    "    b         VALUE         7.0   CAP          4.0",
+    "    c         VALUE         4.0   CAP          3.0",
+    "    MARKER                 'MARKER'                 'INTEND'",
+    "RHS",
+    "    RHS       CAP           9.0",
+    "BOUNDS",
+    " UP BND       a             1.0",
+    " UP BND       b             1.0",
+    " UP BND       c             1.0",
+    "ENDATA",
+]) + "\n"
+
+
+def _pool_sol(members) -> str:
+    lines = [
+        "# SANKHYA solution file",
+        "model POOLKNAP",
+        "status optimal",
+        "objective 17",
+        "dual_bound 17",
+        "mip_relative_gap 0.0001",
+        "mip_absolute_gap 1e-06",
+        "objective_offset 0",
+        "certificate none",
+        "",
+        "begin columns 3",
+        "a 1 0 basic",
+        "b 1 0 basic",
+        "c 0 0 at_lower",
+        "end columns",
+        "",
+        "begin rows 1",
+        "CAP 9 0 basic",
+        "end rows",
+        "",
+        f"begin pool {len(members)} 3",
+    ]
+    for rank, (objective, a, b, c) in enumerate(members, start=1):
+        lines += [f"solution {rank} {objective}", f"a {a}", f"b {b}", f"c {c}"]
+    lines.append("end pool")
+    return "\n".join(lines) + "\n"
+
+
+VALID_POOL = [(17, 1, 1, 0), (14, 1, 0, 1), (11, 0, 1, 1)]
+
+
+def _verify_pool(members):
+    with tempfile.TemporaryDirectory() as tmp:
+        mps = Path(tmp) / "pool.mps"
+        sol = Path(tmp) / "pool.sol"
+        mps.write_text(POOL_MPS)
+        sol.write_text(_pool_sol(members))
+        return vs.verify(vs.parse_mps(mps), vs.parse_sol(sol), 1e-7, 1e-7, 1e-6, 1e-6)
+
+
+def _failed(report) -> list[str]:
+    return [name for ok, name, _ in report.lines if not ok]
+
+
+def test_a_valid_pool_verifies() -> None:
+    report = _verify_pool(VALID_POOL)
+    names = [name for _, name, _ in report.lines]
+    check(report.failures == 0, "a valid pool verifies", f"failed: {_failed(report)}")
+    check("pool: objectives recomputed" in names, "a pure-integer pool has its objectives "
+          "recomputed", f"checks: {names}")
+
+
+def test_a_pool_out_of_order_is_rejected() -> None:
+    report = _verify_pool([VALID_POOL[0], VALID_POOL[2], VALID_POOL[1]])
+    check("pool: best first" in _failed(report), "a pool out of order is rejected",
+          f"failed: {_failed(report)}")
+
+
+def test_a_pool_with_a_repeated_plan_is_rejected() -> None:
+    report = _verify_pool([VALID_POOL[0], VALID_POOL[1], VALID_POOL[1]])
+    check("pool: distinct integer assignments" in _failed(report),
+          "a pool repeating a plan is rejected", f"failed: {_failed(report)}")
+
+
+def test_a_pool_member_that_breaks_a_row_is_rejected() -> None:
+    # Everything in the bag: value 21, weight 12 against a capacity of 9.
+    report = _verify_pool([VALID_POOL[0], VALID_POOL[1], (21, 1, 1, 1)])
+    check("pool: rows" in _failed(report), "a pool member over capacity is rejected",
+          f"failed: {_failed(report)}")
+
+
+def test_a_pool_member_with_the_wrong_objective_is_rejected() -> None:
+    report = _verify_pool([VALID_POOL[0], (15, 1, 0, 1), VALID_POOL[2]])
+    check("pool: objectives recomputed" in _failed(report),
+          "a pool member whose objective does not match its plan is rejected",
+          f"failed: {_failed(report)}")
+
+
+def test_a_pool_that_does_not_start_with_the_solution_is_rejected() -> None:
+    report = _verify_pool([VALID_POOL[1], VALID_POOL[2]])
+    check("pool: first member is the reported solution" in _failed(report),
+          "a pool not led by the reported solution is rejected", f"failed: {_failed(report)}")
+
+
 def main() -> int:
     print("test_fixed_format_row_name_with_space")
     test_fixed_format_row_name_with_space()
@@ -630,6 +747,13 @@ def main() -> int:
     test_a_limit_is_checked_on_what_it_claims_not_on_feasibility()
     test_a_limit_that_understates_its_infeasibility_is_rejected()
     test_an_optimal_answer_is_still_held_to_feasibility()
+    print("the solution pool (#225)")
+    test_a_valid_pool_verifies()
+    test_a_pool_out_of_order_is_rejected()
+    test_a_pool_with_a_repeated_plan_is_rejected()
+    test_a_pool_member_that_breaks_a_row_is_rejected()
+    test_a_pool_member_with_the_wrong_objective_is_rejected()
+    test_a_pool_that_does_not_start_with_the_solution_is_rejected()
     print()
     if FAILURES == 0:
         print("ALL TESTS PASSED")
