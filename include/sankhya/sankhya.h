@@ -294,9 +294,10 @@ sankhya_status sankhya_solution_col_duals(const sankhya_solution* solution, doub
  * 1 when the status carries a point - optimal, feasible, a limit with an incumbent, and
  * unbounded (whose point is where the ray starts) - and 0 otherwise.
  *
- * Ask this BEFORE reading sankhya_solution_col_values. A status with no point is written with
- * no point, so the vector would hold nothing meaningful; without this an API caller could
- * only tell the two kinds of status apart by knowing the list by heart.
+ * Ask this BEFORE reading sankhya_solution_col_values. When it is 0, col_values still
+ * succeeds and fills the buffer, but the numbers in it are not a point the solver claims and
+ * mean nothing; without this an API caller could only tell the two kinds of status apart by
+ * knowing the list by heart.
  */
 int sankhya_solution_claims_a_point(const sankhya_solution* solution);
 

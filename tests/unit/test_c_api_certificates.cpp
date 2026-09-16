@@ -115,6 +115,17 @@ TEST(CApiCertificates, AFarkasCertificateCrossesTheBoundaryAndStillProvesInfeasi
   std::string why;
   EXPECT_TRUE(sankhya::farkas_proves_infeasible(contradictory_pair_in_cpp(), y, &why)) << why;
 
+  // NEGATIVE CONTROL, committed rather than done once by hand: the row duals have the same
+  // length as the Farkas vector, so an accessor wired to row_dual would pass every length
+  // check above. They are not a proof here, and the two vectors must differ.
+  std::vector<double> row_duals(static_cast<std::size_t>(length), 0.0);
+  ASSERT_EQ(sankhya_solution_row_duals(solution.handle, row_duals.data(), length), SANKHYA_OK)
+      << sankhya_last_error();
+  EXPECT_NE(y, row_duals) << "the Farkas accessor returns the row duals";
+  EXPECT_FALSE(sankhya::farkas_proves_infeasible(contradictory_pair_in_cpp(), row_duals))
+      << "the row duals would prove infeasibility too, so this control cannot catch a "
+         "mis-wiring";
+
   // The copy contract is the same as col_values: a wrong count is refused, not truncated.
   EXPECT_EQ(sankhya_solution_farkas_dual(solution.handle, y.data(), 1), SANKHYA_ERROR_ARGUMENT);
   EXPECT_EQ(sankhya_solution_farkas_dual(solution.handle, nullptr, length),
