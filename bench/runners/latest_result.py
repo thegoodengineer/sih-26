@@ -79,18 +79,23 @@ def latest(pattern: str) -> Path | None:
     # stale number is better than no number, and the caller prints which commit it came from.
     index = {sha: i for i, sha in enumerate(order)}
 
-    def rank(path: Path) -> tuple[int, float]:
-        recorded = commit_of(path)
+    def rank(path: Path) -> tuple[int, str, str]:
+        row = first_row(path)
+        recorded = (row.get("git_commit") or "").strip()
         position = len(order)
         if recorded:
             for sha, i in index.items():
                 if sha.startswith(recorded):
                     position = i
                     break
-        # mtime only breaks ties among commits git cannot order.
-        return (position, -path.stat().st_mtime)
 
-    return sorted(candidates, key=rank)[0]
+        # Tie-break deterministic order for CSVs at the same git commit:
+        # timestamp_utc if the CSV records it, then filename.
+        # We sort reversed, so negate position to keep smaller positions first.
+        timestamp = (row.get("timestamp_utc") or "").strip()
+        return (-position, timestamp, path.name)
+
+    return sorted(candidates, key=rank, reverse=True)[0]
 
 
 def failure_reason(row: dict) -> str:
