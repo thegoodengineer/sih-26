@@ -21,7 +21,7 @@ papers named in #17, not cuPDLP's code.
 |---|---|
 | The engine to accelerate | Restarted PDHG on the CPU, `src/pdhg/pdhg.cpp` (747 lines): Ruiz + Pock-Chambolle scaling, adaptive step size, primal weight, restarts, a convergence test every 40 iterations, an interior-point polish of its answer by default (#229). 9 of 9 committed Netlib instances to `optimal` at 1e-8 on `main` at `4177ae6` (`bench/results/pdhg-4177ae6.csv`). |
 | The instances that make a GPU comparison mean something | `bench/runners/generate_large_lp.py` (#18, done): random and staircase families to a million rows with the optimum exact by construction; `generate_refinery_lp.py` (#211): a refinery planning LP at 12, 365 and 8,760 periods (1,068 / 32,485 / 779,640 rows). Measured on the CPU in `bench/results/scale-*.csv`. |
-| The CUDA backend | PR [#153](https://github.com/thegoodengineer/sih-26/pull/153) (Ayush): `src/gpu/pdhg_cuda.cu` (1,143 lines), a device probe, CSR and CSC on the device, fused primal/dual/interaction kernels, batches of 40 iterations between host syncs, a CPU fallback below 20,000 post-presolve nonzeros, a compile-only CUDA CI job. It has never been built, run or measured inside this repository's evidence chain, its description carries no terminal output, and it is 75 commits behind `main` with a 555-line change to the CPU engine's file. |
+| The CUDA backend | PR [#274](https://github.com/thegoodengineer/sih-26/pull/274) (Ayush; continues #153, which the history rewrite closed): `src/gpu/pdhg_cuda.cu` (1,143 lines), a device probe, CSR and CSC on the device, fused primal/dual/interaction kernels, batches of 40 iterations between host syncs, a CPU fallback below 20,000 post-presolve nonzeros, a compile-only CUDA CI job. It has never been built, run or measured inside this repository's evidence chain, its description carries no terminal output, and it is 75 commits behind `main` with a 555-line change to the CPU engine's file. |
 | The build switch | `SANKHYA_ENABLE_CUDA` in `CMakeLists.txt`, default OFF; `--gpu` warns and runs on the CPU. |
 | What the documents say | README, `docs/PS26119_COVERAGE.md` and the demo's section 6 all say GPU acceleration is not started and no speed-up is claimed. That stays true until section 5 below produces a CSV. |
 
@@ -61,9 +61,9 @@ owners are the ones on the issues; the reviewer runs everything listed under "ga
 merging - the reviews this month found that a description's claims and a branch's behaviour
 are different things.
 
-### Step 1 - #16, the plumbing, carved out of #153
+### Step 1 - #16, the plumbing, carved out of #274
 
-Bring only the build and probe parts of #153 to `main` first: the CMake guard with the real
+Bring only the build and probe parts of #274 to `main` first: the CMake guard with the real
 architecture, `src/gpu/device.{hpp,cu}`, `sankhya version` reporting whether CUDA is compiled
 in and whether a device is visible, `--gpu` naming the device or logging once and running on
 the CPU, the compile-only CI job, and cuSPARSE/cuBLAS in `docs/PROVENANCE.md` with the line
@@ -75,9 +75,9 @@ gpu=true` returning `-4.6475314286e+02` on the CPU with the "no kernels" path.
 
 ### Step 2 - #17, the kernels, on a device
 
-Rebase the rest of #153 onto that. Review it on the machine, in this order:
+Rebase the rest of #274 onto that. Review it on the machine, in this order:
 
-1. **The CPU engine must be unchanged in what it computes.** #153 touches `src/pdhg/pdhg.cpp`
+1. **The CPU engine must be unchanged in what it computes.** #274 touches `src/pdhg/pdhg.cpp`
    heavily. Run `bench/runners/pdhg_report.py` on the branch with the GPU off and diff it
    against the Day-0 CPU CSV: identical iteration counts and objectives on every instance,
    or the diff is explained line by line. A refactor that moves CPU numbers is not a GPU
@@ -88,7 +88,7 @@ Rebase the rest of #153 onto that. Review it on the machine, in this order:
 3. **The verifier passes on GPU output.** `tools/verify_solution.py` on every `.sol` the GPU
    path writes, including the polished ones: the interior-point polish runs on the CPU after
    the GPU iterations and must still see a point it can finish.
-4. **The fallback threshold is a measured number or it goes.** #153 falls back to the CPU
+4. **The fallback threshold is a measured number or it goes.** #274 falls back to the CPU
    below 20,000 nonzeros. That is exactly the crossover #19 is supposed to measure; a number
    chosen before the measurement is a guess. Keep the switch, make its default come from
    section 5's table, and say in the option's help where the number came from.
@@ -140,7 +140,7 @@ the table says - including the losing region.
 Once the CSV exists: the README status table's Phase 4 row and gaps table's GPU row,
 `docs/PS26119_COVERAGE.md`'s "GPU acceleration" line, the demo's section 6 ledger, and a
 demo section that solves the 5,000-row instance on the GPU live and prints the crossover
-table's headline rows from the CSV. #153 already carries 81 lines of demo change; they are
+table's headline rows from the CSV. #274 already carries 81 lines of demo change; they are
 rewritten to read from the CSV rather than assert.
 
 ## 4. What to test, as one list
@@ -262,6 +262,6 @@ already says so.
 - **Toolchain on Windows** (section 2, item 2): the most likely way to lose a day.
 - **A card other than an RTX 4050**: change the architecture in CMake and the VRAM ceiling
   in the plan; nothing else assumes the card.
-- **#153's CPU-path changes**: the Step 2 gate exists because of them.
+- **#274's CPU-path changes**: the Step 2 gate exists because of them.
 - **Reduction order**: agreement to a tolerance is the assertion; do not chase bit identity.
 - **The clock**: a measured crossover on one machine beats a claimed speed-up on none.
