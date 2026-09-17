@@ -25,6 +25,7 @@ add_executable(sankhya_tests
   unit/test_presolve.cpp
   unit/test_diagnose.cpp
   unit/test_presolve_all_classes.cpp
+  unit/test_presolve_report.cpp
   unit/test_simplex.cpp
   unit/test_dual_simplex.cpp
   unit/test_ranging.cpp

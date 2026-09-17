@@ -403,10 +403,13 @@ Solution solve_unguarded(const Model& model, const Options& options, SolveContro
     const bool mixed_integer =
         problem_class == ProblemClass::kMilp || problem_class == ProblemClass::kMiqp;
     if (mixed_integer && options.get_bool("presolve") && options.get_bool("pool_complete")) {
-      logger.info(
-          "Presolve skipped: pool_complete enumerates the best assignments of the model as "
-          "given, and presolve settles some of those columns before the search sees them");
-      return engine(model);
+      const char* why =
+          "pool_complete enumerates the best assignments of the model as given, and presolve "
+          "settles some of those columns before the search sees them";
+      logger.info("Presolve skipped: {}", why);
+      Solution skipped = engine(model);
+      skipped.presolve_report.skipped_because = why;
+      return skipped;
     }
     if (!options.get_bool("presolve")) {
       if (!options.get_string("write_presolved").empty()) {
@@ -414,6 +417,8 @@ Solution solve_unguarded(const Model& model, const Options& options, SolveContro
             "write_presolved: presolve is off, so there is no presolved model to write; "
             "nothing was written");
       }
+      // ran stays false, and the reason is the option rather than a decision made here, so
+      // skipped_because is left empty (#286).
       return engine(model);
     }
 
@@ -443,6 +448,7 @@ Solution solve_unguarded(const Model& model, const Options& options, SolveContro
         proof.relative_gap = kInfinity;
       }
       proof.farkas_dual = reduced.farkas_dual;
+      proof.presolve_report = reduced.report;
       keep_only_a_proved_certificate(&proof, model, logger);
       proof.solve_seconds = timer.elapsed_seconds();
       *proved = true;

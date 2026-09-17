@@ -132,6 +132,21 @@ reliability branching (pseudocosts once observed enough times, strong branching 
 and every child solved by the dual simplex from its parent's basis, which is dual feasible
 there by construction.
 
+### 4a. What presolve reports
+
+Presolve is the one stage that rewrites the model a user handed over, so it accounts for
+itself (#286). Every solve carries a `Solution::PresolveReport`: rows, columns and nonzeros
+before and after with the reduction percentages, the count of each reduction that fired, the
+count of what presolve DECLINED to do and why (a column carrying curvature, an integer column
+whose substitution would come back fractional), the number of passes, why it stopped (fixed
+point, pass limit, or an infeasibility it proved), and how long it took.
+
+The same numbers appear in three places, from one source: a summary line in the log and in
+the CLI's result block, a per-reduction breakdown at `--option log_level=verbose`, and a
+`presolve` object in the `--stats` JSON for the benchmark runners. The counts are derived
+from the records postsolve replays, so the report cannot drift away from the transformation
+it describes.
+
 ## 5. Where the next engines plug in
 
 - **Interior-point method** (#56) — built: `src/ipm/` is one branch of the LP dispatcher

@@ -318,6 +318,24 @@ int main(int argc, char** argv) {
     fmt::print("{:<22}{:.4f}\n", "solve seconds", solution.solve_seconds);
     fmt::print("{:<22}{:.3e}\n", "primal infeasibility", solution.primal_infeasibility);
     fmt::print("{:<22}{:.3e}\n", "dual infeasibility", solution.dual_infeasibility);
+    // WHAT PRESOLVE DID (#286), on the same block as everything else the run reports. One
+    // line when it ran, one when it did not and something other than the option decided it;
+    // the per-reduction breakdown is at --option log_level=verbose and in --stats.
+    {
+      const auto& presolve = solution.presolve_report;
+      if (presolve.ran) {
+        fmt::print(
+            "{:<22}{} -> {} rows ({:.1f}%), {} -> {} columns ({:.1f}%), {} -> {} "
+            "nonzeros ({:.1f}%), {} pass(es), {:.4f}s\n",
+            "presolve", presolve.original_rows, presolve.reduced_rows,
+            presolve.row_reduction_percent(), presolve.original_cols, presolve.reduced_cols,
+            presolve.column_reduction_percent(), presolve.original_nonzeros,
+            presolve.reduced_nonzeros, presolve.nonzero_reduction_percent(), presolve.passes,
+            presolve.seconds);
+      } else if (!presolve.skipped_because.empty()) {
+        fmt::print("{:<22}skipped: {}\n", "presolve", presolve.skipped_because);
+      }
+    }
     if (!solution.message.empty()) fmt::print("{:<22}{}\n", "message", solution.message);
     if (!solution.col_ranging_lower.empty()) {
       // Print the ten most sensitive objective coefficients and row bounds.

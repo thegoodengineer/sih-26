@@ -312,6 +312,80 @@ class Solution {
   /// may not be irreducible, and the .sol file says `iis_irreducible not-claimed`.
   bool iis_inconclusive = false;
 
+  // ---- What presolve did (#286) ----------------------------------------------------------
+  //
+  // An ADDITION to this frozen interface, called out here as farkas_dual was in #191. Default
+  // constructed with ran = false; every existing consumer ignores it.
+  //
+  // Presolve is the one stage that changes the model a user handed over, and until now the
+  // only way to see what it changed was a single log line. This is the same information,
+  // structured: what came in, what came out, which reductions accounted for the difference,
+  // what presolve declined to do and why, and how long it took. Filled by presolve() and
+  // carried through postsolve; written to the stats JSON and printed by the CLI.
+  struct PresolveReport {
+    /// Why presolve stopped. A fixed point is the ordinary outcome: a pass that removed
+    /// nothing.
+    enum class Termination {
+      kNotRun,           ///< presolve was off, or skipped for a stated reason
+      kFixedPoint,       ///< a pass changed nothing, which is where the reductions run out
+      kPassLimit,        ///< the safety cap was reached with reductions still firing
+      kProvedInfeasible  ///< a reduction settled the model on its own
+    };
+
+    bool ran = false;
+    Termination termination = Termination::kNotRun;
+    /// Set when `ran` is false and something other than the option decided it.
+    std::string skipped_because;
+
+    Index original_rows = 0, original_cols = 0, original_nonzeros = 0;
+    Index reduced_rows = 0, reduced_cols = 0, reduced_nonzeros = 0;
+    Count passes = 0;
+    double seconds = 0.0;
+
+    // Counts by the reduction that fired, named for the operation the implementation
+    // actually performs rather than for a textbook category it does not distinguish.
+    Count empty_rows = 0;
+    Count redundant_rows = 0;
+    Count singleton_rows = 0;
+    Count fixed_columns = 0;
+    Count empty_columns = 0;
+    Count free_column_singletons = 0;
+    Count doubleton_equations = 0;
+    Count bounds_tightened = 0;
+    Count integer_bounds_rounded = 0;
+
+    // What presolve deliberately did NOT do, which is as much a part of explaining a reduced
+    // model as what it did (#301): a column carrying curvature, or an integer column whose
+    // substitution would come back fractional, is left in place on purpose.
+    Count quadratic_columns_protected = 0;
+    Count integer_reductions_declined = 0;
+
+    [[nodiscard]] Index rows_removed() const noexcept { return original_rows - reduced_rows; }
+    [[nodiscard]] Index columns_removed() const noexcept {
+      return original_cols - reduced_cols;
+    }
+    [[nodiscard]] Index nonzeros_removed() const noexcept {
+      return original_nonzeros - reduced_nonzeros;
+    }
+
+    /// Percentage removed, 0 when the model had none to begin with.
+    [[nodiscard]] static double percentage(Index removed, Index original) noexcept {
+      return original > 0 ? 100.0 * static_cast<double>(removed) / static_cast<double>(original)
+                          : 0.0;
+    }
+    [[nodiscard]] double row_reduction_percent() const noexcept {
+      return percentage(rows_removed(), original_rows);
+    }
+    [[nodiscard]] double column_reduction_percent() const noexcept {
+      return percentage(columns_removed(), original_cols);
+    }
+    [[nodiscard]] double nonzero_reduction_percent() const noexcept {
+      return percentage(nonzeros_removed(), original_nonzeros);
+    }
+  };
+
+  PresolveReport presolve_report;
+
   // ---- Solution pool (#225) --------------------------------------------------------------
   //
   // An ADDITION to this frozen interface, called out here as farkas_dual was in #191. Empty
