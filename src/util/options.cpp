@@ -284,6 +284,18 @@ const std::vector<OptionSpec>& Options::registry() {
                  1e-12,
                  1e-3,
                  {}});
+    s.push_back(
+        {"scaled_share",
+         OptionType::Double,
+         0.5,
+         "Fraction of time_limit the scaled simplex attempt may use before the unscaled "
+         "retry gets the rest. 0.5 guarantees the retry a real share when the first "
+         "attempt fails outright; 1.0 gives the scaled attempt the whole budget, so a "
+         "retry runs only on what an early failure leaves and never after a time limit "
+         "(#244 measures the two).",
+         0.05,
+         1.0,
+         {}});
     s.push_back({"dual_feasibility_tolerance",
                  OptionType::Double,
                  tol::kDualFeasibility,

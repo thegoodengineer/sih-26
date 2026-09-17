@@ -1999,17 +1999,22 @@ Solution solve_with_scaling(const Model& model, const Options& options, Logger& 
   const bool limited = time_limit < 1e300;  // the option's no-limit sentinel is DBL_MAX
   Timer budget;
   Options scaled_options = options;
-  if (limited) scaled_options.set_double("time_limit", 0.5 * time_limit);
+  // The share is an option so the policy can be measured rather than argued (#244): at 1.0
+  // the scaled attempt keeps the whole budget and the unscaled retry runs only on what an
+  // early failure leaves, never after a time limit.
+  const double scaled_share = options.get_double("scaled_share");
+  if (limited) scaled_options.set_double("time_limit", scaled_share * time_limit);
   Solution solution = run_engine(scaled, scaled_options);
   const double scaled_seconds = budget.elapsed_seconds();
   const auto note_route = [&](Solution& kept, const char* what) {
     const std::string note =
-        limited ? fmt::format(
-                      "route: the scaled attempt returned {} after {:.1f} s of its "
-                      "{:.0f} s share; {}",
-                      to_string(solution.status), scaled_seconds, 0.5 * time_limit, what)
-                : fmt::format("route: the scaled attempt returned {}; {}",
-                              to_string(solution.status), what);
+        limited
+            ? fmt::format(
+                  "route: the scaled attempt returned {} after {:.1f} s of its "
+                  "{:.0f} s share; {}",
+                  to_string(solution.status), scaled_seconds, scaled_share * time_limit, what)
+            : fmt::format("route: the scaled attempt returned {}; {}",
+                          to_string(solution.status), what);
     kept.message = kept.message.empty() ? note : kept.message + "; " + note;
   };
 
@@ -2060,9 +2065,22 @@ Solution solve_with_scaling(const Model& model, const Options& options, Logger& 
   // The SCALED violation, to match the status decision in solve.cpp (#152). Judging this on
   // the absolute figure meant a point the dispatcher would call feasible was retried
   // anyway, and greenbea ran two full solves to report one answer.
-  const bool usable =
-      (solution.status == SolveStatus::kOptimal || solution.status == SolveStatus::kFeasible) &&
-      solution.primal_infeasibility_scaled <= primal_tolerance;
+  // ONLY AN OPTIMAL SCALED ANSWER ENDS THE PORTFOLIO (#244). A `feasible` from the scaled
+  // attempt is almost always the status guard downgrading an optimality claim whose duals
+  // did not survive unscaling - greenbea: primal feasible, dual infeasibility 4e-4 in
+  // original units, objective -72462440 against the true -72555248 - and the unscaled
+  // retry is exactly the attempt that reaches the optimum there. Returning the feasible
+  // point without trying costs the answer; the retry costs the remaining budget, and if it
+  // does no better the feasible point is still what the tie-break below reports.
+  //
+  // And the DUALS have to survive unscaling too, judged exactly as the status guard in
+  // solve.cpp judges them: a scaled optimum whose reduced costs come back 4e-4 dual
+  // infeasible in original units (greenbea again) would be downgraded to `feasible` by that
+  // guard one call later, and the retry that reaches the optimum would never have run.
+  const double dual_tolerance = options.get_double("dual_feasibility_tolerance");
+  const bool usable = solution.status == SolveStatus::kOptimal &&
+                      solution.primal_infeasibility_scaled <= primal_tolerance &&
+                      solution.dual_infeasibility_scaled <= dual_tolerance;
   if (usable) return solution;
 
   // THE RETRY NEVER GETS A FRESH BUDGET. An iteration limit has no notion of "remaining",
