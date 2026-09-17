@@ -275,7 +275,7 @@ void SparseLdl::elimination_tree() {
 // walking up the elimination tree until a node already reached for this k. Every node j
 // reached gets L(k, j) != 0, i.e. row k in column j. Rows are visited in increasing k, so the
 // row lists of every column come out sorted with no extra work.
-void SparseLdl::symbolic_pattern() {
+bool SparseLdl::symbolic_pattern() {
   const Index n = n_;
   std::vector<Index> mark(static_cast<std::size_t>(n), -1);
   std::vector<Index> count(static_cast<std::size_t>(n), 0);
@@ -293,8 +293,23 @@ void SparseLdl::symbolic_pattern() {
       }
     }
   }
+  // The factor can be far denser than the matrix - that is what fill-in means - so its size
+  // is checked here rather than inherited from the input's (#305). l_starts_ holds Index
+  // offsets, and a factor past kMaxNonzeros would wrap them; the ordering has already told us
+  // the pattern, so refusing costs nothing and reaches the caller as a clean false.
+  std::size_t total = 0;
+  for (Index j = 0; j < n; ++j) total += rows[static_cast<std::size_t>(j)].size();
+  if (!nonzero_count_fits(total)) {
+    pattern_too_large_ = true;
+    l_starts_.clear();
+    l_rows_.clear();
+    l_values_.clear();
+    return false;
+  }
+
   l_starts_.assign(static_cast<std::size_t>(n) + 1, 0);
   l_rows_.clear();
+  l_rows_.reserve(total);
   for (Index j = 0; j < n; ++j) {
     l_rows_.insert(l_rows_.end(), rows[static_cast<std::size_t>(j)].begin(),
                    rows[static_cast<std::size_t>(j)].end());
@@ -302,11 +317,13 @@ void SparseLdl::symbolic_pattern() {
   }
   l_values_.assign(l_rows_.size(), 0.0);
   d_.assign(static_cast<std::size_t>(n), 0.0);
+  return true;
 }
 
 bool SparseLdl::analyze(const SparseMatrix& lower, const ShouldStop& should_stop) {
   analyzed_ = false;
   stopped_early_ = false;
+  pattern_too_large_ = false;
   if (lower.num_rows() != lower.num_cols() || lower.num_rows() <= 0) return false;
   n_ = lower.num_rows();
   // The ordering is where the time goes: measured on generated instances, analyze() costs
@@ -319,7 +336,7 @@ bool SparseLdl::analyze(const SparseMatrix& lower, const ShouldStop& should_stop
   }
   build_permuted_pattern(lower);
   elimination_tree();
-  symbolic_pattern();
+  if (!symbolic_pattern()) return false;
   analyzed_ = true;
   return true;
 }

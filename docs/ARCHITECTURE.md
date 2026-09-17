@@ -85,6 +85,26 @@ repeats the audit with its own reader, and the exact oracle in `tests/oracles/` 
 standard the float engines are compared against on instances nobody chose. A wrong answer
 in numerical code prints and looks correct; these three layers are how it gets caught.
 
+### 3a. The size this build supports
+
+`Index` is `std::int32_t`, so a sparse structure addresses at most **2,147,483,647 nonzeros**
+and the same number of rows or columns (`kMaxNonzeros` in `include/sankhya/types.hpp`). The
+choice is deliberate: every offset, loop bound and allocation size in a pattern is an `Index`,
+and widening it to 64 bits doubles the memory of every pattern array on every model to buy a
+size no benchmark here reaches. The largest instance the scale runners generate is about
+5,000,000 nonzeros, three orders of magnitude below the ceiling.
+
+What the ceiling costs is a guard rather than a risk (#305). `SparseMatrix` counts entries as
+they arrive, refuses the ones past its limit and flags itself; `Model::validate()` turns the
+flag into a model error before an engine reads the pattern; the sparse LDL^T checks the size
+of the factor its ordering implies, since fill-in can make the factor far denser than the
+matrix. A model that exceeds the limit is therefore **refused with a diagnostic**, not
+assembled from a prefix sum that wrapped into negative offsets.
+
+`SparseMatrix::set_nonzero_limit()` lowers the ceiling per instance. It exists so the refusal
+path is testable at a handful of entries instead of 2^31, and doubles as a per-matrix memory
+cap for a caller who wants one.
+
 ## 4. How a solve flows
 
 1. **Read.** `src/io` produces a `Model` with column-major storage, bounds, integrality and

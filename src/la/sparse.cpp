@@ -24,6 +24,7 @@ void SparseMatrix::reset(Index num_rows, Index num_cols) {
   num_rows_ = num_rows;
   num_cols_ = num_cols;
   frozen_ = false;
+  overflowed_ = false;
   column_starts_.clear();
   row_indices_.clear();
   values_.clear();
@@ -33,6 +34,10 @@ void SparseMatrix::reset(Index num_rows, Index num_cols) {
 }
 
 void SparseMatrix::reserve(std::size_t n) {
+  // A hint, not a promise - but an unguarded one asks the allocator for whatever number the
+  // caller computed, and a caller that computed it by multiplying two Index values may have
+  // wrapped on the way here. Clamp to what this matrix would accept anyway (#305).
+  n = std::min(n, static_cast<std::size_t>(nonzero_limit_));
   if (frozen_) {
     row_indices_.reserve(n);
     values_.reserve(n);
@@ -47,6 +52,15 @@ void SparseMatrix::add_entry(Index row, Index col, double value) {
   assert(!frozen_ && "add_entry on a frozen matrix; call unfreeze() first");
   assert(row >= 0 && row < num_rows_);
   assert(col >= 0 && col < num_cols_);
+  // The one growth point (#305). One comparison against a member, next to three push_backs
+  // that each may reallocate - it does not show up in a profile, and it is the difference
+  // between refusing an oversized model and silently wrapping its offsets. Entries offered
+  // past the limit are DROPPED rather than stored: the matrix is already refused, and
+  // keeping them would only grow an allocation nobody will read.
+  if (build_values_.size() >= static_cast<std::size_t>(nonzero_limit_)) {
+    overflowed_ = true;
+    return;
+  }
   build_rows_.push_back(row);
   build_cols_.push_back(col);
   build_values_.push_back(value);
@@ -54,6 +68,22 @@ void SparseMatrix::add_entry(Index row, Index col, double value) {
 
 void SparseMatrix::finalize(double drop_tol) {
   if (frozen_) return;
+
+  // An overflowed build is frozen EMPTY rather than assembled (#305). The prefix sum below
+  // accumulates into Index, so assembling 2^31 or more entries is signed overflow - undefined
+  // behaviour whose visible result is a column_starts_ array that runs backwards. An empty
+  // matrix is wrong too, but it is wrong in a way validate() catches and reports.
+  if (overflowed_ || !nonzero_count_fits(build_values_.size())) {
+    overflowed_ = true;
+    build_rows_.clear();
+    build_cols_.clear();
+    build_values_.clear();
+    column_starts_.assign(static_cast<std::size_t>(num_cols_) + 1, 0);
+    row_indices_.clear();
+    values_.clear();
+    frozen_ = true;
+    return;
+  }
 
   const std::size_t nnz = build_values_.size();
 

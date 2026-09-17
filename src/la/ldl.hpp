@@ -62,6 +62,12 @@ class SparseLdl {
   /// input, or if `should_stop` asked it to give up.
   [[nodiscard]] bool analyze(const SparseMatrix& lower, const ShouldStop& should_stop = {});
 
+  /// True when analyze() returned false because the factor's pattern would hold more
+  /// nonzeros than an Index offset can name (#305). Distinct from a deadline and from a
+  /// malformed matrix: the input was well formed and the ordering finished, and the factor
+  /// it implies is simply larger than this build addresses.
+  [[nodiscard]] bool pattern_too_large() const noexcept { return pattern_too_large_; }
+
   /// True when the last analyze() or factorize() returned false because the deadline was
   /// reached rather than because the matrix was wrong. The caller reports a time limit in
   /// that case, not a numerical failure.
@@ -88,9 +94,10 @@ class SparseLdl {
 
  private:
   [[nodiscard]] bool minimum_degree(const SparseMatrix& lower, const ShouldStop& should_stop);
+  bool pattern_too_large_ = false;
   void build_permuted_pattern(const SparseMatrix& lower);
   void elimination_tree();
-  void symbolic_pattern();
+  [[nodiscard]] bool symbolic_pattern();
 
   Index n_ = 0;
   bool analyzed_ = false;

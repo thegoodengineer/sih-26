@@ -988,6 +988,13 @@ Solution InteriorPoint::run() {
                 assembly_stopped_ ? "assembly of the normal equations" : "factorization"),
             iterations, timer.elapsed_seconds());
       }
+      if (ldl_.pattern_too_large()) {
+        return finish(SolveStatus::kNumericalError,
+                      fmt::format("the factor of the normal equations would hold more than "
+                                  "{} nonzeros, which this build cannot address (#305)",
+                                  kMaxNonzeros),
+                      iterations, timer.elapsed_seconds());
+      }
       return finish(SolveStatus::kNumericalError,
                     "the normal equations could not be factorized", iterations,
                     timer.elapsed_seconds());

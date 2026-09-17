@@ -8,6 +8,7 @@ include(GoogleTest)
 
 add_executable(sankhya_tests
   unit/test_sparse.cpp
+  unit/test_nnz_limits.cpp
   unit/test_sparse_vector.cpp
   unit/test_arena.cpp
   unit/test_c_api.cpp
