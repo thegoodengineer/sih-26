@@ -157,6 +157,18 @@ const std::vector<OptionSpec>& Options::registry() {
                  0.0,
                  0.0,
                  {"devex", "dantzig"}});
+    s.push_back({"basis_update",
+                 OptionType::String,
+                 std::string("product-form"),
+                 "How the simplex absorbs a pivot into the basis factorization: product-form "
+                 "(default; an eta per pivot, read in full by every later solve) or "
+                 "forrest-tomlin (#279; the new column is folded into U and only a row eta "
+                 "is kept, Forrest & Tomlin 1972). Both refactorize under the same "
+                 "break-even rule. forrest-tomlin is selectable so the A/B on #279 can be "
+                 "measured; it becomes the default only when that measurement says so.",
+                 0.0,
+                 0.0,
+                 {"product-form", "forrest-tomlin"}});
     s.push_back({"ratio_test",
                  OptionType::String,
                  std::string("textbook"),

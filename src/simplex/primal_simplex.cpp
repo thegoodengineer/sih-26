@@ -1154,9 +1154,10 @@ Solution Simplex::finish(SolveStatus status, const std::string& message, Count i
   // the basis update is holding up: a run that refactorizes on most pivots has gained
   // nothing, and a high rejection count means the bases being produced are ill conditioned.
   logger_.info(
-      "Basis: {} refactorizations over {} iterations, {} declined as unsafe, {} forced "
+      "Basis ({}): {} refactorizations over {} iterations, {} declined as unsafe, {} forced "
       "by the accuracy check; smallest pivot over all factorizations {}",
-      refactorizations_, iterations, rejected_updates_, accuracy_refactorizations_,
+      lu_.forrest_tomlin() ? "forrest-tomlin" : "product-form", refactorizations_, iterations,
+      rejected_updates_, accuracy_refactorizations_,
       // "n/a" and NOT 0.000e+00 when nothing was recorded. A model with no rows factorizes
       // nothing, and printing a zero there says "the basis was singular" - the strongest
       // possible claim about conditioning - when what happened is that the question never
@@ -1338,6 +1339,15 @@ std::optional<Solution> Simplex::prepare(const WarmStart* warm, const Timer& tim
     logger_.warning("ratio_test '{}' is not recognised; using textbook", ratio_test_choice);
     harris_ratio_test_ = false;
   }
+
+  // The basis update scheme (#279). Read once here, before the first factorization, and
+  // sticky in the LU across every refactorization of this solve.
+  const std::string basis_update = options_.get_string("basis_update");
+  if (basis_update != "product-form" && basis_update != "forrest-tomlin" &&
+      !basis_update.empty()) {
+    logger_.warning("basis_update '{}' is not recognised; using product-form", basis_update);
+  }
+  lu_.use_forrest_tomlin(basis_update == "forrest-tomlin");
 
   build_working_problem();
   warm_started_ = warm != nullptr && !warm->empty() && seed_basis(*warm);

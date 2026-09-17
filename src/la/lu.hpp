@@ -228,14 +228,24 @@ class SparseLu {
   /// eta_nonzeros() above, i.e. the fill the updates themselves introduced.
   [[nodiscard]] Index ft_extra_nonzeros() const noexcept;
 
-  /// Number of updates applied since the last factorize().
+  /// Choose the update scheme update() dispatches to: the product form (default) or the
+  /// Forrest-Tomlin fold above (`--option basis_update=forrest-tomlin`, #279). Sticky
+  /// across factorize(); the simplex sets it once from the options.
+  void use_forrest_tomlin(bool on) noexcept { forrest_tomlin_ = on; }
+  [[nodiscard]] bool forrest_tomlin() const noexcept { return forrest_tomlin_; }
+
+  /// Number of updates applied since the last factorize(), whichever scheme applied them.
+  /// Every "is the basis still on fresh factors?" decision in the simplex reads this.
   [[nodiscard]] Index eta_count() const noexcept {
-    return static_cast<Index>(eta_start_.size()) - 1;
+    return ft_active_ ? ft_update_count() : static_cast<Index>(eta_start_.size()) - 1;
   }
 
-  /// Nonzeros in the eta file: the extra work every solve does on top of the base factors.
+  /// The extra work every solve does on top of the base factors: the eta file's nonzeros
+  /// under the product form, the fill folded into U plus the row-eta file under
+  /// Forrest-Tomlin. The simplex's break-even refactorization rule (#68) reads this, so the
+  /// same rule governs both schemes.
   [[nodiscard]] Index eta_nonzeros() const noexcept {
-    return static_cast<Index>(eta_rows_.size());
+    return ft_active_ ? ft_extra_nonzeros() : static_cast<Index>(eta_rows_.size());
   }
 
   /// True when the accumulated updates have grown enough that refactorizing is cheaper, or
@@ -343,6 +353,7 @@ class SparseLu {
   // solve may already treat as resolved - that step currently occupies. Position k is
   // "ready" only once every step it can validly reference (position >= k) has been visited,
   // exactly as it was when position and step coincided before the first update.
+  bool forrest_tomlin_ = false;  ///< the scheme update() dispatches to; sticky across factorize()
   bool ft_active_ = false;
   Index ft_base_row_nonzeros_ = 0;  ///< off-diagonal entry count at the moment FT mode began
   /// Running total of ft_row_'s entries, maintained by ft_set()/ft_erase() so

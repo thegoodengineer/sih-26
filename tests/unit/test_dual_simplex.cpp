@@ -8,12 +8,14 @@
 // takes fewer iterations - it usually does with a warm start, and that is measured on
 // MIPLIB rather than promised on random models.
 #include <cmath>
+#include <filesystem>
 #include <random>
 #include <string>
 #include <vector>
 
 #include <gtest/gtest.h>
 
+#include "sankhya/io.hpp"
 #include "sankhya/model.hpp"
 #include "sankhya/options.hpp"
 #include "sankhya/tolerances.hpp"
@@ -91,6 +93,44 @@ constexpr double kInf = std::numeric_limits<double>::infinity();
 // =========================================================================================
 // The dual on the same models the primal is tested on
 // =========================================================================================
+
+TEST(DualSimplex, ForrestTomlinReachesTheSameOptimumAsTheProductForm) {
+  // #279: the Forrest-Tomlin update is selectable by option and must land on the same
+  // optimum as the product form, through both simplex engines, on real bases with thousands
+  // of pivots and many refactorizations - the unit tests on SparseLu see a few dozen. Presolve
+  // is off so the engines do the work; the published Netlib values are the yardstick, so a
+  // wrong fold cannot hide behind the product form making the same mistake.
+  struct Instance {
+    const char* name;
+    double published;
+  };
+  const Instance instances[] = {{"afiro", -464.75314286}, {"sc50b", -70.0},
+                                {"share2b", -415.73224074}, {"stocfor1", -41131.976219}};
+  for (const char* algorithm : {"dual-simplex", "simplex"}) {
+    for (const Instance& instance : instances) {
+      Model model;
+      const std::string path =
+          (std::filesystem::path(__FILE__).parent_path().parent_path().parent_path() /
+           "data/netlib" / (std::string(instance.name) + ".mps"))
+              .string();
+      const io::ReadResult read = io::read_model(path, &model);
+      ASSERT_TRUE(read.ok) << path << ": " << read.error;
+      for (const char* scheme : {"product-form", "forrest-tomlin"}) {
+        Options options;
+        options.set_bool("log_to_console", false);
+        options.set_bool("presolve", false);
+        options.set_string("algorithm", algorithm);
+        options.set_string("basis_update", scheme);
+        const Solution s = solve(model, options);
+        EXPECT_EQ(s.status, SolveStatus::kOptimal)
+            << instance.name << " " << algorithm << " " << scheme << ": " << s.message;
+        EXPECT_NEAR(s.objective, instance.published,
+                    1e-6 * std::max(1.0, std::fabs(instance.published)))
+            << instance.name << " " << algorithm << " " << scheme;
+      }
+    }
+  }
+}
 
 TEST(DualSimplex, SolvesATwoVariableMaximization) {
   //   max 3x + 2y  s.t.  x + y <= 4,  x + 3y <= 6,  x, y >= 0   ->  x = 4, y = 0, 12

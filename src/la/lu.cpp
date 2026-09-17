@@ -372,6 +372,9 @@ void SparseLu::build_column_u() {
 bool SparseLu::update(Index leaving_position, const double* alpha) {
   if (m_ == 0) return false;
   if (leaving_position < 0 || leaving_position >= m_) return false;
+  // The scheme the caller chose (use_forrest_tomlin) is honoured here, so the simplex has
+  // one call and one set of counters whichever form is in play.
+  if (forrest_tomlin_) return update_forrest_tomlin(leaving_position, alpha);
   // The symmetric guard to update_forrest_tomlin()'s own check: once Forrest-Tomlin mode
   // has folded any update into U, appending a product-form eta here would never be read by
   // either solve() path - U itself, not an outer eta file, is what represents those updates.
