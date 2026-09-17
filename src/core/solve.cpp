@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <cmath>
 #include <string>
+#include <string_view>
 
 #include <fmt/format.h>
 
@@ -329,20 +330,39 @@ void reconcile_status_with_measurement(Solution* solution, const Options& option
   }
 }
 
+namespace {
+Solution solve_unguarded(const Model& model, const Options& options, SolveControl* control,
+                         Logger& logger, const Timer& timer);
+}  // namespace
+
 Solution solve(const Model& model, const Options& options, SolveControl* control) {
   Timer timer;
+  {
+    Solution solution;
+    solution.allocate_for(model);
+    const std::string problem = model.validate();
+    if (!problem.empty()) {
+      solution.status = SolveStatus::kModelError;
+      solution.message = problem;
+      solution.solve_seconds = timer.elapsed_seconds();
+      return solution;
+    }
+  }
+  Logger logger(options.get_bool("log_to_console") ? stdout : nullptr);
+  // The whole dispatch runs under the out-of-memory guard (#246): an engine that exhausts
+  // the machine comes back as a status with the engine named, not as an aborted process.
+  const std::string engine = options.get_string("algorithm");
+  return run_engine_guarded(
+      [&] { return solve_unguarded(model, options, control, logger, timer); },
+      engine == "auto" ? std::string_view("solver") : std::string_view(engine), timer, logger);
+}
+
+namespace {
+Solution solve_unguarded(const Model& model, const Options& options, SolveControl* control,
+                         Logger& logger, const Timer& timer) {
   Solution solution;
   solution.allocate_for(model);
 
-  const std::string problem = model.validate();
-  if (!problem.empty()) {
-    solution.status = SolveStatus::kModelError;
-    solution.message = problem;
-    solution.solve_seconds = timer.elapsed_seconds();
-    return solution;
-  }
-
-  Logger logger(options.get_bool("log_to_console") ? stdout : nullptr);
   apply_thread_option(options, logger);
   LogLevel level = LogLevel::kInfo;
   if (parse_log_level(options.get_string("log_level"), &level)) logger.set_level(level);
@@ -529,5 +549,6 @@ Solution solve(const Model& model, const Options& options, SolveControl* control
   solution.solve_seconds = timer.elapsed_seconds();
   return solution;
 }
+}  // namespace
 
 }  // namespace sankhya

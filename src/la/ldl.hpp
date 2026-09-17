@@ -62,6 +62,33 @@ class SparseLdl {
   /// input, or if `should_stop` asked it to give up.
   [[nodiscard]] bool analyze(const SparseMatrix& lower, const ShouldStop& should_stop = {});
 
+  /// Cap the quotient graph's live storage during the ordering, in list entries (#246).
+  ///
+  /// On an expander-like matrix the minimum-degree ordering's fill is catastrophic and the
+  /// element lists grow with it until the allocation fails: on the 100,000-row random scale
+  /// model that was a std::bad_alloc 170 s past the time limit, on an 8 GB machine. The
+  /// ordering counts the entries it holds live and gives up past this many, reporting
+  /// ordering_too_large() rather than a deadline. One entry is one Index (4 bytes).
+  /// SIZE_MAX (the default) means no cap.
+  void set_ordering_budget(std::size_t entries) noexcept { ordering_budget_ = entries; }
+  [[nodiscard]] std::size_t ordering_budget() const noexcept { return ordering_budget_; }
+
+  /// Cap the factor's pattern, in strictly-lower nonzeros (#246). analyze() counts the
+  /// pattern before storing it and gives up past this many, reporting factor_too_large();
+  /// -1 (the default) means no cap. The interior point passes its ipm_max_factor_nonzeros
+  /// or polish_max_factor_nonzeros here so a factor that would not fit is refused after a
+  /// fraction of the counting, not after all of it and an allocation.
+  void set_factor_budget(std::int64_t nonzeros) noexcept {
+    factor_budget_ =
+        nonzeros < 0 ? static_cast<std::size_t>(-1) : static_cast<std::size_t>(nonzeros);
+  }
+  [[nodiscard]] bool factor_too_large() const noexcept { return factor_too_large_; }
+
+  /// True when analyze() returned false because the ordering's storage passed the budget
+  /// set by set_ordering_budget() (#246). Not a deadline and not a malformed matrix: the
+  /// matrix fills in faster than this machine can afford to follow.
+  [[nodiscard]] bool ordering_too_large() const noexcept { return ordering_too_large_; }
+
   /// True when analyze() returned false because the factor's pattern would hold more
   /// nonzeros than an Index offset can name (#305). Distinct from a deadline and from a
   /// malformed matrix: the input was well formed and the ordering finished, and the factor
@@ -95,9 +122,13 @@ class SparseLdl {
  private:
   [[nodiscard]] bool minimum_degree(const SparseMatrix& lower, const ShouldStop& should_stop);
   bool pattern_too_large_ = false;
+  bool ordering_too_large_ = false;
+  std::size_t ordering_budget_ = static_cast<std::size_t>(-1);
+  bool factor_too_large_ = false;
+  std::size_t factor_budget_ = static_cast<std::size_t>(-1);
   void build_permuted_pattern(const SparseMatrix& lower);
   void elimination_tree();
-  [[nodiscard]] bool symbolic_pattern();
+  [[nodiscard]] bool symbolic_pattern(const ShouldStop& should_stop);
 
   Index n_ = 0;
   bool analyzed_ = false;

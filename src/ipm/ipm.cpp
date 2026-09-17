@@ -159,8 +159,9 @@ class InteriorPoint {
   /// copying the model, which on a 500,000-row polish is tens of seconds that run()'s own
   /// timer never saw (#232); null means run() keeps its own.
   const Timer* clock_ = nullptr;
-  /// With a warm start only: the factor the ordering predicts is compared with
-  /// polish_max_factor_nonzeros, and factorize() sets this instead of building it.
+  /// The factor the ordering predicts is compared with polish_max_factor_nonzeros (with a
+  /// warm start) or ipm_max_factor_nonzeros (#246), and factorize() sets the flag instead of
+  /// building it.
   std::int64_t max_factor_nonzeros_ = -1;
   bool factor_too_large_ = false;
 
@@ -513,7 +514,13 @@ bool InteriorPoint::factorize() {
                     normal_lower_.num_nonzeros(),
                     clock_ != nullptr ? clock_->elapsed_seconds() : -1.0);
     Timer ordering_clock;
-    if (!ldl_.analyze(normal_lower_, should_stop_)) return false;
+    ldl_.set_factor_budget(max_factor_nonzeros_);
+    if (!ldl_.analyze(normal_lower_, should_stop_)) {
+      // The pattern count passed the cap before the pattern was stored (#246); the exact
+      // size is unknown, and the message below says "more than".
+      if (ldl_.factor_too_large()) factor_too_large_ = true;
+      return false;
+    }
     logger_.verbose(
         "interior point: normal equations {} nonzeros, ordered and analysed in "
         "{:.2f}s, factor {} nonzeros",
@@ -523,7 +530,7 @@ bool InteriorPoint::factorize() {
     // The ordering knows the factor's size before a single entry of it exists. A polish
     // that would need a 9-million-nonzero factor for a 7,000-row random-family model (#193)
     // is not a polish, and the caller has a perfectly good first-order answer to keep.
-    if (warm_ != nullptr && max_factor_nonzeros_ >= 0 &&
+    if (max_factor_nonzeros_ >= 0 &&
         static_cast<std::int64_t>(ldl_.factor_nonzeros() + ldl_.dimension()) >
             max_factor_nonzeros_) {
       factor_too_large_ = true;
@@ -871,7 +878,13 @@ Solution InteriorPoint::run() {
     should_stop_ = [control = control_] { return control->interruption_requested(); };
   }
   const std::int64_t iteration_limit = options_.get_int("iteration_limit");
-  if (warm_ != nullptr) max_factor_nonzeros_ = options_.get_int("polish_max_factor_nonzeros");
+  max_factor_nonzeros_ = options_.get_int(warm_ != nullptr ? "polish_max_factor_nonzeros"
+                                                           : "ipm_max_factor_nonzeros");
+  // The ordering's own budget (#246): the one phase that can run the machine out of memory
+  // before it can say how large the factor would be.
+  const std::int64_t ordering_entries = options_.get_int("ipm_max_ordering_entries");
+  ldl_.set_ordering_budget(ordering_entries < 0 ? static_cast<std::size_t>(-1)
+                                                : static_cast<std::size_t>(ordering_entries));
   build();
   logger_.verbose("interior point: built in {:.2f}s from the start of the solve",
                   timer.elapsed_seconds());
@@ -970,11 +983,28 @@ Solution InteriorPoint::run() {
     }
     if (!factorize()) {
       if (factor_too_large_) {
+        // A declined polish leaves the first-order answer standing, so it is not a failure;
+        // a declined plain solve has nothing to fall back on and says so as one.
         return finish(
-            SolveStatus::kNotSolved,
-            fmt::format("declined: the factor would hold {} nonzeros, above "
-                        "polish_max_factor_nonzeros = {}",
-                        ldl_.factor_nonzeros() + ldl_.dimension(), max_factor_nonzeros_),
+            warm_ != nullptr ? SolveStatus::kNotSolved : SolveStatus::kNumericalError,
+            fmt::format(
+                "declined: the factor of the normal equations would hold {} nonzeros, "
+                "above {} = {}; raise the option or use another engine",
+                ldl_.factor_too_large()
+                    ? fmt::format("more than {}", max_factor_nonzeros_)
+                    : fmt::format("{}", ldl_.factor_nonzeros() + ldl_.dimension()),
+                warm_ != nullptr ? "polish_max_factor_nonzeros" : "ipm_max_factor_nonzeros",
+                max_factor_nonzeros_),
+            iterations, timer.elapsed_seconds());
+      }
+      if (ldl_.ordering_too_large()) {
+        return finish(
+            SolveStatus::kNumericalError,
+            fmt::format("the ordering of the normal equations was abandoned: its quotient "
+                        "graph passed ipm_max_ordering_entries = {} list entries, so the "
+                        "fill-in is beyond what this machine can hold (#246); raise the "
+                        "option or use another engine",
+                        ldl_.ordering_budget()),
             iterations, timer.elapsed_seconds());
       }
       // Told to stop rather than unable to: the difference matters to a reader, and to the

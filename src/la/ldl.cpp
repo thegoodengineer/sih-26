@@ -69,9 +69,16 @@ bool SparseLdl::minimum_degree(const SparseMatrix& lower, const ShouldStop& shou
       adjacent[at(c)].push_back(r);
     }
   }
+  // The storage the ordering holds live, in list entries, checked against the budget
+  // (#246). Counted rather than measured because the allocator does not say, and counted
+  // approximately: the three list families are what grows, and an element list that shrinks
+  // by resize() gives its capacity back only when it is swapped away, so this undercounts
+  // capacity and overcounts nothing.
+  std::size_t live = 0;
   for (auto& list : adjacent) {
     std::sort(list.begin(), list.end());
     list.erase(std::unique(list.begin(), list.end()), list.end());
+    live += list.size();
   }
 
   enum class Status : std::uint8_t { kVariable, kElement, kAbsorbed };
@@ -113,6 +120,10 @@ bool SparseLdl::minimum_degree(const SparseMatrix& lower, const ShouldStop& shou
     // ASKED EVERY STEP, as before: one call through a std::function is nothing beside the
     // list work, and the deadline is what makes a time limit mean anything here (#197).
     if (should_stop && should_stop()) return false;
+    if (live > ordering_budget_) {
+      ordering_too_large_ = true;
+      return false;
+    }
 
     while (head[at(min_degree)] < 0) ++min_degree;
     const Index p = head[at(min_degree)];
@@ -137,11 +148,14 @@ bool SparseLdl::minimum_degree(const SparseMatrix& lower, const ShouldStop& shou
         lp.push_back(i);
       }
       status[at(e)] = Status::kAbsorbed;
+      live -= members[at(e)].size();
       std::vector<Index>().swap(members[at(e)]);
     }
+    live -= adjacent[at(p)].size() + elements[at(p)].size();
     std::vector<Index>().swap(adjacent[at(p)]);
     std::vector<Index>().swap(elements[at(p)]);
     members[at(p)] = lp;
+    live += lp.size();
 
     // w[e] = |L_e \ L_p| for every live element adjacent to a member of L_p. A member i of
     // L_p lists e exactly when i is in L_e, so each such listing subtracts one.
@@ -157,7 +171,12 @@ bool SparseLdl::minimum_degree(const SparseMatrix& lower, const ShouldStop& shou
     }
 
     const auto lp_size = static_cast<Index>(lp.size());
+    std::size_t visited = 0;
     for (const Index i : lp) {
+      // A step under memory pressure is not short: on the model that motivated #246 the
+      // intervals between the per-step checks above reached minutes while the machine
+      // swapped. So the deadline is also asked inside the step, every few thousand members.
+      if (should_stop && (++visited & 4095) == 0 && should_stop()) return false;
       remove(i);
       // A_i loses the members of L_p (they are reachable through p now) and anything
       // eliminated.
@@ -166,6 +185,7 @@ bool SparseLdl::minimum_degree(const SparseMatrix& lower, const ShouldStop& shou
         if (status[at(v)] != Status::kVariable || in_lp[at(v)] == k) continue;
         adjacent[at(i)][keep++] = v;
       }
+      live -= adjacent[at(i)].size() - keep;
       adjacent[at(i)].resize(keep);
       // E_i loses absorbed elements and gains p; an element wholly inside L_p is absorbed
       // here, before it can be counted.
@@ -175,14 +195,17 @@ bool SparseLdl::minimum_degree(const SparseMatrix& lower, const ShouldStop& shou
         if (status[at(e)] != Status::kElement) continue;
         if (w[at(e)] <= 0) {
           status[at(e)] = Status::kAbsorbed;
+          live -= members[at(e)].size();
           std::vector<Index>().swap(members[at(e)]);
           continue;
         }
         elements[at(i)][keep++] = e;
         external += w[at(e)];
       }
+      live -= elements[at(i)].size() - keep;
       elements[at(i)].resize(keep);
       elements[at(i)].push_back(p);
+      ++live;
 
       const Index remaining = n - k - 1;
       const Index by_old_degree = degree[at(i)] + (lp_size - 1);
@@ -275,30 +298,56 @@ void SparseLdl::elimination_tree() {
 // walking up the elimination tree until a node already reached for this k. Every node j
 // reached gets L(k, j) != 0, i.e. row k in column j. Rows are visited in increasing k, so the
 // row lists of every column come out sorted with no extra work.
-bool SparseLdl::symbolic_pattern() {
+bool SparseLdl::symbolic_pattern(const ShouldStop& should_stop) {
   const Index n = n_;
-  std::vector<Index> mark(static_cast<std::size_t>(n), -1);
-  std::vector<Index> count(static_cast<std::size_t>(n), 0);
-  std::vector<std::vector<Index>> rows(static_cast<std::size_t>(n));
-  for (Index k = 0; k < n; ++k) {
+  const auto un = static_cast<std::size_t>(n);
+  std::vector<Index> mark(un, -1);
+  // The walk that defines L's pattern: for row k, every column reached from an entry of row k
+  // by climbing the elimination tree gets L(k, j) != 0. Run TWICE, first to count and then to
+  // fill, rather than once into a vector of vectors: on a matrix whose fill is catastrophic
+  // the counting pass is what lets the deadline and the factor budget stop it (#246) - the
+  // 100,000-row random model built its pattern for 190 s past a 120 s limit and then ran the
+  // machine out of memory in exactly this loop - and the filling pass then writes into one
+  // exactly-sized array instead of n growing ones.
+  const auto walk = [&](Index k, auto&& visit) {
     mark[static_cast<std::size_t>(k)] = k;
     for (Index p = a_starts_[static_cast<std::size_t>(k)];
          p < a_starts_[static_cast<std::size_t>(k) + 1]; ++p) {
       Index i = a_rows_[static_cast<std::size_t>(p)];
       while (i < k && mark[static_cast<std::size_t>(i)] != k) {
         mark[static_cast<std::size_t>(i)] = k;
-        rows[static_cast<std::size_t>(i)].push_back(k);
+        visit(i);
         i = parent_[static_cast<std::size_t>(i)];
         if (i == -1) break;
       }
+    }
+  };
+
+  std::vector<std::size_t> count(un, 0);
+  std::size_t total = 0;
+  for (Index k = 0; k < n; ++k) {
+    if (should_stop && (k & 255) == 0 && should_stop()) {
+      stopped_early_ = true;
+      return false;
+    }
+    walk(k, [&](Index i) {
+      ++count[static_cast<std::size_t>(i)];
+      ++total;
+    });
+    // The caller's budget for the factor, consulted as the count grows so that a factor ten
+    // times too large is refused after a tenth of the work, not after all of it.
+    if (total > factor_budget_) {
+      factor_too_large_ = true;
+      l_starts_.clear();
+      l_rows_.clear();
+      l_values_.clear();
+      return false;
     }
   }
   // The factor can be far denser than the matrix - that is what fill-in means - so its size
   // is checked here rather than inherited from the input's (#305). l_starts_ holds Index
   // offsets, and a factor past kMaxNonzeros would wrap them; the ordering has already told us
   // the pattern, so refusing costs nothing and reaches the caller as a clean false.
-  std::size_t total = 0;
-  for (Index j = 0; j < n; ++j) total += rows[static_cast<std::size_t>(j)].size();
   if (!nonzero_count_fits(total)) {
     pattern_too_large_ = true;
     l_starts_.clear();
@@ -307,16 +356,23 @@ bool SparseLdl::symbolic_pattern() {
     return false;
   }
 
-  l_starts_.assign(static_cast<std::size_t>(n) + 1, 0);
-  l_rows_.clear();
-  l_rows_.reserve(total);
+  l_starts_.assign(un + 1, 0);
   for (Index j = 0; j < n; ++j) {
-    l_rows_.insert(l_rows_.end(), rows[static_cast<std::size_t>(j)].begin(),
-                   rows[static_cast<std::size_t>(j)].end());
-    l_starts_[static_cast<std::size_t>(j) + 1] = static_cast<Index>(l_rows_.size());
+    l_starts_[static_cast<std::size_t>(j) + 1] =
+        l_starts_[static_cast<std::size_t>(j)] +
+        static_cast<Index>(count[static_cast<std::size_t>(j)]);
   }
-  l_values_.assign(l_rows_.size(), 0.0);
-  d_.assign(static_cast<std::size_t>(n), 0.0);
+  l_rows_.assign(total, 0);
+  std::vector<Index> next(l_starts_.begin(), l_starts_.end() - 1);
+  std::fill(mark.begin(), mark.end(), -1);
+  for (Index k = 0; k < n; ++k) {
+    // Rows are visited in increasing k, so every column's row list comes out sorted.
+    walk(k, [&](Index i) {
+      l_rows_[static_cast<std::size_t>(next[static_cast<std::size_t>(i)]++)] = k;
+    });
+  }
+  l_values_.assign(total, 0.0);
+  d_.assign(un, 0.0);
   return true;
 }
 
@@ -324,6 +380,8 @@ bool SparseLdl::analyze(const SparseMatrix& lower, const ShouldStop& should_stop
   analyzed_ = false;
   stopped_early_ = false;
   pattern_too_large_ = false;
+  ordering_too_large_ = false;
+  factor_too_large_ = false;
   if (lower.num_rows() != lower.num_cols() || lower.num_rows() <= 0) return false;
   n_ = lower.num_rows();
   // The ordering is where the time goes: measured on generated instances, analyze() costs
@@ -331,12 +389,14 @@ bool SparseLdl::analyze(const SparseMatrix& lower, const ShouldStop& should_stop
   // 813-second first iteration (#193). It is therefore the one phase that has to be
   // interruptible for a time limit to mean anything.
   if (!minimum_degree(lower, should_stop)) {
-    stopped_early_ = true;
+    // Two reasons to give up, told apart for the caller: a deadline is a time limit, a
+    // budget is a refusal with the number in it (#246).
+    stopped_early_ = !ordering_too_large_;
     return false;
   }
   build_permuted_pattern(lower);
   elimination_tree();
-  if (!symbolic_pattern()) return false;
+  if (!symbolic_pattern(should_stop)) return false;
   analyzed_ = true;
   return true;
 }
