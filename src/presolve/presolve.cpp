@@ -1086,6 +1086,10 @@ Solution postsolve(const Result& result, const Model& original, const Solution& 
   Solution solution;
   solution.allocate_for(original);
   solution.status = reduced.status;
+  // Which limit stopped the inner solve is a fact about the solve, not about the model it ran
+  // on, so it survives postsolve (#289). Losing it here left a MILP that ran out of nodes
+  // reporting kFeasible with no reason attached whenever presolve was on.
+  solution.stopped_by = reduced.stopped_by;
   solution.algorithm = reduced.algorithm;
   solution.message = reduced.message;
   solution.iterations = reduced.iterations;
@@ -2080,6 +2084,24 @@ Solution postsolve(const Result& result, const Model& original, const Solution& 
   }
 
   solution.recompute_quality(original);
+
+  // A SOLVE THAT FOUND NO POINT STILL HAS NONE AFTER POSTSOLVE (#289). A branch and bound
+  // stopped by a limit before it had an incumbent returns an empty col_value and the worst
+  // representable objective, which is how it says "nothing found" without a gap of zero
+  // standing for a closed one. Reconstructing that into a full-length vector of the values
+  // presolve happened to fix, and then RECOMPUTING an objective from it, manufactures an
+  // incumbent: `node_limit=0` on lot_sizing.mps came back with objective 180 and a point
+  // nothing had found. The reconstruction above is right for every solve that HAS a point;
+  // this is the one that does not.
+  if (reduced.col_value.empty() || std::isinf(reduced.objective)) {
+    // The values kept here are whatever presolve fixed plus zeros; what must not survive is
+    // an objective RECOMPUTED from them, which reads as an incumbent. The dispatcher's
+    // non-finite guard clears the values once it sees this objective, in the one place that
+    // decides what a solve without a point reports.
+    solution.objective = reduced.objective;
+    solution.absolute_gap = reduced.absolute_gap;
+    solution.relative_gap = reduced.relative_gap;
+  }
 
   return solution;
 }

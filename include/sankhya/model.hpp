@@ -90,6 +90,19 @@ enum class SolveStatus : std::uint8_t {
 
 [[nodiscard]] constexpr bool claims_a_point(SolveStatus status) noexcept;
 
+/// Which resource ended a solve that did not end on the mathematics (#289).
+///
+/// The status already distinguishes a resource termination from a mathematical verdict, but
+/// it cannot always name the resource: a MILP that hits a limit holding an incumbent reports
+/// kFeasible, and which limit it was lived only in the message. This says it in a field.
+enum class LimitReason : std::uint8_t { kNone, kInterrupt, kTime, kIterations, kNodes };
+
+/// "none", "user_interrupt", "time_limit", "iteration_limit", "node_limit".
+[[nodiscard]] const char* to_string(LimitReason reason) noexcept;
+
+/// The status a solve carries when this is the reason it stopped and it found no point.
+[[nodiscard]] SolveStatus status_for(LimitReason reason) noexcept;
+
 // =========================================================================================
 
 /// Human-readable name for a status, for logs and the JSON result blob.
@@ -227,6 +240,13 @@ class Model {
 class Solution {
  public:
   SolveStatus status = SolveStatus::kNotSolved;
+
+  /// Which resource ended the solve, when one did (#289).
+  ///
+  /// FROZEN INTERFACE, ADDITION. A new field with a default that means "nothing stopped it";
+  /// no existing field changes shape or meaning, and a consumer that ignores it reads the
+  /// same solution it read before. kNone on a solve that ended on the mathematics.
+  LimitReason stopped_by = LimitReason::kNone;
 
   /// Objective value at col_value, in the sense of the original model. Meaningless unless
   /// status is kOptimal or kFeasible.

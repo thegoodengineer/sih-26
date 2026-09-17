@@ -35,6 +35,7 @@
 
 #include <fmt/format.h>
 
+#include "../core/resource_limits.hpp"
 #include "../core/stop_controller.hpp"
 #include "sankhya/timer.hpp"
 #include "sankhya/tolerances.hpp"
@@ -130,10 +131,9 @@ class BranchAndBound {
     integrality_tolerance_ = options.get_double("integrality_tolerance");
     relative_gap_target_ = options.get_double("mip_relative_gap");
     absolute_gap_target_ = options.get_double("mip_absolute_gap");
+    // One interpretation of every limit, shared with every other engine (#289).
+    limits_ = ResourceLimits(options, logger);
     time_limit_ = options.get_double("time_limit");
-    const std::int64_t node_option = options.get_int("node_limit");
-    node_limit_ =
-        node_option < 0 ? std::numeric_limits<Count>::max() : static_cast<Count>(node_option);
     sense_ = model.sense_multiplier();
 
     node_engine_dual_ = options.get_string("mip_node_engine") != "primal";
@@ -396,8 +396,8 @@ class BranchAndBound {
   double integrality_tolerance_ = tol::kIntegrality;
   double relative_gap_target_ = tol::kMipRelativeGap;
   double absolute_gap_target_ = tol::kMipAbsoluteGap;
+  ResourceLimits limits_;
   double time_limit_ = 0.0;
-  Count node_limit_ = 0;
   double sense_ = 1.0;
 
   std::vector<Index> integer_columns_;

@@ -21,6 +21,7 @@
 #include <string>
 #include <vector>
 
+#include "core/resource_limits.hpp"
 #include "sankhya/solve_control.hpp"
 #include "sankhya/sparse.hpp"
 #include "sankhya/timer.hpp"
@@ -545,6 +546,10 @@ class Simplex {
   bool harris_ratio_test_ = false;
   double primal_tolerance_ = tol::kPrimalFeasibility;
   double dual_tolerance_ = tol::kDualFeasibility;
+  /// The limits this solve runs under, read from the options once and interpreted in one
+  /// place for every engine (#289). time_limit_ is the same number, kept because the
+  /// factorization deadline and the route decision below want the raw seconds.
+  ResourceLimits limits_;
   double time_limit_ = std::numeric_limits<double>::infinity();
   /// Handed to every basis factorization (#208). Empty when there is no time limit.
   SparseLu::ShouldStop deadline_;

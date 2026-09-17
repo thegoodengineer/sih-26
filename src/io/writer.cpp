@@ -21,6 +21,8 @@
 #include <fmt/format.h>
 #include <nlohmann/json.hpp>
 
+#include "core/resource_limits.hpp"
+
 #include "sankhya/io.hpp"
 #include "sankhya/model.hpp"
 #include "sankhya/options.hpp"
@@ -368,7 +370,7 @@ bool write_solution(const std::string& path, const Model& model, const Solution&
 }
 
 bool write_stats_json(const std::string& path, const Model& model, const Solution& solution,
-                      std::string* error) {
+                      std::string* error, const Options* options) {
   // These key names are consumed by bench/runners/*.py. Renaming one silently breaks the
   // benchmark CSVs, which are the project's only evidence, so treat them as an interface.
   nlohmann::json blob;
@@ -411,6 +413,29 @@ bool write_stats_json(const std::string& path, const Model& model, const Solutio
       {"root_bound_after_cuts", json_number(solution.root_bound_after_cuts)},
       {"polish_iterations", solution.polish_iterations},
       {"solve_seconds", json_number(solution.solve_seconds)}};
+  if (options != nullptr) {
+    // The limits as CONFIGURED, beside what the solve reached (#289). A row that says
+    // node_limit is not readable without the budget it hit, and a runner should not have to
+    // reconstruct the command line to get it. "none" is what an absent limit prints, which
+    // is not the same as a limit of zero.
+    Logger quiet(nullptr);
+    const ResourceLimits limits(*options, quiet);
+    const auto count_or_none = [](std::int64_t value) {
+      return value < 0 ? nlohmann::json() : nlohmann::json(value);
+    };
+    blob["limits"] = {
+        {"time_limit_seconds", limits.has_time_limit()
+                                   ? nlohmann::json(json_number(limits.time_limit()))
+                                   : nlohmann::json()},
+        {"iteration_limit", count_or_none(limits.iteration_limit())},
+        {"node_limit", count_or_none(limits.node_limit())},
+        {"elapsed_seconds", json_number(solution.solve_seconds)},
+        {"iterations", solution.iterations},
+        {"nodes", solution.nodes},
+        // Named, not inferred: a MILP that hits a limit holding an incumbent reports
+        // kFeasible, and the status alone can no longer say which limit it was.
+        {"termination_reason", to_string(solution.stopped_by)}};
+  }
 
   // WHAT PRESOLVE DID (#286), machine-readable beside the rest. Always present, so a runner
   // can read blob["presolve"]["ran"] without guarding for the key; the counts are only

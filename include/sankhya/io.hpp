@@ -74,8 +74,12 @@ bool write_solution(const std::string& path, const Model& model, const Solution&
 /// Write a machine-readable JSON result blob: status, objective, measured infeasibilities,
 /// effort counters and build identification. This is what the benchmark runners parse, so
 /// its keys are part of the interface and must not be renamed casually.
+///
+/// `options`, when given, adds the "limits" block: the limits the solve was CONFIGURED with
+/// beside the counters it reached, so a record that says node_limit can be read without the
+/// command line that produced it (#289).
 bool write_stats_json(const std::string& path, const Model& model, const Solution& solution,
-                      std::string* error);
+                      std::string* error, const Options* options = nullptr);
 
 // -----------------------------------------------------------------------------------------
 // Model writers (inverse of the readers above)

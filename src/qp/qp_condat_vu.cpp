@@ -223,21 +223,36 @@ Solution solve_convex_qp(const Model& model, const Options& options, Logger& log
   std::vector<double> ax(um, 0.0);
 
   const double tolerance = options.get_double("qp_tolerance");
-  const Count iteration_limit =
-      options.get_int("iteration_limit") < 0 ? 1000000 : options.get_int("iteration_limit");
-  const double time_limit = options.get_double("time_limit");
+  // One interpretation of every limit, shared with every other engine (#289). A first-order
+  // method with no iteration limit still needs a stopping point, so an absent limit becomes
+  // this engine's own ceiling rather than an unbounded loop.
+  const ResourceLimits limits(options, logger);
+  constexpr Count kIterationCeiling = 1000000;
 
   Count iterations = 0;
   std::string message;
   SolveStatus status = SolveStatus::kIterationLimit;
 
-  StopController stop(control, timer, time_limit);
+  StopController stop(control, timer, limits);
   SolveStatus stop_status;
 
   while (true) {
-    if (iterations >= iteration_limit) {
+    // Time outranks the counters when both are exhausted at one safe point (#289).
+    if (limits.time_exhausted(timer.elapsed_seconds())) {
+      status = SolveStatus::kTimeLimit;
+      message = limits.describe(LimitReason::kTime, timer.elapsed_seconds(), iterations, 0);
+      break;
+    }
+    if (limits.iterations_exhausted(iterations) ||
+        (limits.iteration_limit() < 0 && iterations >= kIterationCeiling)) {
       status = SolveStatus::kIterationLimit;
-      message = fmt::format("iteration limit {} reached", iteration_limit);
+      message = limits.iteration_limit() >= 0
+                    ? limits.describe(LimitReason::kIterations, timer.elapsed_seconds(),
+                                      iterations, 0)
+                    : fmt::format(
+                          "stopped at this engine's own ceiling of {} iterations, no "
+                          "iteration_limit having been set",
+                          kIterationCeiling);
       break;
     }
     ++iterations;
@@ -278,9 +293,9 @@ Solution solve_convex_qp(const Model& model, const Options& options, Logger& log
             },
             &stop_status)) {
       status = stop_status;
-      message = stop_status == SolveStatus::kTimeLimit
-                    ? fmt::format("time limit {:.3g}s reached", time_limit)
-                    : "interrupted";
+      message = limits.describe(
+          stop_status == SolveStatus::kTimeLimit ? LimitReason::kTime : LimitReason::kInterrupt,
+          timer.elapsed_seconds(), iterations, 0);
       break;
     }
 
@@ -319,7 +334,7 @@ Solution solve_convex_qp(const Model& model, const Options& options, Logger& log
   }
 
   if (status == SolveStatus::kIterationLimit && message.empty()) {
-    message = fmt::format("iteration limit {} reached", iteration_limit);
+    message = limits.describe(LimitReason::kIterations, timer.elapsed_seconds(), iterations, 0);
   }
 
   solution.status = status;

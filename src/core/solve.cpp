@@ -21,6 +21,7 @@
 #include <fmt/format.h>
 
 #include "core/iis.hpp"
+#include "core/resource_limits.hpp"
 #include "core/status_guard.hpp"
 #include "presolve/presolve.hpp"
 #include "sankhya/certificate.hpp"
@@ -106,6 +107,33 @@ const char* class_name(ProblemClass c) {
 void refuse_a_non_finite_answer(Solution* solution, Logger& logger) {
   if (!claims_a_point(solution->status)) return;
 
+  // A LIMITED SEARCH THAT FOUND NOTHING IS NOT A NUMERICAL FAILURE (#289). A MILP stopped by
+  // a limit before it had an incumbent reports no point and the worst representable
+  // objective, deliberately, so that a reader cannot take a gap of zero for a closed one
+  // (see branch_and_bound.cpp). That infinity used to arrive here and be downgraded:
+  // `node_limit=0` and `time_limit=0` both came back numerical_error, which says the solver
+  // broke when what happened is that it was told to stop. The guard below is for an engine
+  // that produces a point full of NaN, and an empty point with an infinite objective under a
+  // resource status is neither.
+  const bool stopped_on_a_limit = solution->status == SolveStatus::kTimeLimit ||
+                                  solution->status == SolveStatus::kIterationLimit ||
+                                  solution->status == SolveStatus::kNodeLimit ||
+                                  solution->status == SolveStatus::kInterrupted;
+  const bool values_are_numbers =
+      std::all_of(solution->col_value.begin(), solution->col_value.end(),
+                  [](double v) { return std::isfinite(v); });
+  if (stopped_on_a_limit && values_are_numbers && std::isinf(solution->objective)) {
+    // The values that came with it are whatever the vectors were allocated with, and a
+    // reader must not take them for a solution, so they go - which is what this function
+    // does to a rejected point too. What stays is the status, the reason and the bound.
+    solution->col_value.clear();
+    solution->row_activity.clear();
+    solution->message +=
+        "; no feasible point had been found when the limit stopped the search, so none is "
+        "reported (the objective is the worst representable value, not a solution)";
+    return;
+  }
+
   const bool finite = std::isfinite(solution->objective) &&
                       std::all_of(solution->col_value.begin(), solution->col_value.end(),
                                   [](double v) { return std::isfinite(v); });
@@ -123,6 +151,21 @@ void refuse_a_non_finite_answer(Solution* solution, Logger& logger) {
   solution->row_activity.clear();
   solution->objective = 0.0;
   solution->dual_bound = 0.0;
+}
+
+/// Name the resource that ended the solve, for an engine that reported the status but not
+/// the reason (#289). The branch and bound sets it directly, because a limit it hits while
+/// holding an incumbent is reported as kFeasible and the status can no longer say which
+/// limit it was; everywhere else the status determines it.
+void record_why_it_stopped(Solution* solution) {
+  if (solution->stopped_by != LimitReason::kNone) return;
+  switch (solution->status) {
+    case SolveStatus::kTimeLimit: solution->stopped_by = LimitReason::kTime; break;
+    case SolveStatus::kIterationLimit: solution->stopped_by = LimitReason::kIterations; break;
+    case SolveStatus::kNodeLimit: solution->stopped_by = LimitReason::kNodes; break;
+    case SolveStatus::kInterrupted: solution->stopped_by = LimitReason::kInterrupt; break;
+    default: break;
+  }
 }
 
 /// Keep a certificate only if it proves what the status claims, against the ORIGINAL model.
@@ -194,6 +237,15 @@ void polish_with_the_interior_point(Solution* first, const Model& model, const O
   }
 
   Options polish = options;
+  // THE POLISH HAS AN ITERATION BUDGET OF ITS OWN, and that is deliberate (#229): the whole
+  // point of the route is that a first-order pass stopped at ITS limit is finished by a
+  // second engine, and the answer's iteration count is the sum of the two, which the message
+  // and `polish_iterations` both say. So iteration_limit bounds the first-order phase and
+  // polish_iteration_limit bounds the finish; a two-phase route spends two budgets. It is
+  // the one place where the total can exceed iteration_limit, and #289 documents it rather
+  // than quietly changing what --option pdhg_polish=true was measured to do.
+  Logger quiet(nullptr);
+  const ResourceLimits limits(options, quiet);
   polish.set_int("iteration_limit", options.get_int("polish_iteration_limit"));
   // THE POLISH HAS A CLOCK OF ITS OWN. The factor cap above catches a factor the ordering
   // has already sized, but on the random scale family at 20,000 rows the ORDERING is the
@@ -205,11 +257,10 @@ void polish_with_the_interior_point(Solution* first, const Model& model, const O
   // staircase family) finishes in seconds; one whose factor is not is declined in
   // polish_max_seconds and the first-order answer stands, which is the honest outcome.
   double budget = options.get_double("polish_max_seconds");
-  const double time_limit = options.get_double("time_limit");
   // In deterministic mode the polish is bounded by polish_max_factor_nonzeros alone (#288):
   // what the clock has left is exactly the kind of decision that mode exists to remove.
-  if (!options.get_bool("deterministic") && time_limit > 0.0 && std::isfinite(time_limit)) {
-    const double remaining = time_limit - timer.elapsed_seconds();
+  if (!options.get_bool("deterministic") && limits.has_time_limit()) {
+    const double remaining = limits.remaining_seconds(timer.elapsed_seconds());
     if (remaining <= 0.0) {
       first->message += "; no time left for the interior-point polish";
       return;
@@ -461,6 +512,17 @@ Solution solve_unguarded(const Model& model, const Options& options, SolveContro
   const std::string progress_out = options.get_string("progress_out");
   if (!progress_out.empty()) logger.enable_progress_output(progress_out);
 
+  // Every limit this solve runs under, read once and interpreted in one place (#289).
+  const ResourceLimits limits(options, logger);
+  // The options an engine is given when part of the budget is already spent. A no-limit
+  // solve gets the options unchanged, so nothing is copied on the common path.
+  const auto with_the_time_that_is_left = [&](const Options& base) -> Options {
+    if (!limits.has_time_limit()) return base;
+    Options narrowed = base;
+    narrowed.set_double("time_limit", limits.remaining_seconds(timer.elapsed_seconds()));
+    return narrowed;
+  };
+
   const ProblemClass problem_class = classify(model);
   logger.info("Model {}: {} rows, {} columns, {} nonzeros, {} integer columns",
               model.name.empty() ? std::string("(unnamed)") : model.name, model.num_rows(),
@@ -581,29 +643,38 @@ Solution solve_unguarded(const Model& model, const Options& options, SolveContro
     // One place runs the engine on whichever model - reduced or original - is being solved,
     // so the polish of a PDHG answer happens before postsolve in both cases.
     const auto run_lp_engine = [&](const Model& target) -> Solution {
+      // THE CLOCK STARTED WHEN THE SOLVE DID (#289). Presolve has already spent some of the
+      // budget by the time an engine is reached, and handing the engine the full time_limit
+      // gave a solve with presolve on strictly more time than the caller allowed. The engine
+      // is given what is left.
+      const Options engine_options = with_the_time_that_is_left(options);
       if (want_pdhg) {
-        Options first_pass = options;
-        const double time_limit = options.get_double("time_limit");
-        if (options.get_bool("pdhg_polish") && !options.get_bool("deterministic") &&
-            time_limit > 0.0 && std::isfinite(time_limit)) {
+        Options first_pass = engine_options;
+        const double time_limit = engine_options.get_double("time_limit");
+        if (engine_options.get_bool("pdhg_polish") &&
+            !engine_options.get_bool("deterministic") && time_limit > 0.0 &&
+            std::isfinite(time_limit)) {
           first_pass.set_double("time_limit", time_limit * kPdhgShareOfTheTimeLimit);
         }
         Solution first = pdhg::solve_pdhg(target, first_pass, logger, control);
-        polish_with_the_interior_point(&first, target, options, logger, control, timer);
+        polish_with_the_interior_point(&first, target, engine_options, logger, control, timer);
         return first;
       }
       if (want_ipm) {
-        Solution interior = ipm::solve_ipm(target, options, logger, control);
+        Solution interior = ipm::solve_ipm(target, engine_options, logger, control);
         // From the interior point's answer to a vertex (#219), when asked: the basis the
         // rest of the pipeline wants, at the cost of a few pivots from an optimal point.
-        if (options.get_bool("crossover")) {
-          return crossover_to_vertex(target, std::move(interior), options, logger, control,
+        // The crossover runs on what the budget has left too, which is why it is handed
+        // engine_options rather than the caller's (#289).
+        if (engine_options.get_bool("crossover")) {
+          return crossover_to_vertex(target, std::move(interior),
+                                     with_the_time_that_is_left(options), logger, control,
                                      timer);
         }
         return interior;
       }
-      return want_dual ? solve_dual_simplex(target, options, logger, control)
-                       : solve_primal_simplex(target, options, logger, control);
+      return want_dual ? solve_dual_simplex(target, engine_options, logger, control)
+                       : solve_primal_simplex(target, engine_options, logger, control);
     };
     if (requested != "auto" && requested != "simplex" && !want_pdhg && !want_dual &&
         !want_ipm) {
@@ -668,6 +739,7 @@ Solution solve_unguarded(const Model& model, const Options& options, SolveContro
     solution.solve_seconds = timer.elapsed_seconds();
     reconcile_status_with_measurement(&solution, options, logger, /*check_dual=*/true);
     refuse_a_non_finite_answer(&solution, logger);
+    record_why_it_stopped(&solution);
     keep_only_a_proved_certificate(&solution, model, logger);
     // Sensitivity ranging runs on the ORIGINAL model after postsolve so the vectors are
     // full-size and the basis is expressed in terms of original column and row indices.
@@ -684,7 +756,8 @@ Solution solve_unguarded(const Model& model, const Options& options, SolveContro
   if (problem_class == ProblemClass::kMilp) {
     solution = with_presolve(
         [&](const Model& target) {
-          return mip::solve_branch_and_bound(target, options, logger, control);
+          return mip::solve_branch_and_bound(target, with_the_time_that_is_left(options),
+                                             logger, control);
         },
         &presolve_proved_it);
     if (presolve_proved_it) {
@@ -698,6 +771,7 @@ Solution solve_unguarded(const Model& model, const Options& options, SolveContro
     // no point exists, not a broken number. Only a claimed POINT is checked, and that
     // convention comes with kInfeasible or a limit and no values.
     refuse_a_non_finite_answer(&solution, logger);
+    record_why_it_stopped(&solution);
     logger.info("Result: {}  objective {:.10g}  bound {:.10g}  {} nodes  {:.3f}s",
                 to_string(solution.status), solution.objective, solution.dual_bound,
                 solution.nodes, solution.solve_seconds);
@@ -709,7 +783,8 @@ Solution solve_unguarded(const Model& model, const Options& options, SolveContro
   if (problem_class == ProblemClass::kQp) {
     solution = with_presolve(
         [&](const Model& target) {
-          return qp::solve_convex_qp(target, options, logger, control);
+          return qp::solve_convex_qp(target, with_the_time_that_is_left(options), logger,
+                                     control);
         },
         &presolve_proved_it);
     if (presolve_proved_it) {
@@ -721,6 +796,8 @@ Solution solve_unguarded(const Model& model, const Options& options, SolveContro
     // quantity Solution::recompute_quality() tests, and applying the LP dual rule here
     // would reject correct answers. Primal feasibility and the status still have to agree.
     reconcile_status_with_measurement(&solution, options, logger, /*check_dual=*/false);
+    refuse_a_non_finite_answer(&solution, logger);
+    record_why_it_stopped(&solution);
     logger.info("Result: {}  objective {:.10g}  {} iterations  {:.3f}s",
                 to_string(solution.status), solution.objective, solution.iterations,
                 solution.solve_seconds);
@@ -741,7 +818,8 @@ Solution solve_unguarded(const Model& model, const Options& options, SolveContro
     // checked.
     solution = with_presolve(
         [&](const Model& target) {
-          return mip::solve_branch_and_bound(target, options, logger, control);
+          return mip::solve_branch_and_bound(target, with_the_time_that_is_left(options),
+                                             logger, control);
         },
         &presolve_proved_it);
     if (presolve_proved_it) {
@@ -750,6 +828,8 @@ Solution solve_unguarded(const Model& model, const Options& options, SolveContro
       return solution;
     }
     reconcile_status_with_measurement(&solution, options, logger, /*check_dual=*/false);
+    refuse_a_non_finite_answer(&solution, logger);
+    record_why_it_stopped(&solution);
     logger.info("Result: {}  objective {:.10g}  bound {:.10g}  {} nodes  {:.3f}s",
                 to_string(solution.status), solution.objective, solution.dual_bound,
                 solution.nodes, solution.solve_seconds);

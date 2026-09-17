@@ -310,10 +310,13 @@ Solution solve_pdhg(const Model& model, const Options& options, Logger& logger,
                              static_cast<unsigned>(options.get_int("random_seed")) + 1u);
 
   const double tolerance = options.get_double("pdhg_tolerance");
-  const double time_limit = options.get_double("time_limit");
-  const std::int64_t iteration_option = options.get_int("iteration_limit");
-  const Count iteration_limit =
-      iteration_option < 0 ? 1000000 : static_cast<Count>(iteration_option);
+  // One interpretation of every limit, shared with every other engine (#289). A first-order
+  // method with no iteration limit still needs a stopping point, so an absent limit becomes
+  // this engine's own ceiling rather than an unbounded loop.
+  const ResourceLimits limits(options, logger);
+  const Count iteration_limit = limits.iteration_limit() < 0
+                                    ? Count{1000000}
+                                    : static_cast<Count>(limits.iteration_limit());
   const bool use_restarts = options.get_bool("pdhg_restart");
   const bool stop_at_request = options.get_bool("pdhg_stop_at_request");
 
@@ -383,10 +386,16 @@ Solution solve_pdhg(const Model& model, const Options& options, Logger& logger,
   bool converged = false;
   bool logged_table = false;
 
-  StopController stop(control, timer, time_limit);
+  StopController stop(control, timer, limits);
   SolveStatus stop_status = SolveStatus::kIterationLimit;
 
   while (true) {
+    // Time outranks the counters when both are exhausted at one safe point (#289), so the
+    // clock is consulted first and the iteration ceiling second.
+    if (limits.time_exhausted(timer.elapsed_seconds())) {
+      stop_status = SolveStatus::kTimeLimit;
+      break;
+    }
     if (iteration >= iteration_limit) break;
 
     if (stop.should_stop(

@@ -531,7 +531,16 @@ std::optional<Solution> Simplex::dual_loop(Timer& timer, Count* iterations_io) {
     return true;
   };
 
-  StopController stop(control_, timer, time_limit_);
+  StopController stop(control_, timer, limits_);
+  // Zero iterations allowed means none are performed (#289); the count below happens after
+  // a pivot, which is the right place for every larger budget and the wrong one for this.
+  if (const LimitReason why = limits_.exhausted(timer.elapsed_seconds(), iterations, 0);
+      why != LimitReason::kNone) {
+    compute_reduced_costs(false);
+    return finish(status_for(why),
+                  limits_.describe(why, timer.elapsed_seconds(), iterations, 0), iterations,
+                  timer.elapsed_seconds());
+  }
 
   for (;;) {
     iterations_seen_ = iterations;
@@ -719,9 +728,10 @@ std::optional<Solution> Simplex::dual_loop(Timer& timer, Count* iterations_io) {
     const auto count_iteration = [&]() -> std::optional<Solution> {
       ++iterations;
       ++dual_iterations_;
-      if (iteration_limit_ >= 0 && iterations >= iteration_limit_) {
-        return stop_at_limit(SolveStatus::kIterationLimit,
-                             fmt::format("iteration limit {} reached", iteration_limit_));
+      if (limits_.iterations_exhausted(iterations)) {
+        return stop_at_limit(
+            SolveStatus::kIterationLimit,
+            limits_.describe(LimitReason::kIterations, timer.elapsed_seconds(), iterations, 0));
       }
 
       SolveStatus stop_status;
@@ -735,10 +745,12 @@ std::optional<Solution> Simplex::dual_loop(Timer& timer, Count* iterations_io) {
                 return p;
               },
               &stop_status)) {
-        return stop_at_limit(stop_status,
-                             stop_status == SolveStatus::kTimeLimit
-                                 ? fmt::format("time limit {:g}s reached", time_limit_)
-                                 : "interrupted");
+        return stop_at_limit(
+            stop_status,
+            stop_status == SolveStatus::kTimeLimit
+                ? limits_.describe(LimitReason::kTime, timer.elapsed_seconds(), iterations, 0)
+                : limits_.describe(LimitReason::kInterrupt, timer.elapsed_seconds(), iterations,
+                                   0));
       }
       return std::nullopt;
     };
@@ -906,6 +918,7 @@ void Simplex::remove_cost_perturbation() {
 
 Solution Simplex::run_dual(const WarmStart* warm) {
   Timer timer;
+  limits_ = ResourceLimits(options_, logger_);
   time_limit_ = options_.get_double("time_limit");
   arm_deadline(timer);
   algorithm_name_ = "simplex-dual";

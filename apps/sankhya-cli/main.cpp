@@ -337,6 +337,41 @@ int main(int argc, char** argv) {
       }
     }
     if (!solution.message.empty()) fmt::print("{:<22}{}\n", "message", solution.message);
+
+    // A SOLVE THAT WAS STOPPED SAYS SO, WITH THE BUDGET BESIDE WHAT IT REACHED (#289).
+    // "status: feasible" on a MILP that ran out of nodes reads like a solver that gave up;
+    // it is a solver that did what it was told, and the numbers that show it are the limit
+    // and the count it reached. Printed only when a limit ended the solve, so an ordinary
+    // run is unchanged.
+    if (solution.stopped_by != sankhya::LimitReason::kNone) {
+      fmt::print("\nSolve terminated:\n");
+      fmt::print("  {:<20}{}\n", "reason", sankhya::to_string(solution.stopped_by));
+      const double configured_time = options.get_double("time_limit");
+      if (configured_time < std::numeric_limits<double>::max()) {
+        fmt::print("  {:<20}{:g} s\n", "time limit", configured_time);
+      }
+      fmt::print("  {:<20}{:.4f} s\n", "elapsed", solution.solve_seconds);
+      const std::int64_t iteration_limit = options.get_int("iteration_limit");
+      if (iteration_limit >= 0) {
+        fmt::print("  {:<20}{}\n", "iteration limit", iteration_limit);
+      }
+      fmt::print("  {:<20}{}\n", "iterations", solution.iterations);
+      const std::int64_t node_limit = options.get_int("node_limit");
+      if (node_limit >= 0) fmt::print("  {:<20}{}\n", "node limit", node_limit);
+      if (solution.nodes > 0 || node_limit >= 0) {
+        fmt::print("  {:<20}{}\n", "nodes", solution.nodes);
+      }
+      if (sankhya::claims_a_point(solution)) {
+        fmt::print("  {:<20}{:.12g}\n", "best objective", solution.objective);
+        fmt::print("  {:<20}{:.12g}\n", "best bound", solution.dual_bound);
+        if (std::isfinite(solution.relative_gap)) {
+          fmt::print("  {:<20}{:.4f}%\n", "gap", 100.0 * solution.relative_gap);
+        }
+      } else {
+        fmt::print("  {:<20}{}\n", "best objective",
+                   "none - no feasible point was found before the limit");
+      }
+    }
     if (!solution.col_ranging_lower.empty()) {
       // Print the ten most sensitive objective coefficients and row bounds.
       const int kTop = 10;
@@ -435,7 +470,7 @@ int main(int argc, char** argv) {
       return 4;
     }
     if (!stats_path.empty() &&
-        !sankhya::io::write_stats_json(stats_path, model, solution, &error)) {
+        !sankhya::io::write_stats_json(stats_path, model, solution, &error, &options)) {
       fmt::print(stderr, "error: {}\n", error);
       return 4;
     }

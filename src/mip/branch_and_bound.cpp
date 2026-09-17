@@ -72,7 +72,15 @@ Solution BranchAndBound::run() {
   logger_.info("Branch and bound: {} rows, {} columns, {} integer columns",
                original_.num_rows(), original_.num_cols(), integer_columns_.size());
 
-  nodes_.push_back(TreeNode{});
+  // THE ROOT STARTS WITH NO BOUND PROVED (#289). TreeNode::bound is 0.0 by default, which
+  // is a placeholder for "inherited from the parent" and the root has no parent. A search
+  // stopped before it evaluated the root then reported a dual bound of 0: true by luck on a
+  // model whose optimum is positive, and a false claim on one whose optimum is negative.
+  // Minus infinity in minimise space is what "nothing is proved yet" actually is, and it
+  // prunes nothing, which is also what an unevaluated root should do.
+  TreeNode root;
+  root.bound = -std::numeric_limits<double>::infinity();
+  nodes_.push_back(root);
   open_.push_back(0);
 
   double best_open_bound = -std::numeric_limits<double>::infinity();
@@ -82,16 +90,22 @@ Solution BranchAndBound::run() {
   bool gap_target_met = false;
   double open_bound = -std::numeric_limits<double>::infinity();
 
-  StopController stop(control_, timer_, time_limit_);
+  StopController stop(control_, timer_, limits_);
   SolveStatus stop_status;
   Solution best_available_point;
 
   while (!open_.empty()) {
-    if (nodes_explored_ >= node_limit_) {
+    // Both counters and the clock are checked here, in the documented order: a tree that is
+    // out of time and out of nodes at the same node reports the time limit (#289).
+    if (const LimitReason why = limits_.exhausted(timer_.elapsed_seconds(), 0,
+                                                  static_cast<std::int64_t>(nodes_explored_));
+        why != LimitReason::kNone) {
       limit_hit = true;
-      solution.status = SolveStatus::kNodeLimit;
-      solution.message =
-          fmt::format("stopped at the node limit after {} nodes", nodes_explored_);
+      solution.status = status_for(why);
+      // The status alone cannot say this once an incumbent turns it into kFeasible (#289).
+      solution.stopped_by = why;
+      solution.message = limits_.describe(why, timer_.elapsed_seconds(), 0,
+                                          static_cast<std::int64_t>(nodes_explored_));
       break;
     }
 
@@ -133,12 +147,11 @@ Solution BranchAndBound::run() {
             &stop_status)) {
       limit_hit = true;
       solution.status = stop_status;
-      solution.message =
-          stop_status == SolveStatus::kTimeLimit
-              ? fmt::format("stopped at the time limit after {:.2f}s and {} nodes",
-                            timer_.elapsed_seconds(), nodes_explored_)
-              : fmt::format("stopped by user interrupt after {:.2f}s and {} nodes",
-                            timer_.elapsed_seconds(), nodes_explored_);
+      solution.stopped_by =
+          stop_status == SolveStatus::kTimeLimit ? LimitReason::kTime : LimitReason::kInterrupt;
+      solution.message = limits_.describe(
+          stop_status == SolveStatus::kTimeLimit ? LimitReason::kTime : LimitReason::kInterrupt,
+          timer_.elapsed_seconds(), 0, static_cast<std::int64_t>(nodes_explored_));
       break;
     }
 
@@ -226,6 +239,9 @@ Solution BranchAndBound::run() {
       leave();
       limit_hit = true;
       solution.status = relaxation.status;
+      solution.stopped_by = relaxation.status == SolveStatus::kTimeLimit
+                                ? LimitReason::kTime
+                                : LimitReason::kInterrupt;
       best_available_point = std::move(relaxation);
       break;
     }
@@ -233,10 +249,28 @@ Solution BranchAndBound::run() {
       // A node whose LP did not solve cannot be fathomed honestly: pruning it could discard
       // the optimum. Stop and report rather than quietly continuing on a broken bound.
       leave();
-      solution.status = SolveStatus::kNumericalError;
-      solution.message = fmt::format("node LP returned {} at node {}",
-                                     to_string(relaxation.status), nodes_explored_);
-      return solution;
+      // WHY IT COULD NOT BE SOLVED DECIDES WHAT THIS IS (#289). A node LP that ran out of
+      // ITERATIONS is a resource limit that reached the tree through the node engine, not a
+      // numerical failure: `--option iteration_limit=5` on a MILP used to come back
+      // numerical_error, which says the solver broke when what happened is that it was told
+      // to stop. Anything else - a singular basis, an unbounded node, a status no node
+      // should return - stays the numerical failure it is.
+      const bool out_of_iterations = relaxation.status == SolveStatus::kIterationLimit;
+      limit_hit = out_of_iterations;
+      solution.status =
+          out_of_iterations ? SolveStatus::kIterationLimit : SolveStatus::kNumericalError;
+      if (out_of_iterations) solution.stopped_by = LimitReason::kIterations;
+      solution.message =
+          out_of_iterations
+              ? fmt::format(
+                    "the node LP at node {} stopped at the iteration limit, so the tree "
+                    "cannot go on: a node whose bound is unknown cannot be fathomed without "
+                    "risking the optimum ({})",
+                    nodes_explored_, relaxation.message)
+              : fmt::format("node LP returned {} at node {}", to_string(relaxation.status),
+                            nodes_explored_);
+      if (!out_of_iterations) return solution;
+      break;
     }
 
     best_available_point = relaxation;

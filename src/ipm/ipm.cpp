@@ -36,6 +36,7 @@
 
 #include <fmt/format.h>
 
+#include "core/resource_limits.hpp"
 #include "la/ldl.hpp"
 #include "la/scaling.hpp"
 
@@ -124,6 +125,9 @@ class InteriorPoint {
   /// The deadline handed down to the linear algebra, so a time limit is not defeated by one
   /// very long ordering or factorization (#193). Empty when there is no limit.
   SparseLdl::ShouldStop should_stop_;
+  /// The limits this solve runs under, interpreted where every other engine interprets
+  /// them (#289). Held by the object because should_stop_ captures `this`.
+  ResourceLimits limits_;
   /// Set when the deadline fired inside normal_equations_lower(), which the factorization
   /// never got to see - run() reads it beside ldl_.stopped_early() to report a time limit
   /// rather than a numerical failure (#232).
@@ -861,23 +865,28 @@ bool InteriorPoint::purify_duals() {
 Solution InteriorPoint::run() {
   Timer own_clock;
   const Timer& timer = clock_ != nullptr ? *clock_ : own_clock;
-  const double time_limit = options_.get_double("time_limit");
+  // One interpretation of every limit, shared with every other engine (#289). This used to
+  // read `time_limit > 0.0`, which made a budget of zero seconds mean NO limit here while it
+  // meant "stop at once" in the simplex and in PDHG: measured on bandm.mps, time_limit=0
+  // returned optimal from this engine and time_limit from the other three.
+  limits_ = ResourceLimits(options_, logger_);
+  const double time_limit = limits_.time_limit();
   // Handed to the linear algebra so the clock is not only consulted between iterations.
   // Captured by reference to the local timer, which outlives every call that uses it.
-  if (time_limit > 0.0 && std::isfinite(time_limit)) {
+  if (limits_.has_time_limit()) {
     if (control_ != nullptr) {
       // Observe both the wall-clock deadline and any external SolveControl interruption.
-      should_stop_ = [&timer, time_limit, control = control_] {
-        return timer.elapsed_seconds() > time_limit || control->interruption_requested();
+      should_stop_ = [&timer, this, control = control_] {
+        return limits_.time_exhausted(timer.elapsed_seconds()) ||
+               control->interruption_requested();
       };
     } else {
-      should_stop_ = [&timer, time_limit] { return timer.elapsed_seconds() > time_limit; };
+      should_stop_ = [&timer, this] { return limits_.time_exhausted(timer.elapsed_seconds()); };
     }
   } else if (control_ != nullptr) {
     // No time limit, but interruption is still supported.
     should_stop_ = [control = control_] { return control->interruption_requested(); };
   }
-  const std::int64_t iteration_limit = options_.get_int("iteration_limit");
   max_factor_nonzeros_ = options_.get_int(warm_ != nullptr ? "polish_max_factor_nonzeros"
                                                            : "ipm_max_factor_nonzeros");
   // The ordering's own budget (#246): the one phase that can run the machine out of memory
@@ -963,8 +972,7 @@ Solution InteriorPoint::run() {
         relative_gap <= kIpmGap && max_product_ <= kIpmComplementarity) {
       return finish(SolveStatus::kOptimal, {}, iterations, timer.elapsed_seconds());
     }
-    if (iterations >= kMaxIterations ||
-        (iteration_limit >= 0 && iterations >= iteration_limit)) {
+    if (iterations >= kMaxIterations || limits_.iterations_exhausted(iterations)) {
       restore_best();
       return finish(
           SolveStatus::kIterationLimit,

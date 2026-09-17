@@ -83,7 +83,12 @@ const std::vector<OptionSpec>& Options::registry() {
     s.push_back({"time_limit",
                  OptionType::Double,
                  kNoLimit,
-                 "Wall-clock limit in seconds.",
+                 "Wall-clock limit in seconds, measured from the start of solve() and so "
+                 "covering presolve, the engine and postsolve, but not reading the model or "
+                 "writing the answer. The default is the no-limit sentinel; ZERO IS A BUDGET "
+                 "OF ZERO SECONDS, not an absent limit, and stops the solve at its first safe "
+                 "point. A solve is stopped between iterations or between nodes, so a "
+                 "factorization already running finishes first (#289).",
                  0.0,
                  kNoLimit,
                  {}});
@@ -100,14 +105,20 @@ const std::vector<OptionSpec>& Options::registry() {
     s.push_back({"iteration_limit",
                  OptionType::Int,
                  std::int64_t{-1},
-                 "Simplex/IPM/PDHG iteration limit; -1 for no limit.",
+                 "Simplex/IPM/PDHG iteration limit; -1 for no limit. N means AT MOST N "
+                 "iterations, zero included. With pdhg_polish the interior-point finish has "
+                 "polish_iteration_limit of its own and the reported count is the sum of "
+                 "both phases (#229), which is the one case where it can exceed this (#289).",
                  -1.0,
                  kNoLimit,
                  {}});
     s.push_back({"node_limit",
                  OptionType::Int,
                  std::int64_t{-1},
-                 "Branch-and-cut node limit; -1 for no limit.",
+                 "Branch-and-cut node limit; -1 for no limit. N means AT MOST N nodes, zero "
+                 "included. A search stopped this way keeps its incumbent, its bound and its "
+                 "gap; one stopped before it found an integer point reports no point and an "
+                 "infinite gap rather than a zero one (#289).",
                  -1.0,
                  kNoLimit,
                  {}});

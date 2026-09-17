@@ -241,3 +241,54 @@ that differ only in what their columns are called solve identically.
 
 The GPU path is out of scope here: `src/gpu/` is guarded by `SANKHYA_ENABLE_CUDA` and this
 mode makes no claim about CUDA reductions. `docs/PS26119_COVERAGE.md` says what exists.
+
+## 8. Resource limits, and what each one means
+
+One place decides what a limit means: `ResourceLimits` in `src/core/resource_limits.hpp`,
+read from the options once per solve and consulted by every engine through `StopController`
+(#289). Before it, each engine read the options for itself and they did not agree.
+
+| Option | No limit | Zero | N |
+|---|---|---|---|
+| `time_limit` | the default sentinel, or any non-finite value | a budget of ZERO SECONDS: the solve stops at its first safe point | at most N seconds of wall clock |
+| `iteration_limit` | `-1` | no iterations are performed | at most N iterations |
+| `node_limit` | `-1` | no nodes are processed | at most N nodes |
+
+A negative duration or a count below `-1` is a configuration error: it is refused with a
+warning naming the value, and the solve runs without that limit rather than with a nonsense
+one.
+
+**What the clock covers.** It starts at the top of `solve()`, so it covers presolve, the
+engine and postsolve. It does not cover reading the model or writing the answer, which happen
+in the CLI around the call. An engine reached after presolve is given what is LEFT of the
+budget, not the whole of it.
+
+**Precedence**, when more than one limit is exhausted at the same check:
+
+    user interrupt  >  time  >  iterations  >  nodes
+
+The interrupt wins because it is the only one a person is waiting on; time beats the counters
+because it is the limit protecting a caller's own deadline.
+
+**Safe points.** A limit is observed at a boundary the engine chooses: between simplex
+iterations, between PDHG iterations, between branch-and-bound nodes, and inside the interior
+point's ordering and factorization through the same predicate (#197). A factorization or a
+kernel already running finishes first, so overrunning a deadline by one such step is expected
+and is not a violated limit.
+
+**A limit is never a numerical failure.** `kTimeLimit`, `kIterationLimit`, `kNodeLimit` and
+`kInterrupted` are distinct from `kOptimal`, `kInfeasible`, `kUnbounded` and
+`kNumericalError`, and the solve reports which one stopped it in `Solution::stopped_by`,
+because a MILP that hits a limit holding an incumbent reports `kFeasible` and the status can
+no longer say. Three cases that used to come back `numerical_error` and no longer do:
+`node_limit=0`, `time_limit=0` on a MILP, and a node LP that runs out of iterations.
+
+**What a stopped solve still reports.** The incumbent, the best bound and the gap where a MILP
+has them. A search stopped before it found any integer point reports no point, the worst
+representable objective and an INFINITE gap, because an unknown gap is not a closed one, and
+a bound only if a node proved one: an unevaluated root proves nothing.
+
+**Not implemented, and not pretended.** There is no memory limit and no GPU memory limit. Peak
+resident memory is not portably queryable from this binary, and `docs/PS26119_COVERAGE.md`
+says so rather than the option table carrying a knob that does nothing. The CUDA backend is
+not on `main`, so nothing here claims anything about device memory or kernel termination.

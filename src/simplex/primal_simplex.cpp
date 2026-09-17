@@ -466,8 +466,11 @@ bool Simplex::refactorize() {
 
 void Simplex::arm_deadline(const Timer& timer) {
   factors_abandoned_ = false;
-  if (time_limit_ > 0.0 && std::isfinite(time_limit_)) {
-    deadline_ = [&timer, this] { return timer.elapsed_seconds() > time_limit_; };
+  // ResourceLimits decides what the option MEANS, here as everywhere else (#289) - in
+  // particular time_limit=0 is a budget of zero seconds, which this used to read as no
+  // limit at all.
+  if (limits_.has_time_limit()) {
+    deadline_ = [&timer, this] { return limits_.time_exhausted(timer.elapsed_seconds()); };
   } else {
     deadline_ = {};
   }
@@ -1318,6 +1321,7 @@ std::optional<Solution> Simplex::prepare(const WarmStart* warm, const Timer& tim
   if (!(primal_tolerance_ > 0.0)) primal_tolerance_ = tol::kPrimalFeasibility;
   if (!(dual_tolerance_ > 0.0)) dual_tolerance_ = tol::kDualFeasibility;
 
+  limits_ = ResourceLimits(options_, logger_);
   time_limit_ = options_.get_double("time_limit");
   iteration_limit_ = options_.get_int("iteration_limit");
 
@@ -1393,6 +1397,7 @@ std::optional<Solution> Simplex::prepare(const WarmStart* warm, const Timer& tim
 
 Solution Simplex::run(const WarmStart* warm) {
   Timer timer;
+  limits_ = ResourceLimits(options_, logger_);
   time_limit_ = options_.get_double("time_limit");
   arm_deadline(timer);
   if (std::optional<Solution> early = prepare(warm, timer)) return *early;
@@ -1407,9 +1412,16 @@ Solution Simplex::run(const WarmStart* warm) {
 
 Solution Simplex::primal_loop(Timer& timer, Count* iterations_io) {
   Count& iterations = *iterations_io;
-  const double time_limit = time_limit_;
-  const std::int64_t iteration_limit = iteration_limit_;
-  StopController stop(control_, timer, time_limit);
+  StopController stop(control_, timer, limits_);
+  // A budget of zero iterations buys zero iterations (#289). The check below this loop runs
+  // after a pivot, which is the right place for every other count and the wrong one for
+  // this one: it used to perform one iteration and then report that none were allowed.
+  if (const LimitReason why = limits_.exhausted(timer.elapsed_seconds(), iterations, 0);
+      why != LimitReason::kNone) {
+    return finish(status_for(why),
+                  limits_.describe(why, timer.elapsed_seconds(), iterations, 0), iterations,
+                  timer.elapsed_seconds());
+  }
   int degenerate_run = 0;
   bool bland = false;
   bool was_phase_one = true;
@@ -1813,11 +1825,12 @@ Solution Simplex::primal_loop(Timer& timer, Count* iterations_io) {
 
     ++iterations;
 
-    if (iteration_limit >= 0 && iterations >= iteration_limit) {
+    if (limits_.iterations_exhausted(iterations)) {
       compute_reduced_costs(false);
-      return finish(SolveStatus::kIterationLimit,
-                    fmt::format("iteration limit {} reached", iteration_limit), iterations,
-                    timer.elapsed_seconds());
+      return finish(
+          SolveStatus::kIterationLimit,
+          limits_.describe(LimitReason::kIterations, timer.elapsed_seconds(), iterations, 0),
+          iterations, timer.elapsed_seconds());
     }
 
     SolveStatus stop_status;
@@ -1832,11 +1845,12 @@ Solution Simplex::primal_loop(Timer& timer, Count* iterations_io) {
             },
             &stop_status)) {
       compute_reduced_costs(false);
-      return finish(stop_status,
-                    stop_status == SolveStatus::kTimeLimit
-                        ? fmt::format("time limit {:g}s reached", time_limit)
-                        : "interrupted",
-                    iterations, timer.elapsed_seconds());
+      return finish(
+          stop_status,
+          limits_.describe(stop_status == SolveStatus::kTimeLimit ? LimitReason::kTime
+                                                                  : LimitReason::kInterrupt,
+                           timer.elapsed_seconds(), iterations, 0),
+          iterations, timer.elapsed_seconds());
     }
   }
 }

@@ -182,6 +182,7 @@ set(SANKHYA_CORE_SOURCES
   src/core/certificate.cpp
   src/core/iis.cpp
   src/core/model.cpp
+  src/core/resource_limits.cpp
   src/core/solve.cpp
   src/io/line_reader.cpp
   src/io/lp_reader.cpp
