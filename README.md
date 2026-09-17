@@ -42,9 +42,10 @@ arithmetic starts, and a negative pivot is returned as the certificate. Reportin
 optimum as a global one is the single most damaging thing this dispatcher could do, so it
 does not — see the Evidence rules in [`ENGINEERING_RULES.md`](ENGINEERING_RULES.md).
 
-Benchmark results against Netlib, headline first: **78 of 89** on the full set — matched
+Benchmark results against Netlib, headline first: **80 of 89** on the full set — matched
 to the published optimum to a relative 1e-6 *and* passed independent verification —
-measured on `main` at `2b4eb6b` (`bench/results/netlib-full-2b4eb6b.csv`). The narrower
+measured on `main` at `e134aeb` (`bench/results/netlib-full-e134aeb.csv`, alone on the
+machine, on mains). The narrower
 tiers read higher (**48 of 50** on the medium tier, **9 of 9** on the small set the demo
 runs) because both are defined by a row cap, which makes them the easier half by
 construction; the full set is the number Phase 6's ">= 95% of Netlib" criterion is
@@ -52,35 +53,32 @@ measured against, so it is the one quoted here. See
 [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md), generated from the CSVs in `bench/results/` so
 it cannot drift.
 
-The 11 non-passes are worth naming, and most of them are not wrong answers. Every one that
+The 9 non-passes are worth naming, and eight of them are not wrong answers. Every one that
 produces an answer was cross-checked against **HiGHS**, a mature third-party solver run as a
 separate process, by `bench/runners/cross_check_highs.py`
 (`bench/results/cross-check-highs-6bec31e.csv`):
 
 | what it is | count | instances |
 |---|---|---|
-| our answer verifies as optimal and agrees with HiGHS; Netlib's published table is the outlier (`e226` by its objective constant, the rest by up to 1.3e-03) | **7** | `80bau3b`, `e226`, `ganges`, `greenbea`, `greenbeb`, `nesm`, `scrs8` |
-| ran out of time at 120 s | **2** | `dfl001`, `pilot87` |
-| the answer agrees with HiGHS to 3.0e-07 and verifies; our own dual-feasibility check downgrades the status to `feasible`, and Netlib's table is off by 1.5e-04 | **1** | `pilot` |
-| the solver declined to answer: its phase-1 ratio test found no blocking variable and it reported a numerical error rather than a claim it could not stand behind | **1** | `maros-r7` |
+| our answer verifies as optimal and agrees with HiGHS; Netlib's published table is the outlier (`e226` by its objective constant, `pilot` by 1.5e-04, the rest by up to 1.3e-03) | **8** | `80bau3b`, `e226`, `ganges`, `greenbea`, `greenbeb`, `nesm`, `pilot`, `scrs8` |
+| ran out of time at 120 s: the scaled attempt's share of the clock ends inside a basis factorization, which is abandoned, and the unscaled retry does not finish either (#214, #247) | **1** | `maros-r7` |
 
 So: **on every Netlib instance where this solver produces a final answer, that answer
-agrees with HiGHS** - nine of the twelve rows in that CSV agree to 3.0e-07 or better. The
-three that differ are `dfl001` and `pilot87`, whose rows there are unfinished iterates
-rather than answers, and `maros-r7`, which has none. What remains is speed on two
-instances, our own status reporting on one, and one instance without an answer.
+agrees with HiGHS** - nine of the twelve rows in that CSV agree to 3.0e-07 or better; the
+three that differ there are `dfl001` and `pilot87`, unfinished iterates in that run and
+optimal in this one (below), and `maros-r7`, which has no answer in either. What remains
+is one instance without an answer.
 
-The machine's speed state is part of the evidence, so it is stated, and on this laptop it
-decides exactly one instance. `pilot87` needs **26,226 iterations** to reach its optimum -
-run it under `--option iteration_limit=27000` and it gets there every time, at objective
-301.710691459, with one basis repair - and whether those iterations fit inside the 120 s
-limit depends on how fast the machine is that minute. It fitted at `6bec31e` (55.9 s) and
-did not at `2b4eb6b` (the run above), which is the whole of the difference between 79 of
-89 and 78 of 89 on this hardware. Nothing else moves: 86 of the 89 rows are identical in
-status, iteration count and objective between the two runs, and the other two are
-`dfl001`, truncated wherever the clock leaves it, and `fit2p`, which takes the scaled or
-the unscaled route depending on the same clock (#172). The table above is the slower, more
-conservative run.
+The machine's speed state is part of the evidence, so it is stated. The two rows that
+moved from 78 to 80 are the two the clock used to decide: `pilot87` now reaches its
+optimum in 62.6 s (44,485 iterations, through the unscaled retry after the scaled attempt
+stops) where it needed more than the 120 s at `2b4eb6b` and 55.9 s on a cooler run at
+`6bec31e`, and `dfl001` reaches its optimum in 116.0 s (48,988 iterations, the same route)
+where it was truncated at 120 s in every earlier run. What changed between the two runs is
+the dual simplex's cost per iteration (#242, #265, #278), not the answers: the 78 rows
+that passed before pass now with the same status. `dfl001` at 116 s of 120 is still
+clock-decided, and a slower machine may lose it again; the table above says which
+machine state it came from.
 
 This mattered because our own verifier could not settle it — it re-derives the answer from
 the same file we read, so agreeing with it shows only that our two readers agree, and both
@@ -99,11 +97,12 @@ to Netlib's size. Since then the dual simplex became the automatic engine (#165)
 reliability branching landed (#166), presolve's postsolve runs its dual passes to a fixed
 point (#162), and the FTRAN went hyper-sparse (#169): between them the full set went from
 71 to 78 verified passes, and `degen3`, which took 123.6 s, takes 0.9 s
-(`bench/results/netlib-full-2b4eb6b.csv`).
+(`bench/results/netlib-full-2b4eb6b.csv`); the iteration-cost work of #242, #265 and #278
+took it to 80 (`bench/results/netlib-full-e134aeb.csv`).
 
-That is a better class of problem to have, and a different roadmap: speed on the three
-largest instances rather than robustness. Tracked in #214 (the four non-passes that are
-ours to fix) and #210 (the dual simplex's iteration rate at size).
+That is a better class of problem to have, and a different roadmap: speed at size rather
+than robustness. Tracked in #214 (`maros-r7`, the one non-pass that is ours to fix) and,
+for the scale families, #279.
 
 MIPLIB 2017 is benchmarked too: **13 of 30** easy instances reach the published optimum,
 **9 of 30** also prove it (`bench/results/miplib-bf3df02.csv`, 60 s; it was 6 of 30 at
@@ -312,7 +311,7 @@ earned.
 |---|---|---|
 | **The dual simplex's cost per iteration at size** | [#210](https://github.com/thegoodengineers/SANKHYA/issues/210), [#243](https://github.com/thegoodengineers/SANKHYA/issues/243) | #242 removed two O(m)-per-step sweeps from the factorization and the per-iteration recomputation of the basic values and duals; the per-phase clock it added (verbose log) now puts the pivot row - a BTRAN of a unit vector plus a gather over every column - at a quarter to a third of an iteration at 20,000 rows. Both standard remedies are in: the gather runs over rho's support through a row-wise copy of A (#265) and the transposed solve applies L^T in push form (#278), and the second measured to no change, because counters put a transposed solve's cost in the eta file (20,000 to 27,000 entries read per solve against a few hundred pushes through the factors) and in the four full-length passes over m; the next lever is a Forrest-Tomlin update ([#279](https://github.com/thegoodengineers/SANKHYA/issues/279)). None of the four 5,000- and 20,000-row scale models reaches the optimum in 120 s yet, but the iteration count inside those 120 s is up on every one: on `main` at `e134aeb` (`bench/results/scale-e134aeb.csv`, `scale-staircase-e134aeb.csv`) the dual simplex does 33,019 / 42,448 iterations at 5,000 rows (random / staircase) and 34,163 / 40,108 at 20,000, against 24,316 / 13,761 and 28,564 / 10,144 on the last runs before this work (`scale-f545f83.csv`, `scale-staircase-bf3df02.csv`). |
 | **The unscaled retry on badly scaled generated models** | [#244](https://github.com/thegoodengineers/SANKHYA/issues/244) | When the scaled dual simplex times out, the unscaled retry repairs singular bases and hands over to the primal on a fresh-factor pivot disagreement. The dual ratio test accepts any pivot above an absolute 1e-9; a relative floor with a Harris pass is what production codes do. |
-| **Netlib 78 of 89** | [#214](https://github.com/thegoodengineers/SANKHYA/issues/214) | `maros-r7` is documented rather than solved (#247: the basis the dual hands over decays under the primal, and the run now says so as a numerical error with the numbers instead of running out the clock); `pilot87` and `dfl001` are time limits that #210's speed work is the lever for; `pilot` needs a written numerical argument on its dual residual, or iterative refinement. The full-set re-run on `main` is not done. |
+| **Netlib 80 of 89** | [#214](https://github.com/thegoodengineers/SANKHYA/issues/214) | The full-set re-run on `main` at `e134aeb` is done (`bench/results/netlib-full-e134aeb.csv`): `pilot87` and `dfl001` now finish inside 120 s and `pilot` verifies as optimal, so eight of the nine non-passes are Netlib's own table being the outlier with HiGHS agreeing with us. The one left that is ours to fix is `maros-r7`, which runs the clock out inside a factorization on the scaled attempt and does not finish on the unscaled retry (#247 for the history of that basis). |
 | **Mittelmann 0 of 8** | [#216](https://github.com/thegoodengineers/SANKHYA/issues/216) | The only benchmark line where nothing finishes, re-measured on `main` at `e134aeb` with the same result (`bench/results/mittelmann-e134aeb.csv`; every row a named time limit, `bdry2` now stopped at 303 s). `brazil3` and `qap15` are the two within reach; the rest are size. |
 | **MIPLIB: 13 of 30 reach the optimum, 9 prove it** | [#215](https://github.com/thegoodengineers/SANKHYA/issues/215) | The weakest number in the project, and the issue says where each of the other instances stands. The levers are #221 and #222. |
 | **Interior point on the largest random model** | [#246](https://github.com/thegoodengineers/SANKHYA/issues/246) | On the 100,000-row random scale model it dies of `std::bad_alloc` 170 s past its 120 s limit with no status and no stats file, on an 8 GB machine: an out-of-memory condition must come back as a status, and the ordering needs a memory budget the way the polish has a factor budget. |
