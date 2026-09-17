@@ -37,6 +37,24 @@
 
 namespace sankhya {
 
+/// What a semidefiniteness probe concluded about a symmetric matrix (#303).
+///
+/// `column` is an index into the ORIGINAL matrix, not the permuted one: the caller asked
+/// about its own matrix and the AMD ordering is an implementation detail.
+struct SemidefiniteReport {
+  enum class Verdict {
+    kPositiveSemidefinite,  ///< every pivot non-negative; x^T A x >= 0 for all x
+    kIndefinite,            ///< a direction with x^T A x < 0 was exhibited
+    kUndecided,             ///< the probe was abandoned (deadline, or a factor that cannot fit)
+  };
+
+  Verdict verdict = Verdict::kUndecided;
+  /// The original column that decided an kIndefinite verdict, or -1.
+  Index column = -1;
+  /// The pivot at that column, or the residual that contradicted a zero pivot.
+  double pivot = 0.0;
+};
+
 class SparseLdl {
  public:
   /// Symbolic analysis of a symmetric matrix given by its LOWER triangle (entries with
@@ -73,6 +91,33 @@ class SparseLdl {
   /// called or the pattern does not fit.
   [[nodiscard]] bool factorize(const SparseMatrix& lower, double regularization,
                                const ShouldStop& should_stop = {});
+
+  /// Is `lower` positive semidefinite? (#303)
+  ///
+  /// The same LDL^T that factorize() runs, with the IPM's regularization REMOVED and the
+  /// semidefinite rule put in its place, because the two answer different questions.
+  /// factorize() wants usable factors for a matrix it already knows is positive definite, so
+  /// it lifts a small pivot to the regularization floor and carries on. A convexity test must
+  /// not: lifting a NEGATIVE pivot to a positive floor would turn the one piece of evidence
+  /// that matters - a direction of negative curvature - into a clean factorization, and the
+  /// caller would solve a non-convex model and report a local point as optimal.
+  ///
+  /// Three outcomes, on a pivot measured against `slack_factor * max(1, largest |diagonal|)`:
+  ///   pivot < -slack        indefinite, and the column is the certificate
+  ///   |pivot| <= slack      a legitimately singular direction of a semidefinite matrix. The
+  ///                         column is skipped rather than divided through - but only after
+  ///                         checking that the entries that would have been divided are
+  ///                         themselves negligible. For a semidefinite matrix they must be
+  ///                         (Higham 1990); when they are not, the zero pivot sits beside a
+  ///                         nonzero off-diagonal and the matrix is indefinite. Skipping
+  ///                         without that check is how [[0, 1], [1, 0]] passed for convex.
+  ///   otherwise             an ordinary positive pivot.
+  ///
+  /// Calls analyze() itself. Leaves no usable factors behind: this is a decision procedure,
+  /// not a factorization, and the D it computes has deliberate zeros in it.
+  [[nodiscard]] SemidefiniteReport check_semidefinite(const SparseMatrix& lower,
+                                                      double slack_factor,
+                                                      const ShouldStop& should_stop = {});
 
   /// Solve (P^T L D L^T P) x = b in place.
   void solve(double* b) const;

@@ -432,6 +432,142 @@ bool SparseLdl::factorize(const SparseMatrix& lower, double regularization,
   return true;
 }
 
+// -----------------------------------------------------------------------------------------
+// Semidefiniteness, as a decision procedure (#303)
+// -----------------------------------------------------------------------------------------
+//
+// Same up-looking pass as factorize(), three changes: no regularization, a zero pivot is kept
+// at zero instead of lifted, and the substitution that would divide by a zero pivot first
+// checks that its numerator is negligible. That last check is the whole difference between a
+// test that decides semidefiniteness and one that merely completes: for a positive
+// semidefinite matrix, d_j = 0 forces the whole of column j to be zero (Higham 1990,
+// "Analysis of the Cholesky decomposition of a semi-definite matrix"), so a nonzero numerator
+// over a zero pivot exhibits the indefinite direction rather than a rounding artefact.
+SemidefiniteReport SparseLdl::check_semidefinite(const SparseMatrix& lower, double slack_factor,
+                                                 const ShouldStop& should_stop) {
+  SemidefiniteReport report;
+  if (lower.num_rows() != lower.num_cols()) return report;
+  if (lower.num_rows() == 0 || lower.num_nonzeros() == 0) {
+    report.verdict = SemidefiniteReport::Verdict::kPositiveSemidefinite;
+    return report;
+  }
+  if (!analyze(lower, should_stop)) return report;  // kUndecided: deadline, or too large
+
+  const Index n = n_;
+  std::fill(a_values_.begin(), a_values_.end(), 0.0);
+  for (Index c = 0; c < n; ++c) {
+    const ColumnView column = lower.column(c);
+    for (Index p = 0; p < column.size; ++p) {
+      const Index r = column.rows[p];
+      if (r < c) continue;
+      const Index pr = inverse_[static_cast<std::size_t>(r)];
+      const Index pc = inverse_[static_cast<std::size_t>(c)];
+      const Index hi = std::max(pr, pc);
+      const Index lo = std::min(pr, pc);
+      const auto begin = a_rows_.begin() + a_starts_[static_cast<std::size_t>(hi)];
+      const auto end = a_rows_.begin() + a_starts_[static_cast<std::size_t>(hi) + 1];
+      const auto slot = std::lower_bound(begin, end, lo);
+      if (slot == end || *slot != lo) return report;  // pattern mismatch: undecided
+      a_values_[static_cast<std::size_t>(slot - a_rows_.begin())] += column.values[p];
+    }
+  }
+
+  // The scale the slack is measured against is the largest diagonal magnitude, not an
+  // absolute number: an indefinite direction in a badly scaled matrix would hide under a
+  // fixed tolerance, and a well scaled one would see rounding reported as curvature.
+  double largest_diagonal = 0.0;
+  for (Index k = 0; k < n; ++k) {
+    for (Index p = a_starts_[static_cast<std::size_t>(k)];
+         p < a_starts_[static_cast<std::size_t>(k) + 1]; ++p) {
+      if (a_rows_[static_cast<std::size_t>(p)] == k) {
+        largest_diagonal =
+            std::max(largest_diagonal, std::fabs(a_values_[static_cast<std::size_t>(p)]));
+      }
+    }
+  }
+  const double slack = slack_factor * std::max(1.0, largest_diagonal);
+
+  std::vector<double> x(static_cast<std::size_t>(n), 0.0);
+  std::vector<Index> mark(static_cast<std::size_t>(n), -1);
+  std::vector<Index> reach;
+  std::vector<Index> fill(static_cast<std::size_t>(n), 0);
+  const auto original = [&](Index permuted) {
+    return perm_[static_cast<std::size_t>(permuted)];
+  };
+
+  for (Index k = 0; k < n; ++k) {
+    if (should_stop && should_stop()) {
+      stopped_early_ = true;
+      return report;  // kUndecided
+    }
+    reach.clear();
+    double diagonal = 0.0;
+    mark[static_cast<std::size_t>(k)] = k;
+    for (Index p = a_starts_[static_cast<std::size_t>(k)];
+         p < a_starts_[static_cast<std::size_t>(k) + 1]; ++p) {
+      const Index i = a_rows_[static_cast<std::size_t>(p)];
+      const double value = a_values_[static_cast<std::size_t>(p)];
+      if (i == k) {
+        diagonal += value;
+        continue;
+      }
+      x[static_cast<std::size_t>(i)] += value;
+      Index j = i;
+      while (j != -1 && j < k && mark[static_cast<std::size_t>(j)] != k) {
+        mark[static_cast<std::size_t>(j)] = k;
+        reach.push_back(j);
+        j = parent_[static_cast<std::size_t>(j)];
+      }
+    }
+    std::sort(reach.begin(), reach.end());
+
+    for (const Index j : reach) {
+      const auto uj = static_cast<std::size_t>(j);
+      const double y = x[uj];
+      const Index begin = l_starts_[uj];
+      const Index stored = fill[uj];
+      for (Index p = begin; p < begin + stored; ++p) {
+        const Index i = l_rows_[static_cast<std::size_t>(p)];
+        x[static_cast<std::size_t>(i)] -= l_values_[static_cast<std::size_t>(p)] * y;
+      }
+
+      double l_kj = 0.0;
+      if (d_[uj] == 0.0) {
+        // A zero pivot earlier in the factorization. For a semidefinite matrix everything
+        // this column would have divided is zero as well; a numerator that is not is the
+        // certificate, and dividing by zero here would have produced an infinity that the
+        // pivot test below reads as a perfectly good positive number.
+        if (std::fabs(y) > slack) {
+          report.verdict = SemidefiniteReport::Verdict::kIndefinite;
+          report.column = original(j);
+          report.pivot = y;
+          return report;
+        }
+      } else {
+        l_kj = y / d_[uj];
+      }
+      const auto slot = static_cast<std::size_t>(begin + stored);
+      l_values_[slot] = l_kj;
+      ++fill[uj];
+      diagonal -= l_kj * y;
+      x[uj] = 0.0;
+    }
+
+    if (diagonal < -slack) {
+      report.verdict = SemidefiniteReport::Verdict::kIndefinite;
+      report.column = original(k);
+      report.pivot = diagonal;
+      return report;
+    }
+    d_[static_cast<std::size_t>(k)] = diagonal <= slack ? 0.0 : diagonal;
+  }
+
+  // The factors describe a matrix with zeros on D; nothing may solve with them afterwards.
+  analyzed_ = false;
+  report.verdict = SemidefiniteReport::Verdict::kPositiveSemidefinite;
+  return report;
+}
+
 void SparseLdl::solve(double* b) const {
   const Index n = n_;
   std::vector<double> z(static_cast<std::size_t>(n));

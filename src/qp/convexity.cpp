@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-// SANKHYA - convexity test. See convexity.hpp for why a refusal is the right default.
+// SANKHYA - convexity test. See convexity.hpp for why a refusal is the right default, and for
+// why there are two implementations of the same decision.
 
 #include "convexity.hpp"
 
@@ -9,16 +10,16 @@
 
 #include <fmt/format.h>
 
+#include "la/ldl.hpp"
 #include "sankhya/tolerances.hpp"
 
 namespace sankhya::qp {
 namespace {
 
-/// Above this the dense O(n^2) working set stops being reasonable and the test reports
-/// kUnverified rather than guessing. A sparse LDL^T exists now (#70, src/la/ldl.cpp) and
-/// is not wired in here yet; until it is, refusing a large QP is the honest answer and
-/// refusing is what kUnverified means.
-constexpr Index kDenseLimit = 2000;
+/// The dense reference is O(n^2) memory and O(n^3) time, so it is only ever run on a matrix
+/// small enough for both to be free. Production goes through the sparse test at every size;
+/// this bound exists so the reference stays a reference.
+constexpr Index kDenseReferenceLimit = 2000;
 
 /// A pivot may go slightly negative on a genuinely semidefinite matrix purely through
 /// rounding. Higham's analysis bounds that perturbation by a small multiple of eps times the
@@ -27,9 +28,36 @@ constexpr Index kDenseLimit = 2000;
 /// fixed tolerance.
 constexpr double kPivotSlackFactor = 1e-10;
 
+/// Q in MINIMIZATION sense, as the lower triangle of a symmetric matrix.
+///
+/// The engines minimise sense * (c'x + 0.5 x'Qx), so the Hessian they actually see is
+/// sense * Q. What has to be positive semidefinite is that, not Q. For a MAXIMIZATION model
+/// the requirement is therefore that Q be NEGATIVE semidefinite - a concave objective - and
+/// testing Q itself would reject every well posed concave maximisation while accepting the
+/// convex ones, which are exactly the unbounded-above cases that must be refused.
+///
+/// Model documents the Hessian as lower-triangular and both the readers and the C API
+/// normalise to (max, min); an entry that arrives above the diagonal anyway is folded onto
+/// its mirror rather than ignored, because ignoring it would test a different matrix.
+[[nodiscard]] SparseMatrix minimization_lower_triangle(const Model& model) {
+  const Index n = model.num_cols();
+  const double sense = model.sense_multiplier();
+  SparseMatrix lower(n, n);
+  lower.reserve(static_cast<std::size_t>(model.hessian.num_nonzeros()));
+  for (Index j = 0; j < model.hessian.num_cols(); ++j) {
+    const ColumnView column = model.hessian.column(j);
+    for (Index k = 0; k < column.size; ++k) {
+      const Index i = column.rows[k];
+      lower.add_entry(std::max(i, j), std::min(i, j), sense * column.values[k]);
+    }
+  }
+  lower.finalize();
+  return lower;
+}
+
 }  // namespace
 
-ConvexityResult check_convexity(const Model& model) {
+ConvexityResult check_convexity_dense(const Model& model) {
   ConvexityResult result;
   const Index n = model.num_cols();
 
@@ -38,21 +66,14 @@ ConvexityResult check_convexity(const Model& model) {
     result.detail = "the objective has no quadratic term";
     return result;
   }
-  if (n > kDenseLimit) {
+  if (n > kDenseReferenceLimit) {
     result.detail = fmt::format(
-        "{} columns exceeds the {} the dense convexity test can decide; a sparse LDL^T is "
-        "needed before a QP this size can be accepted",
-        n, kDenseLimit);
+        "{} columns exceeds the {} the dense reference test holds in "
+        "memory; check_convexity() decides this size sparsely",
+        n, kDenseReferenceLimit);
     return result;  // kUnverified
   }
 
-  // Densify the symmetric matrix from its stored lower triangle, IN MINIMIZATION SENSE.
-  //
-  // The engines minimise sense * (c'x + 0.5 x'Qx), so the Hessian they actually see is
-  // sense * Q. What has to be positive semidefinite is that, not Q. For a MAXIMIZATION model
-  // the requirement is therefore that Q be NEGATIVE semidefinite - a concave objective - and
-  // testing Q itself would reject every well posed concave maximisation while accepting the
-  // convex ones, which are exactly the unbounded-above cases that must be refused.
   const double sense = model.sense_multiplier();
 
   // The stored entries are Q itself (the 0.5 lives in the objective, not in the storage), so
@@ -109,10 +130,30 @@ ConvexityResult check_convexity(const Model& model) {
       return result;
     }
     if (pivot <= slack) {
-      // Semidefinite but singular in this direction. Legitimate - a rank-deficient Q is
-      // still convex - so the column is skipped rather than divided through.
+      // Semidefinite but singular in this direction - legitimate, a rank-deficient Q is
+      // still convex - PROVIDED the rest of the column vanishes with it. For a positive
+      // semidefinite matrix it must (Higham 1990): a zero on the diagonal forces the whole
+      // row and column to zero. Skipping the column without checking that is how
+      // Q = [[0, 1], [1, 0]] used to be reported convex, and 2*x0*x1 is a saddle.
       d[uj] = 0.0;
-      for (Index i = j + 1; i < n; ++i) l[static_cast<std::size_t>(i) * un + uj] = 0.0;
+      for (Index i = j + 1; i < n; ++i) {
+        const auto ui = static_cast<std::size_t>(i);
+        double sum = q[ui * un + uj];
+        for (Index k = 0; k < j; ++k) {
+          const auto uk = static_cast<std::size_t>(k);
+          sum -= l[ui * un + uk] * l[uj * un + uk] * d[uk];
+        }
+        if (std::fabs(sum) > slack) {
+          result.verdict = Convexity::kIndefinite;
+          result.detail = fmt::format(
+              "column {} has a zero pivot but entry ({}, {}) of the remaining Schur "
+              "complement is {:.6g}; a positive semidefinite matrix cannot carry a nonzero "
+              "beside a zero pivot, so the objective has a direction of negative curvature",
+              j, i, j, sum);
+          return result;
+        }
+        l[ui * un + uj] = 0.0;
+      }
       continue;
     }
 
@@ -131,6 +172,39 @@ ConvexityResult check_convexity(const Model& model) {
   result.verdict = Convexity::kConvex;
   result.detail = "LDL^T completed with every pivot non-negative";
   return result;
+}
+
+ConvexityResult check_convexity(const Model& model) {
+  ConvexityResult result;
+
+  if (model.hessian.num_nonzeros() == 0) {
+    result.verdict = Convexity::kConvex;
+    result.detail = "the objective has no quadratic term";
+    return result;
+  }
+
+  const SparseMatrix lower = minimization_lower_triangle(model);
+  SparseLdl ldl;
+  const SemidefiniteReport report = ldl.check_semidefinite(lower, kPivotSlackFactor);
+  switch (report.verdict) {
+    case SemidefiniteReport::Verdict::kPositiveSemidefinite:
+      result.verdict = Convexity::kConvex;
+      result.detail =
+          fmt::format("sparse LDL^T over {} nonzeros completed with every pivot non-negative",
+                      lower.num_nonzeros());
+      return result;
+    case SemidefiniteReport::Verdict::kIndefinite:
+      result.verdict = Convexity::kIndefinite;
+      result.detail = fmt::format(
+          "sparse LDL^T reached {:.6g} at column {} in minimization sense; that exhibits a "
+          "direction in which the objective curves downward, so the model is non-convex",
+          report.pivot, report.column);
+      return result;
+    case SemidefiniteReport::Verdict::kUndecided: break;
+  }
+
+  result.detail = "the Hessian could not be ordered and factorized, so convexity is unproven";
+  return result;  // kUnverified
 }
 
 }  // namespace sankhya::qp

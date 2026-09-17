@@ -30,7 +30,7 @@ namespace sankhya::qp {
 enum class Convexity {
   kConvex,      ///< Q is positive semidefinite; the QP has a global minimum
   kIndefinite,  ///< Q has a provably negative eigenvalue; the model is non-convex
-  kUnverified,  ///< too large to decide with the dense test; treated as a refusal
+  kUnverified,  ///< the test could not decide; treated as a refusal
 };
 
 struct ConvexityResult {
@@ -43,6 +43,21 @@ struct ConvexityResult {
 ///
 /// The Hessian is stored as the lower triangle of a symmetric matrix and the objective term
 /// is 0.5 x^T Q x, so this tests Q itself rather than the stored triangle.
+///
+/// Runs on the SPARSE factorization at every size (#303). The dense version below needs an
+/// n x n working set - 20 GB at 50,000 columns - which is not a test a solver for sparse
+/// models can afford to run, and refusing every QP above a few thousand columns to avoid it
+/// meant a large sparse convex QP could not be solved at all.
 [[nodiscard]] ConvexityResult check_convexity(const Model& model);
+
+/// The same decision, computed densely.
+///
+/// THE REFERENCE, not the production path: O(n^2) memory and O(n^3) time, and it reports
+/// kUnverified above a couple of thousand columns rather than allocating. It stays in the
+/// tree because two implementations of one decision, written from the same definition and
+/// compared on instances nobody chose, is how this project checks its numerics - the same
+/// role `DenseLu` plays for the sparse LU. `tests/unit/test_convexity_sparse.cpp` runs them
+/// against each other on random matrices.
+[[nodiscard]] ConvexityResult check_convexity_dense(const Model& model);
 
 }  // namespace sankhya::qp
