@@ -363,8 +363,8 @@ class SparseLu {
   /// e~ = e_step^T U_current^-1, i.e. a BTRAN through U ALONE (no L, no earlier retas),
   /// seeded at a single step. Shares the push logic with ft_forward_substitute() below.
   void ft_btran_unit(Index step, double* e_tilde_by_step) const;
-  void ft_apply_retas(double* residual_by_step) const;             ///< FTRAN: oldest first
-  void ft_apply_retas_transposed(double* z_by_step) const;         ///< BTRAN: newest first
+  void ft_apply_retas(double* residual_by_step) const;      ///< FTRAN: oldest first
+  void ft_apply_retas_transposed(double* z_by_step) const;  ///< BTRAN: newest first
   void ft_back_substitute(double* residual_by_step, double* solution_by_step) const;
   void ft_forward_substitute(double* z_by_step) const;
 };

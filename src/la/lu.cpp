@@ -1184,8 +1184,8 @@ void SparseLu::ft_apply_retas(double* residual_by_step) const {
     double dot = 0.0;
     for (Index t = begin; t < end; ++t) {
       const auto ut = static_cast<std::size_t>(t);
-      dot += ft_reta_values_[ut] *
-             residual_by_step[static_cast<std::size_t>(ft_reta_steps_[ut])];
+      dot +=
+          ft_reta_values_[ut] * residual_by_step[static_cast<std::size_t>(ft_reta_steps_[ut])];
     }
     residual_by_step[static_cast<std::size_t>(ft_reta_pivot_step_[uk])] -= dot;
   }
@@ -1197,8 +1197,7 @@ void SparseLu::ft_apply_retas_transposed(double* z_by_step) const {
   const Index count = static_cast<Index>(ft_reta_pivot_step_.size());
   for (Index k = count - 1; k >= 0; --k) {
     const auto uk = static_cast<std::size_t>(k);
-    const double pivot_value =
-        z_by_step[static_cast<std::size_t>(ft_reta_pivot_step_[uk])];
+    const double pivot_value = z_by_step[static_cast<std::size_t>(ft_reta_pivot_step_[uk])];
     if (pivot_value == 0.0) continue;
     const Index begin = ft_reta_start_[uk];
     const Index end = ft_reta_start_[uk + 1];
@@ -1302,7 +1301,8 @@ bool SparseLu::update_forrest_tomlin(Index leaving_position, const double* alpha
   // touch them, which is the entire reason this costs one small row eta and not a rewrite of
   // every step the spike touches.
   double largest = 0.0;
-  for (Index k = 0; k < m; ++k) largest = std::max(largest, std::fabs(spike[static_cast<std::size_t>(k)]));
+  for (Index k = 0; k < m; ++k)
+    largest = std::max(largest, std::fabs(spike[static_cast<std::size_t>(k)]));
   double dot = 0.0;
   for (Index k = 0; k < m; ++k) {
     dot += r[static_cast<std::size_t>(k)] * spike[static_cast<std::size_t>(k)];
