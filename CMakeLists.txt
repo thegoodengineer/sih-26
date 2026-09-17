@@ -189,6 +189,7 @@ set(SANKHYA_CORE_SOURCES
   src/io/mps_reader.cpp
   src/io/model_writer.cpp
   src/io/writer.cpp
+  src/diagnose/diagnose.cpp
   src/qp/convexity.cpp
   src/qp/qp_condat_vu.cpp
   src/la/ldl.cpp
@@ -275,6 +276,9 @@ set_target_properties(sankhya_shared PROPERTIES
 add_executable(sankhya-cli apps/sankhya-cli/main.cpp)
 target_link_libraries(sankhya-cli
   PRIVATE sankhya_core CLI11::CLI11 nlohmann_json::nlohmann_json sankhya_flags)
+# `diagnose` is part of the CLI rather than of the public headers, so the front end reaches
+# into src/ for it exactly as the tests do.
+target_include_directories(sankhya-cli PRIVATE "${PROJECT_SOURCE_DIR}/src")
 set_target_properties(sankhya-cli PROPERTIES OUTPUT_NAME sankhya)
 
 # -----------------------------------------------------------------------------------------

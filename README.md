@@ -181,6 +181,18 @@ and LP so the two readers can be checked against each other, and it exercises th
 features most likely to be misread - a `RANGES` entry on a `G` row, an equality row,
 `OBJSENSE MAX`, and `LO`/`UP` bounds.
 
+`sankhya diagnose` answers "what am I about to solve?" before committing to it: size, the
+mix of row and column kinds, sparsity, the coefficient magnitude spread with a scaling-risk
+verdict, the problem class (and, for a QP, the convexity test's own answer), what presolve
+would remove, and which engine the solver would pick and why. `--format json` for a script.
+It reports no solve-time or node-count estimate, because there is no honest way to produce one
+before the solve.
+
+```bash
+./build/sankhya diagnose demo/crude_blend.mps
+./build/sankhya diagnose model.mps --format json
+```
+
 `solve` returns a meaningful exit code: `0` optimal, `1` a limit or a proven
 infeasible/unbounded model, `3` the file could not be read, `5` a numerical or model error.
 

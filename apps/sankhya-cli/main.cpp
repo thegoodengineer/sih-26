@@ -19,6 +19,8 @@
 #include <fmt/format.h>
 #include <CLI/CLI.hpp>
 
+#include "diagnose/diagnose.hpp"
+
 #include "sankhya/io.hpp"
 #include "sankhya/logging.hpp"
 #include "sankhya/model.hpp"
@@ -231,6 +233,14 @@ int main(int argc, char** argv) {
   info_cmd->add_option("file", info_path, "Model file (.mps, .lp)")->required();
   info_cmd->add_option("--option", option_assignments, "Set a solver option (name=value)");
 
+  CLI::App* diagnose_cmd = app.add_subcommand(
+      "diagnose", "Analyse a model before solving: structure, numerics, presolve, guidance");
+  std::string diagnose_path;
+  std::string diagnose_format = "text";
+  diagnose_cmd->add_option("file", diagnose_path, "Model file (.mps, .lp)")->required();
+  diagnose_cmd->add_option("--format", diagnose_format, "text (default) or json");
+  diagnose_cmd->add_option("--option", option_assignments, "Set a solver option (name=value)");
+
   CLI11_PARSE(app, argc, argv);
 
   if (version_cmd->parsed()) {
@@ -253,6 +263,30 @@ int main(int argc, char** argv) {
     sankhya::Model model;
     if (!load_model(info_path, options, &model)) return 3;
     print_model_info(model);
+    return 0;
+  }
+
+  if (diagnose_cmd->parsed()) {
+    if (diagnose_format != "text" && diagnose_format != "json") {
+      fmt::print(stderr, "error: --format expects text or json, got '{}'\n", diagnose_format);
+      return 2;
+    }
+    sankhya::Model model;
+    if (!load_model(diagnose_path, options, &model)) return 3;
+    const std::string problem = model.validate();
+    if (!problem.empty()) {
+      fmt::print(stderr, "error: {}\n", problem);
+      return 5;
+    }
+    // The diagnostic's own presolve run is not the user's solve, and its log lines would read
+    // as if the model had been solved. Quiet, whatever the solve options say.
+    sankhya::Options diagnose_options = options;
+    diagnose_options.set_bool("log_to_console", false);
+    sankhya::Logger quiet(nullptr);
+    const sankhya::diagnose::Diagnosis diagnosis =
+        sankhya::diagnose::analyse(model, diagnose_options, quiet);
+    fmt::print("{}", diagnose_format == "json" ? sankhya::diagnose::format_json(diagnosis)
+                                               : sankhya::diagnose::format_text(diagnosis));
     return 0;
   }
 
