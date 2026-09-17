@@ -12,6 +12,7 @@
 
 #include <fmt/format.h>
 
+#include "sankhya/timer.hpp"
 #include "sankhya/tolerances.hpp"
 
 namespace sankhya::presolve {
@@ -217,6 +218,34 @@ void kill_row(Workspace* work, Index row) {
 
 // ===========================================================================================
 
+namespace detail {
+
+/// The per-reduction breakdown (#286).
+///
+/// At verbose level, because the one-line summary above answers the question most solves ask
+/// ("how much smaller?") and this one answers the next ("which reductions, and what did you
+/// decline?"). Lines with a zero count are omitted: a list of nine zeros hides the one number
+/// that fired.
+void log_presolve_report(const Solution::PresolveReport& report, Logger& logger) {
+  const auto line = [&](const char* name, Count count) {
+    if (count > 0) logger.verbose("  presolve: {:<26} {}", name, count);
+  };
+  line("empty rows", report.empty_rows);
+  line("redundant rows", report.redundant_rows);
+  line("singleton rows", report.singleton_rows);
+  line("fixed columns", report.fixed_columns);
+  line("empty columns", report.empty_columns);
+  line("free column singletons", report.free_column_singletons);
+  line("doubleton equations", report.doubleton_equations);
+  line("integer bounds rounded", report.integer_bounds_rounded);
+  // Declines are reported for the same reason the reductions are: a model that came back
+  // barely smaller than it went in is explained by these, not by the counts above.
+  line("quadratic columns kept", report.quadratic_columns_protected);
+  line("integer reductions declined", report.integer_reductions_declined);
+}
+
+}  // namespace detail
+
 Result presolve(const Model& model, const Options& options, Logger& logger) {
   Result result;
   result.original_rows = model.num_rows();
@@ -227,6 +256,7 @@ Result presolve(const Model& model, const Options& options, Logger& logger) {
   const Index n = model.num_cols();
   const double feasibility = options.get_double("primal_feasibility_tolerance");
 
+  Timer presolve_clock;
   Workspace work;
   work.original = &model;
   work.col_lower = model.col_lower;
@@ -315,7 +345,10 @@ Result presolve(const Model& model, const Options& options, Logger& logger) {
   // column into a singleton. The cap is a safety net, not an expected limit - each pass must
   // strictly remove something or the loop breaks on its own.
   constexpr int kMaxPasses = 20;
+  int passes_run = 0;
+  bool reached_fixed_point = false;
   for (int pass = 0; pass < kMaxPasses && !result.proved_infeasible; ++pass) {
+    ++passes_run;
     bool changed = false;
 
     // --- columns -----------------------------------------------------------------------
@@ -339,6 +372,7 @@ Result presolve(const Model& model, const Options& options, Logger& logger) {
         if (rounded_lower > work.col_lower[u] || rounded_upper < work.col_upper[u]) {
           work.col_lower[u] = rounded_lower;
           work.col_upper[u] = rounded_upper;
+          ++result.report.integer_bounds_rounded;
           changed = true;
         }
       }
@@ -359,8 +393,10 @@ Result presolve(const Model& model, const Options& options, Logger& logger) {
       // Fixed column: the value is known, so fold it into the rows and drop it. Not when the
       // column carries curvature - the fold moves c_j * v into the objective constant and has
       // no way to move 0.5 * Q_jj * v^2 or the cross terms with it (#301).
-      if (!work.quadratic_col[u] && work.col_upper[u] - work.col_lower[u] <= feasibility &&
-          finite(work.col_lower[u])) {
+      const bool looks_fixed =
+          work.col_upper[u] - work.col_lower[u] <= feasibility && finite(work.col_lower[u]);
+      if (work.quadratic_col[u] && looks_fixed) ++result.report.quadratic_columns_protected;
+      if (!work.quadratic_col[u] && looks_fixed) {
         const double value = work.col_lower[u];
         Record record;
         record.kind = Record::Kind::kFixedColumn;
@@ -407,6 +443,7 @@ Result presolve(const Model& model, const Options& options, Logger& logger) {
         // model costs one variable and keeps the answer integral.
         if (model.col_type[u] == VarType::kInteger &&
             std::fabs(value - std::round(value)) > tol::kIntegrality) {
+          ++result.report.integer_reductions_declined;
           continue;
         }
         Record record;
@@ -854,11 +891,28 @@ Result presolve(const Model& model, const Options& options, Logger& logger) {
       }
     }
 
-    if (!changed) break;
+    if (!changed) {
+      reached_fixed_point = true;
+      break;
+    }
   }
 
   if (result.proved_infeasible) {
-    logger.info("Presolve proved infeasibility: {}", result.message);
+    Solution::PresolveReport& proof_report = result.report;
+    proof_report.ran = true;
+    proof_report.termination = Solution::PresolveReport::Termination::kProvedInfeasible;
+    proof_report.original_rows = result.original_rows;
+    proof_report.original_cols = result.original_cols;
+    proof_report.original_nonzeros = result.original_nonzeros;
+    // No reduced model exists, so the "after" figures stay at the original: reporting zeros
+    // would read as a model reduced to nothing rather than one never built.
+    proof_report.reduced_rows = result.original_rows;
+    proof_report.reduced_cols = result.original_cols;
+    proof_report.reduced_nonzeros = result.original_nonzeros;
+    proof_report.passes = passes_run;
+    proof_report.seconds = presolve_clock.elapsed_seconds();
+    logger.info("Presolve proved infeasibility in {} pass(es), {:.3f}s: {}",
+                proof_report.passes, proof_report.seconds, result.message);
     return result;
   }
 
@@ -984,9 +1038,45 @@ Result presolve(const Model& model, const Options& options, Logger& logger) {
     return identity;
   }
 
-  logger.info("Presolve: {} rows -> {}, {} columns -> {}, {} nonzeros -> {}",
-              result.original_rows, reduced_rows, result.original_cols, reduced_cols,
-              result.original_nonzeros, reduced.num_nonzeros());
+  // WHAT PRESOLVE DID, STRUCTURED (#286). The counts come from the records that postsolve
+  // will replay, so the report and the transformation cannot drift apart: a reduction that
+  // fired left a record, and a record is what is counted here.
+  Solution::PresolveReport& report = result.report;
+  report.ran = true;
+  report.termination = reached_fixed_point ? Solution::PresolveReport::Termination::kFixedPoint
+                                           : Solution::PresolveReport::Termination::kPassLimit;
+  report.original_rows = result.original_rows;
+  report.original_cols = result.original_cols;
+  report.original_nonzeros = result.original_nonzeros;
+  report.reduced_rows = reduced_rows;
+  report.reduced_cols = reduced_cols;
+  report.reduced_nonzeros = reduced.num_nonzeros();
+  report.passes = passes_run;
+  for (const Record& record : result.records) {
+    switch (record.kind) {
+      case Record::Kind::kEmptyRow: ++report.empty_rows; break;
+      case Record::Kind::kRedundantRow: ++report.redundant_rows; break;
+      case Record::Kind::kSingletonRow: ++report.singleton_rows; break;
+      case Record::Kind::kFixedColumn: ++report.fixed_columns; break;
+      case Record::Kind::kEmptyColumn: ++report.empty_columns; break;
+      case Record::Kind::kFreeColumnSingleton: ++report.free_column_singletons; break;
+      case Record::Kind::kDoubletonEquation: ++report.doubleton_equations; break;
+      case Record::Kind::kForcingRow: break;
+    }
+  }
+  // A singleton row's whole effect is a tightened column bound, so it is counted as one as
+  // well as under its own name; the integer roundings are already counted where they fire.
+  report.bounds_tightened = report.singleton_rows + report.integer_bounds_rounded;
+  report.seconds = presolve_clock.elapsed_seconds();
+
+  logger.info(
+      "Presolve: {} rows -> {} ({:.1f}%), {} columns -> {} ({:.1f}%), {} nonzeros -> "
+      "{} ({:.1f}%) in {} pass(es), {:.3f}s",
+      report.original_rows, report.reduced_rows, report.row_reduction_percent(),
+      report.original_cols, report.reduced_cols, report.column_reduction_percent(),
+      report.original_nonzeros, report.reduced_nonzeros, report.nonzero_reduction_percent(),
+      report.passes, report.seconds);
+  detail::log_presolve_report(report, logger);
   return result;
 }
 
@@ -1870,6 +1960,7 @@ Solution postsolve(const Result& result, const Model& original, const Solution& 
   // The reduced model carries the folded objective offset, so its bound is already in the
   // original problem's units.
   solution.dual_bound = reduced.dual_bound;
+  solution.presolve_report = result.report;
   solution.refinement_steps = reduced.refinement_steps;
   solution.residual_before_refinement = reduced.residual_before_refinement;
   solution.residual_after_refinement = reduced.residual_after_refinement;

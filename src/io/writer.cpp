@@ -407,6 +407,51 @@ bool write_stats_json(const std::string& path, const Model& model, const Solutio
       {"polish_iterations", solution.polish_iterations},
       {"solve_seconds", json_number(solution.solve_seconds)}};
 
+  // WHAT PRESOLVE DID (#286), machine-readable beside the rest. Always present, so a runner
+  // can read blob["presolve"]["ran"] without guarding for the key; the counts are only
+  // meaningful when it is true.
+  {
+    const Solution::PresolveReport& report = solution.presolve_report;
+    const char* termination = "not_run";
+    switch (report.termination) {
+      case Solution::PresolveReport::Termination::kNotRun: termination = "not_run"; break;
+      case Solution::PresolveReport::Termination::kFixedPoint:
+        termination = "fixed_point";
+        break;
+      case Solution::PresolveReport::Termination::kPassLimit: termination = "pass_limit"; break;
+      case Solution::PresolveReport::Termination::kProvedInfeasible:
+        termination = "proved_infeasible";
+        break;
+    }
+    blob["presolve"] = {
+        {"ran", report.ran},
+        {"termination", termination},
+        {"skipped_because", report.skipped_because},
+        {"rows", {{"before", report.original_rows}, {"after", report.reduced_rows}}},
+        {"columns", {{"before", report.original_cols}, {"after", report.reduced_cols}}},
+        {"nonzeros",
+         {{"before", report.original_nonzeros}, {"after", report.reduced_nonzeros}}},
+        {"reduction_percent",
+         {{"rows", json_number(report.row_reduction_percent())},
+          {"columns", json_number(report.column_reduction_percent())},
+          {"nonzeros", json_number(report.nonzero_reduction_percent())}}},
+        {"passes", report.passes},
+        {"seconds", json_number(report.seconds)},
+        {"reductions",
+         {{"empty_rows", report.empty_rows},
+          {"redundant_rows", report.redundant_rows},
+          {"singleton_rows", report.singleton_rows},
+          {"fixed_columns", report.fixed_columns},
+          {"empty_columns", report.empty_columns},
+          {"free_column_singletons", report.free_column_singletons},
+          {"doubleton_equations", report.doubleton_equations},
+          {"integer_bounds_rounded", report.integer_bounds_rounded},
+          {"bounds_tightened", report.bounds_tightened}}},
+        {"declined",
+         {{"quadratic_columns_protected", report.quadratic_columns_protected},
+          {"integer_reductions_declined", report.integer_reductions_declined}}}};
+  }
+
   std::FILE* out = std::fopen(path.c_str(), "wb");
   if (out == nullptr) {
     if (error != nullptr) *error = fmt::format("{}: cannot open for writing", path);

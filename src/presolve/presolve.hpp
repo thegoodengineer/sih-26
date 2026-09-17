@@ -106,6 +106,10 @@ struct Result {
   /// know the answer to.
   bool proved_infeasible = false;
 
+  /// What presolve did, structured (#286). Copied onto the Solution by postsolve, written to
+  /// the stats JSON and printed by the CLI.
+  Solution::PresolveReport report;
+
   /// With proved_infeasible: a Farkas vector over the ORIGINAL rows, built from the rows the
   /// contradiction rests on (#253) - the empty row itself, the singleton rows whose bounds
   /// crossed, or the row whose activity range the column bounds cannot reach together with
@@ -127,6 +131,12 @@ struct Result {
 /// `model` is left untouched; the reduced copy is in the result. Integrality is respected:
 /// a bound derived for an integer column is rounded inward, never outward, because a bound
 /// that excludes a feasible integer point silently removes the optimum.
+namespace detail {
+/// Per-reduction breakdown at verbose level (#286). Exposed so solve() can print the same
+/// block for a presolve it ran itself.
+void log_presolve_report(const Solution::PresolveReport& report, Logger& logger);
+}  // namespace detail
+
 [[nodiscard]] Result presolve(const Model& model, const Options& options, Logger& logger);
 
 /// Rebuild a solution to the ORIGINAL model from one for the reduced model.
