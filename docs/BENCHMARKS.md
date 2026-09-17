@@ -281,6 +281,24 @@ These are the smallest archives in Mittelmann's LP directory; against Netlib's l
 
 **Not solved inside the limit**, named rather than dropped: `Linf_520c`, `bdry2`, `brazil3`, `chromaticindex1024-7`, `irish-electricity`, `qap15`, `rmine15`, `supportcase10`.
 
+#### The same eight under each engine
+
+Source CSVs: `bench/results/mittelmann-e134aeb.csv` (dual simplex), `bench/results/mittelmann-pdhg-d24662f.csv` (PDHG), `bench/results/mittelmann-ipm-d24662f.csv` (interior point)  
+Same 300 s limit per instance and engine; HiGHS is not re-run here.
+
+| instance | dual simplex: status · verified · time (s) | PDHG: status · verified · time (s) | interior point: status · verified · time (s) |
+|---|---|---|---|
+| `Linf_520c` | time_limit · - · 300.3 | time_limit · - · 287.0 | time_limit · - · 367.1 |
+| `bdry2` | time_limit · - · 300.8 | crashed · - · - | crashed · - · - |
+| `brazil3` | time_limit · - · 300.1 | optimal · yes · 126.8 | feasible · yes · 1.4 |
+| `chromaticindex1024-7` | time_limit · - · 300.2 | optimal · yes · 1.2 | crashed · - · - |
+| `irish-electricity` | time_limit · - · 300.3 | time_limit · - · 240.3 | numerical_error · - · 93.6 |
+| `qap15` | time_limit · - · 300.0 | time_limit · - · 240.0 | time_limit · - · 300.0 |
+| `rmine15` | time_limit · - · 300.5 | time_limit · - · 240.3 | time_limit · - · 300.4 |
+| `supportcase10` | time_limit · - · 300.4 | time_limit · - · 275.1 | time_limit · - · 302.1 |
+
+Finished and verified inside the limit: dual simplex **0 of 8**, PDHG **2 of 8**, interior point **0 of 8**.
+
 ### 1e. The first-order engine — PDHG
 
 The simplex is not the only continuous engine. Restarted PDHG (`--option algorithm=pdhg`) is
