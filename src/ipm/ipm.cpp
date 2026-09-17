@@ -210,6 +210,7 @@ class InteriorPoint {
   } best_;
   void remember_if_best(double merit);
   void restore_best();
+  bool purify_duals();
 };
 
 void InteriorPoint::remember_if_best(double merit) {
@@ -660,6 +661,7 @@ Solution InteriorPoint::finish(SolveStatus status, const std::string& message, C
     solution.dual_bound = model_.sense == ObjSense::kMaximize ? kInfinity : -kInfinity;
     return solution;
   }
+  if (status == SolveStatus::kOptimal) purify_duals();
   const double sense = model_.sense_multiplier();
   for (Index j = 0; j < n_; ++j) {
     const auto u = static_cast<std::size_t>(j);
@@ -681,6 +683,169 @@ Solution InteriorPoint::finish(SolveStatus status, const std::string& message, C
   }
   solution.recompute_quality(model_);
   return solution;
+}
+
+// DUAL PURIFICATION (#209). The barrier method converges in its own measures - on the
+// 20,000-row staircase model to a relative gap of 4e-8 with a dual residual of 5e-12 - and
+// the status guard in solve() still finds one column, interior by three units, carrying a
+// recomputed reduced cost of 1.7e-5: the residual of y on that column, tiny in the norm the
+// loop watches and 12% over the tolerance in the per-term measure the guard uses. At an
+// optimum the reduced cost of every strictly interior column is exactly zero, and that is a
+// linear condition on y alone: A_I^T y = c_I over the interior set I. So the last thing the
+// method does is the dual half of a crossover (Bixby, "Solving real-world linear programs",
+// Operations Research 50 (2002), sec. 4 on crossover; Andersen & Ye, "Combining interior
+// point and pivoting algorithms", Management Science 42 (1996)): the least-squares
+// correction dy = (A_I A_I^T + eps I)^-1 A_I (c_I - A_I^T y) through the same normal
+// equations the iterations use, accepted only if the guard's own measure of the duals,
+// evaluated here on the working problem, gets smaller. The primal point is not touched, so
+// nothing the primal side proved is put at risk; a correction that does not help is
+// discarded and the log says so.
+namespace {
+constexpr double kPurifyInteriorFraction = 1e-5;  ///< slack per unit of |x| that counts as interior
+constexpr double kPurifyShift = 1e-8;             ///< diagonal shift on rows with no interior logical
+}  // namespace
+
+bool InteriorPoint::purify_duals() {
+  if (m_ == 0 || total_ == 0 || !analyzed_) return false;
+  const auto T = static_cast<std::size_t>(total_);
+  const auto M = static_cast<std::size_t>(m_);
+
+  const auto reduced_costs = [&](const std::vector<double>& y, std::vector<double>* d) {
+    constraint_transpose_times(y, d);
+    for (Index k = 0; k < total_; ++k) {
+      const auto u = static_cast<std::size_t>(k);
+      (*d)[u] = fixed_[u] ? 0.0 : cost_[u] - (*d)[u];
+    }
+  };
+  // Two measures, both in the working problem's units and each relative to its own terms as
+  // Solution::recompute_quality measures: what the step targets - the reduced cost of every
+  // interior variable, which should be exactly zero - and what it must not break - a
+  // multiplier pushing against a bound that does not exist. The complementarity products of
+  // the near-active variables are left out on purpose: x sitting 1e-9 inside its bound with
+  // a reduced cost of 1 is a product no change of y can move, and it is the largest term
+  // on the model that motivated this step, so judging by it would reject every correction.
+  const auto column_scale = [&](const std::vector<double>& y, Index k) {
+    const auto u = static_cast<std::size_t>(k);
+    double scale = std::max(1.0, std::fabs(cost_[u]));
+    if (k < n_) {
+      const ColumnView column = model_.matrix.column(k);
+      for (Index q = 0; q < column.size; ++q) {
+        scale = std::max(scale, std::fabs(column.values[q] *
+                                          y[static_cast<std::size_t>(column.rows[q])]));
+      }
+    } else {
+      scale = std::max(scale, std::fabs(y[static_cast<std::size_t>(k - n_)]));
+    }
+    return scale;
+  };
+  std::vector<char> interior(T, 0);
+  const auto measures = [&](const std::vector<double>& y, const std::vector<double>& d,
+                            double* worst_interior, double* worst_sign) {
+    *worst_interior = 0.0;
+    *worst_sign = 0.0;
+    for (Index k = 0; k < total_; ++k) {
+      const auto u = static_cast<std::size_t>(k);
+      if (fixed_[u]) continue;
+      const double scale = column_scale(y, k);
+      const double dk = d[u];
+      if (interior[u]) *worst_interior = std::max(*worst_interior, std::fabs(dk) / scale);
+      if (dk > 0.0 && !has_lower_[u]) *worst_sign = std::max(*worst_sign, dk / scale);
+      if (dk < 0.0 && !has_upper_[u]) *worst_sign = std::max(*worst_sign, -dk / scale);
+    }
+  };
+
+  // The interior set: every unfixed variable whose slack to each of its bounds is more than
+  // a fraction of its own size. A free variable is interior by definition.
+  Index count = 0;
+  for (Index k = 0; k < total_; ++k) {
+    const auto u = static_cast<std::size_t>(k);
+    if (fixed_[u]) continue;
+    const double tau = kPurifyInteriorFraction * std::max(1.0, std::fabs(x_[u]));
+    bool inside = true;
+    if (has_lower_[u] && sl_[u] <= tau) inside = false;
+    if (has_upper_[u] && su_[u] <= tau) inside = false;
+    interior[u] = inside ? 1 : 0;
+    if (inside) ++count;
+  }
+  if (count == 0) return false;
+
+  std::vector<double> d(T);
+  reduced_costs(y_, &d);
+  double interior_before = 0.0, sign_before = 0.0;
+  measures(y_, d, &interior_before, &sign_before);
+
+  // Right-hand side A_I d_I, and the matrix A_I A_I^T with a small shift on the rows that
+  // have no interior logical (their logical, if interior, contributes exactly 1).
+  std::vector<double> restricted(T, 0.0);
+  for (Index k = 0; k < total_; ++k) {
+    const auto u = static_cast<std::size_t>(k);
+    if (interior[u]) restricted[u] = d[u];
+  }
+  std::vector<double> rhs(M);
+  constraint_times(restricted, &rhs);
+  std::vector<double> theta_x(static_cast<std::size_t>(n_), kPurifyShift);
+  std::vector<double> row_shift(M, kPurifyShift);
+  for (Index k = 0; k < total_; ++k) {
+    const auto u = static_cast<std::size_t>(k);
+    if (!interior[u]) continue;
+    if (k < n_) {
+      theta_x[u] = 1.0;
+    } else {
+      row_shift[static_cast<std::size_t>(k - n_)] = 1.0;
+    }
+  }
+  if (!normal_equations_lower(model_.matrix, theta_x, row_shift, kDualRegularization,
+                              &normal_lower_, should_stop_)) {
+    return false;
+  }
+  if (!ldl_.factorize(normal_lower_, kDualRegularization, should_stop_)) return false;
+  ++factorizations_;
+
+  std::vector<double> dy = rhs;
+  ldl_.solve(dy.data());
+  if (!std::all_of(dy.begin(), dy.end(), [](double v) { return std::isfinite(v); })) return false;
+
+  std::vector<double> candidate(y_);
+  for (Index i = 0; i < m_; ++i) candidate[static_cast<std::size_t>(i)] += dy[static_cast<std::size_t>(i)];
+  std::vector<double> d_after(T);
+  reduced_costs(candidate, &d_after);
+  double interior_after = 0.0, sign_after = 0.0;
+  measures(candidate, d_after, &interior_after, &sign_after);
+  const bool helps = interior_after < interior_before;
+  const bool safe = sign_after <= std::max(sign_before, kIpmTolerance);
+  if (!helps || !safe) {
+    logger_.verbose(
+        "interior point: dual purification over {} interior columns would take their worst "
+        "relative reduced cost from {:.3e} to {:.3e} and the worst sign violation from "
+        "{:.3e} to {:.3e}; not applied",
+        count, interior_before, interior_after, sign_before, sign_after);
+    return false;
+  }
+
+  y_ = candidate;
+  for (Index k = 0; k < total_; ++k) {
+    const auto u = static_cast<std::size_t>(k);
+    if (fixed_[u]) continue;
+    const double dk = d_after[u];
+    if (has_lower_[u] && has_upper_[u]) {
+      zl_[u] = dk >= 0.0 ? dk : 0.0;
+      zu_[u] = dk >= 0.0 ? 0.0 : -dk;
+    } else if (has_lower_[u]) {
+      zl_[u] = dk;
+      zu_[u] = 0.0;
+    } else if (has_upper_[u]) {
+      zl_[u] = 0.0;
+      zu_[u] = -dk;
+    } else {
+      zl_[u] = 0.0;
+      zu_[u] = 0.0;
+    }
+  }
+  logger_.verbose(
+      "interior point: dual purification over {} interior columns took their worst relative "
+      "reduced cost from {:.3e} to {:.3e}; worst sign violation {:.3e} -> {:.3e}",
+      count, interior_before, interior_after, sign_before, sign_after);
+  return true;
 }
 
 Solution InteriorPoint::run() {

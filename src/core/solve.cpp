@@ -311,6 +311,22 @@ void reconcile_status_with_measurement(Solution* solution, const Options& option
     solution->message = solution->message.empty() ? detail : solution->message + "; " + detail;
     logger.warning("{}", detail);
   }
+
+  // Complementary slackness, judged the way the verifier judges it: absolutely (#209). The
+  // relative measure below lets a row priced in the thousands sit a few 1e-10 inside its
+  // bound; the verifier's absolute product does not, and a claim the verifier rejects must
+  // not leave here as one. The point is usable, so it is reported feasible, not wrong.
+  if (check_dual && solution->status == SolveStatus::kOptimal &&
+      solution->complementarity_violation > tol::kComplementarity) {
+    const std::string detail = fmt::format(
+        "engine reported optimal but the largest |multiplier| * slack is {:.3e}, above the "
+        "{:.1e} the independent verifier accepts; reporting a feasible point rather than a "
+        "proof",
+        solution->complementarity_violation, tol::kComplementarity);
+    solution->status = SolveStatus::kFeasible;
+    solution->message = solution->message.empty() ? detail : solution->message + "; " + detail;
+    logger.warning("{}", detail);
+  }
 }
 
 Solution solve(const Model& model, const Options& options, SolveControl* control) {

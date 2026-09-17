@@ -107,6 +107,16 @@ inline constexpr int kStrongBranchingIterations = 50;
 /// should be revisited only if those land and instances still miss it.
 inline constexpr double kDualityGap = 1e-9;
 
+/// Complementary slackness, ABSOLUTE: the largest |multiplier| * slack over every row and
+/// column, in the model's own units, that an optimality claim may carry. This is the test
+/// tools/verify_solution.py applies (its "complementary slackness" check), copied here so the
+/// status guard in solve() cannot let out a claim the verifier will reject. The guard's other
+/// dual measure is relative to each term's scale; this one is deliberately not, because the
+/// verifier's is not (#52: the verifier is not loosened). Found by #209: the interior point's
+/// duals can be purified to 1e-11 while a row priced at 3.3e+03 still sits 3e-10 inside its
+/// bound, a product of 1.1e-06 that only crossover (#219) removes.
+inline constexpr double kComplementarity = 1e-6;
+
 // ---------------------------------------------------------------------------------------
 // Linear algebra
 // ---------------------------------------------------------------------------------------
