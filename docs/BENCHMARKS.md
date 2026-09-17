@@ -263,8 +263,8 @@ instances of that size and name what happens. These are the eight smallest archi
 Mittelmann's LP test set (`bench/runners/fetch_mittelmann.py`, provenance in
 `data/mittelmann/reference.json`).
 
-Source CSV: `bench/results/mittelmann-bf3df02.csv`  
-Commit `bf3df02` · machine `Windows-AMD64` · time limit 300 s per instance, both solvers
+Source CSV: `bench/results/mittelmann-e134aeb.csv`  
+Commit `e134aeb` · machine `Windows-AMD64` · time limit 300 s per instance, both solvers
 
 **0 of 8** instances reached `optimal` inside the limit; **0 of 8** also passed the independent verifier and agree with HiGHS. HiGHS, run as a separate process under the same limit, finished **4 of 8**.
 
@@ -272,14 +272,14 @@ These are the smallest archives in Mittelmann's LP directory; against Netlib's l
 
 | instance | rows | cols | nonzeros | status | our objective | HiGHS objective | rel. diff | iters | solver time (s) | verified |
 |---|---:|---:|---:|---|---:|---:|---:|---:|---:|:--:|
-| `Linf_520c` | 93326 | 69004 | 566193 | time_limit | 0.011540388 | Time limit reached | - | 777 | 306.5 | - |
-| `bdry2` | 376500 | 250998 | 1500003 | time_limit | -0.0043 | Time limit reached | - | 1 | 375.2 | - |
-| `brazil3` | 14646 | 23968 | 133184 | time_limit | 0 | 2 | - | 16238 | 300.2 | - |
-| `chromaticindex1024-7` | 67583 | 73728 | 270324 | time_limit | 3 | 3 | - | 3482 | 300.4 | - |
-| `irish-electricity` | 104259 | 61728 | 523257 | time_limit | 0 | 2546254.563 | - | 4028 | 300.8 | - |
-| `qap15` | 6330 | 22275 | 94950 | time_limit | 1319.748852 | Time limit reached | - | 14597 | 300.6 | - |
-| `rmine15` | 358395 | 42438 | 879732 | time_limit | -8442.415348 | Time limit reached | - | 28 | 314.1 | - |
-| `supportcase10` | 165684 | 14770 | 555082 | time_limit | 0 | 3.383923666 | - | 1394 | 301.9 | - |
+| `Linf_520c` | 93326 | 69004 | 566193 | time_limit | 0.100000032 | Time limit reached | - | 2582 | 300.3 | - |
+| `bdry2` | 376500 | 250998 | 1500003 | time_limit | -0.0043 | Time limit reached | - | 256 | 300.8 | - |
+| `brazil3` | 14646 | 23968 | 133184 | time_limit | 2 | 2 | - | 78656 | 300.1 | - |
+| `chromaticindex1024-7` | 67583 | 73728 | 270324 | time_limit | 3 | 3 | - | 5522 | 300.2 | - |
+| `irish-electricity` | 104259 | 61728 | 523257 | time_limit | 882509.4014 | 2546254.563 | - | 53652 | 300.3 | - |
+| `qap15` | 6330 | 22275 | 94950 | time_limit | 1543.844533 | Time limit reached | - | 23949 | 300.0 | - |
+| `rmine15` | 358395 | 42438 | 879732 | time_limit | -7890.58915 | Time limit reached | - | 10466 | 300.5 | - |
+| `supportcase10` | 165684 | 14770 | 555082 | time_limit | 2.56970627 | 3.383923666 | - | 16241 | 300.4 | - |
 
 **Not solved inside the limit**, named rather than dropped: `Linf_520c`, `bdry2`, `brazil3`, `chromaticindex1024-7`, `irish-electricity`, `qap15`, `rmine15`, `supportcase10`.
 
@@ -336,8 +336,8 @@ A ratio above 1 means restarts saved iterations on that instance.
 Every tier above is Netlib-sized: the largest instance in the full set has 12,230 columns, and
 most have a few hundred, so none of them speaks to the size PS26119 asks about.
 
-Source CSV: `bench/results/scale-f545f83.csv`  
-Commit `f545f83` · machine `Windows-AMD64` · 120.0s per solve
+Source CSV: `bench/results/scale-e134aeb.csv`  
+Commit `e134aeb` · machine `Windows-AMD64` · 120.0s per solve
 
 PS26119 asks for **thousands to millions of variables**, and this is the section that answers it with a file rather than an adjective. The instances are generated backwards from a primal-dual pair that already satisfies the KKT conditions, from integer data, so the optimum is known EXACTLY before the solver sees the model (`bench/runners/generate_large_lp.py`). A large random instance would prove nothing: nobody would know whether the answer was right.
 
@@ -345,26 +345,26 @@ PS26119 asks for **thousands to millions of variables**, and this is the section
 
 | size (rows x cols) | engine | status | objective | relative error | iterations | seconds |
 |---:|---|---|---:|---:|---:|---:|
-| 1,000 | `dual-simplex` | optimal | -362 | 3.5e-14 | 6757 | 1.2 |
-| 1,000 | `ipm` | optimal | -361.9999994 | 1.6e-09 | 19 | 0.6 |
-| 1,000 | `pdhg` | optimal | -362 | 6.0e-13 | 71200 | 2.5 |
-| 5,000 | `dual-simplex` | time limit | 24637.52716 | 1.5e+00 | 24316 | 120.1 |
-| 5,000 | `ipm` | time limit | 9945.000027 | 2.7e-09 | 24 | 120.1 |
-| 5,000 | `pdhg` | time limit | 9944.999998 | 1.8e-10 | 356680 | 114.5 |
-| 20,000 | `dual-simplex` | time limit | -127847.1017 | 3.8e+00 | 28564 | 120.2 |
-| 20,000 | `ipm` | time limit | 27091.64405 | 2.0e+00 | 0 | 120.5 |
-| 20,000 | `pdhg` | time limit | -26591.99944 | 2.1e-08 | 87227 | 87.5 |
-| 100,000 | `dual-simplex` | time limit | -2694428.902 | 3.1e+01 | 13745 | 121.0 |
-| 100,000 | `ipm` | no output | - | - | - | 221.3 |
-| 100,000 | `pdhg` | time limit | -83109.99102 | 1.1e-07 | 19032 | 114.9 |
+| 1,000 | `dual-simplex` | optimal | -362 | 9.4e-15 | 4271 | 0.4 |
+| 1,000 | `ipm` | optimal | -361.9999994 | 1.6e-09 | 19 | 0.4 |
+| 1,000 | `pdhg` | optimal | -362 | 6.0e-13 | 71200 | 1.2 |
+| 5,000 | `dual-simplex` | time limit | 27163.63491 | 1.7e+00 | 33019 | 120.0 |
+| 5,000 | `ipm` | feasible | 9945.000027 | 2.7e-09 | 24 | 70.9 |
+| 5,000 | `pdhg` | optimal | 9945 | 1.1e-11 | 410840 | 53.7 |
+| 20,000 | `dual-simplex` | time limit | -115703.4636 | 3.4e+00 | 34163 | 120.2 |
+| 20,000 | `ipm` | time limit | 27091.64405 | 2.0e+00 | 0 | 120.2 |
+| 20,000 | `pdhg` | time limit | -26592.00005 | 2.0e-09 | 122309 | 86.2 |
+| 100,000 | `dual-simplex` | time limit | -2148996.41 | 2.5e+01 | 19497 | 121.0 |
+| 100,000 | `ipm` | no output | - | - | - | 202.6 |
+| 100,000 | `pdhg` | time limit | -83109.99102 | 1.1e-07 | 20400 | 114.9 |
 
 **7 of 12** solves reached the analytic optimum to a relative 1e-06.
 
-- `dual-simplex` reached it at **1,000** rows and columns (optimal, 1.2 s).
-- `ipm` reached it at **5,000** rows and columns (time limit, 120.1 s).
+- `dual-simplex` reached it at **1,000** rows and columns (optimal, 0.4 s).
+- `ipm` reached it at **5,000** rows and columns (feasible, 70.9 s).
 - `pdhg` reached it at **100,000** rows and columns (time limit, 114.9 s).
 
-**Reaching the answer and proving it are different things, and at this scale they come apart.** `ipm` at 5,000, `pdhg` at 5,000, `pdhg` at 20,000, `pdhg` at 100,000 landed on the analytic optimum and still stopped at the limit, because the convergence test had not been satisfied when the clock ran out. Reported as what it is - not `optimal` - and worth knowing: a first-order method is useful long before it can certify itself.
+**Reaching the answer and proving it are different things, and at this scale they come apart.** `ipm` at 5,000, `pdhg` at 20,000, `pdhg` at 100,000 landed on the analytic optimum and still stopped at the limit, because the convergence test had not been satisfied when the clock ran out. Reported as what it is - not `optimal` - and worth knowing: a first-order method is useful long before it can certify itself.
 
 **What this does NOT say.** The largest instance here is 100,000 rows and columns. That is the thousands end of what the problem statement asks for and the low end of the millions; nothing above is evidence about a million-variable model. The instances in this table are also one shape - square, 5000 nonzeros at the smallest size, with nonzeros placed at random - which is an expander graph, the worst case for anything that factorizes, and nothing like a refinery. Section 1f.2 runs the same sizes on a shape a planning model has; section 5 is where the structural hazards are pushed.
 
@@ -407,25 +407,25 @@ Only the first-order method is measured here, and deliberately. The simplex and 
 
 #### 1f.2 The same sizes on a second shape
 
-Source CSV: `bench/results/scale-staircase-bf3df02.csv`  
-Commit `bf3df02` · machine `Windows-AMD64` · 120.0s per solve · staircase structure
+Source CSV: `bench/results/scale-staircase-e134aeb.csv`  
+Commit `e134aeb` · machine `Windows-AMD64` · 120.0s per solve · staircase structure
 
 **Same construction, same sizes, same nonzeros per column, different pattern.** The random family above draws each column's rows uniformly, which makes an expander graph: no small separators, so every elimination ordering fills catastrophically. That is the worst case for a method that factorizes and it looks nothing like an industrial model. This family is a staircase, each column in its own period with one coupling into the next - a multi-period planning model, which is the shape PS26119's own domain produces. The optimum is exact by construction either way.
 
 | size (rows x cols) | engine | status | objective | relative error | iterations | seconds |
 |---:|---|---|---:|---:|---:|---:|
-| 1,000 | `dual-simplex` | optimal | -5821 | 0.0e+00 | 5149 | 8.0 |
-| 1,000 | `ipm` | optimal | -5820.999999 | 1.3e-10 | 18 | 0.8 |
-| 1,000 | `pdhg` | optimal | -5821 | 4.1e-11 | 76560 | 22.2 |
-| 5,000 | `dual-simplex` | time limit | -15872.791 | 1.3e-01 | 13761 | 120.1 |
-| 5,000 | `ipm` | optimal | -14008 | 1.1e-10 | 24 | 6.4 |
-| 5,000 | `pdhg` | optimal | -14008 | 7.8e-12 | 155280 | 47.9 |
-| 20,000 | `dual-simplex` | time limit | -150394.8844 | 2.1e+01 | 10144 | 120.7 |
-| 20,000 | `ipm` | feasible | 7459.000101 | 1.4e-08 | 27 | 25.9 |
-| 20,000 | `pdhg` | feasible | 7459.000138 | 1.9e-08 | 73833 (of which 19 polish) | 103.2 |
-| 100,000 | `dual-simplex` | time limit | -6012310.933 | 6.2e+01 | 1453 | 121.4 |
-| 100,000 | `ipm` | time limit | 98432.69589 | 1.9e-04 | 24 | 121.1 |
-| 100,000 | `pdhg` | time limit | 98413.93037 | 7.1e-07 | 13907 (of which 5 polish) | 115.1 |
+| 1,000 | `dual-simplex` | optimal | -5821 | 0.0e+00 | 5338 | 0.5 |
+| 1,000 | `ipm` | optimal | -5820.999999 | 1.3e-10 | 18 | 0.3 |
+| 1,000 | `pdhg` | optimal | -5821 | 4.1e-11 | 76560 | 1.6 |
+| 5,000 | `dual-simplex` | time limit | -2622.001205 | 8.1e-01 | 42448 | 120.1 |
+| 5,000 | `ipm` | optimal | -14008 | 1.1e-10 | 24 | 2.6 |
+| 5,000 | `pdhg` | optimal | -14008 | 7.8e-12 | 155280 | 21.7 |
+| 20,000 | `dual-simplex` | time limit | -255228.4684 | 3.5e+01 | 40108 | 120.2 |
+| 20,000 | `ipm` | feasible | 7459.000101 | 1.4e-08 | 26 | 19.1 |
+| 20,000 | `pdhg` | feasible | 7459.000382 | 5.1e-08 | 98578 (of which 19 polish) | 99.6 |
+| 100,000 | `dual-simplex` | time limit | -2005644.115 | 2.1e+01 | 20655 | 121.1 |
+| 100,000 | `ipm` | time limit | 98414.11935 | 1.2e-06 | 36 | 120.8 |
+| 100,000 | `pdhg` | time limit | 98413.9697 | 3.1e-07 | 21250 (of which 9 polish) | 114.9 |
 
 **8 of 12** solves reached the analytic optimum to a relative 1e-06 on this shape.
 
@@ -435,28 +435,28 @@ Commit `bf3df02` · machine `Windows-AMD64` · 120.0s per solve · staircase str
 | `ipm` | 5,000 | 20,000 |
 | `pdhg` | 100,000 | 100,000 |
 
-**Structure is what a direct method needs, and the table shows it:** `ipm` from 5,000 to 20,000. The two families were measured at different commits - random at `f545f83`, staircase at `bf3df02` - so the solver is not identical between them; each table stands on its own commit, and the comparison is of shapes, not of versions. What changed between the shapes is whether the matrix has small separators, and the measurements behind that - the ordering time and the fill in the factor at the same size on both shapes - are in #193. The lesson for the section above is that its random family is a fair test of the first-order engine and an unfair one of the other two.
+**Structure is what a direct method needs, and the table shows it:** `ipm` from 5,000 to 20,000. Nothing about the solver changed between the two families. What changed between the shapes is whether the matrix has small separators, and the measurements behind that - the ordering time and the fill in the factor at the same size on both shapes - are in #193. The lesson for the section above is that its random family is a fair test of the first-order engine and an unfair one of the other two.
 
-The 20,000-row `ipm` row is the one to read against the first measurement of this family, `bench/results/scale-staircase-81596a3.csv`, where it was a numerical failure after 300 iterations. Running that row is what found the defect fixed in #205 - the method had converged to a relative gap of 1e-7 and then iterated on a NaN that overwrote the answer - and here it reports feasible at a relative error of 1.4e-08 in 27 iterations. Same instance, same hash; the stopping rule is what changed.
+The 20,000-row `ipm` row is the one to read against the first measurement of this family, `bench/results/scale-staircase-81596a3.csv`, where it was a numerical failure after 300 iterations. Running that row is what found the defect fixed in #205 - the method had converged to a relative gap of 1e-7 and then iterated on a NaN that overwrote the answer - and here it reports feasible at a relative error of 1.4e-08 in 26 iterations. Same instance, same hash; the stopping rule is what changed.
 
 #### 1f.3 A refinery planning model, by the year
 
-Source CSV: `bench/results/scale-refinery-f545f83.csv`  
-Commit `f545f83` · machine `Windows-AMD64` · 120.0s per solve · refinery structure
+Source CSV: `bench/results/scale-refinery-e134aeb.csv`  
+Commit `e134aeb` · machine `Windows-AMD64` · 120.0s per solve · refinery structure
 
 **A refinery planning model, rolled out over T periods** (`bench/runners/generate_refinery_lp.py`, #211): crude purchases, distillation throughput and crude tanks per crude; production by yields, sales and product tanks per product; distillation and unit capacities, quality budgets and delivery commitments per period; inventory balances coupling each period to the next. The operating plan is chosen first and the prices derived from the KKT conditions, so the optimum is exact by construction, as for the other two families. Rows are what the generator built - T = 12 is a monthly year, 365 a daily one, 8,760 hourly.
 
 | periods | rows x cols | engine | status | objective | relative error | iterations | seconds |
 |---:|---:|---|---|---:|---:|---:|---:|
-| 12 | 1,068 x 1,656 | `dual-simplex` | optimal | -61203.88791 | 2.4e-16 | 4395 | 0.5 |
+| 12 | 1,068 x 1,656 | `dual-simplex` | optimal | -61203.88791 | 8.3e-16 | 5853 | 0.5 |
 | 12 | 1,068 x 1,656 | `ipm` | optimal | -61203.88791 | 1.4e-13 | 36 | 0.3 |
-| 12 | 1,068 x 1,656 | `pdhg` | optimal | -61203.88791 | 5.5e-13 | 17720 | 1.2 |
-| 365 | 32,485 x 50,370 | `dual-simplex` | time limit | -2917077.938 | 8.6e-01 | 33057 | 120.8 |
-| 365 | 32,485 x 50,370 | `ipm` | optimal | -1571173.846 | 6.8e-12 | 45 | 77.5 |
-| 365 | 32,485 x 50,370 | `pdhg` | optimal | -1571173.846 | 8.9e-16 | 29746 (of which 5 polish) | 92.8 |
-| 8760 | 779,640 x 1,208,880 | `dual-simplex` | time limit | -1216296420 | 3.2e+01 | 1558 | 136.1 |
-| 8760 | 779,640 x 1,208,880 | `ipm` | time limit | -475650568.5 | 1.2e+01 | 1 | 139.0 |
-| 8760 | 779,640 x 1,208,880 | `pdhg` | time limit | -36893719.77 | 7.9e-07 | 1427 | 113.2 |
+| 12 | 1,068 x 1,656 | `pdhg` | optimal | -61203.88791 | 5.5e-13 | 17720 | 0.9 |
+| 365 | 32,485 x 50,370 | `dual-simplex` | time limit | -2167772.561 | 3.8e-01 | 41540 | 120.7 |
+| 365 | 32,485 x 50,370 | `ipm` | optimal | -1571173.846 | 6.8e-12 | 45 | 67.7 |
+| 365 | 32,485 x 50,370 | `pdhg` | optimal | -1571173.846 | 1.4e-14 | 43944 (of which 5 polish) | 92.3 |
+| 8760 | 779,640 x 1,208,880 | `dual-simplex` | time limit | -1217992956 | 3.2e+01 | 2413 | 136.4 |
+| 8760 | 779,640 x 1,208,880 | `ipm` | time limit | -475650568.5 | 1.2e+01 | 2 | 140.0 |
+| 8760 | 779,640 x 1,208,880 | `pdhg` | time limit | -36893748.68 | 1.0e-08 | 1522 | 111.8 |
 
 **6 of 9** solves reached the analytic optimum to a relative 1e-06 on this model; the largest solved is 779,640 rows.
 
