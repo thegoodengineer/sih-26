@@ -271,18 +271,32 @@ const std::vector<OptionSpec>& Options::registry() {
                  0.0,
                  1024.0,
                  {}});
+    // Registered as planned since Phase 7 and implemented in #288. Its default was `true`
+    // while nothing read it; it is `false` now that something does, because the mode REFUSES
+    // a wall-clock time_limit and a caller who asked for one must keep getting it.
     s.push_back({"deterministic",
                  OptionType::Bool,
-                 true,
-                 "Reproduce identical results across thread counts (work-based clock).",
+                 false,
+                 "Make the solve reproducible: no decision the solver takes is allowed to "
+                 "depend on the clock (#288). A wall-clock time_limit is refused rather than "
+                 "silently ignored, the interior-point polish is bounded by "
+                 "polish_max_factor_nonzeros instead of by seconds, and the column loops run "
+                 "on one thread unless threads was set explicitly. Two runs of the same model "
+                 "with the same options and the same build then return the same numbers; "
+                 "solve_seconds and the log timings still differ, and nothing is claimed "
+                 "across compilers or machines. Bound the search with iteration_limit or "
+                 "node_limit, which count the same everywhere.",
                  0.0,
                  0.0,
-                 {},
-                 "Phase 7"});
+                 {}});
     s.push_back({"random_seed",
                  OptionType::Int,
                  std::int64_t{0},
-                 "Seed for every randomised decision in the solver.",
+                 "Seed for every randomised decision in the solver. There are three, all of "
+                 "them the starting vector of a power iteration that estimates a norm for a "
+                 "step size: PDHG's preconditioner (src/pdhg/pdhg.cpp) and the two in the "
+                 "convex QP (src/qp/qp_condat_vu.cpp). Nothing in the solver seeds from the "
+                 "clock, so a run is reproducible at the default (#288).",
                  0.0,
                  kNoLimit,
                  {}});

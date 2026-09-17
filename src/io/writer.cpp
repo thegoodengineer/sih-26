@@ -384,7 +384,10 @@ bool write_stats_json(const std::string& path, const Model& model, const Solutio
                    {"columns", model.num_cols()},
                    {"nonzeros", model.num_nonzeros()},
                    {"integer_columns", model.num_integer_columns()},
-                   {"objective_offset", json_number(model.objective_offset)}};
+                   {"objective_offset", json_number(model.objective_offset)},
+                   // Model identity (#288): two records carrying the same fingerprint were
+                   // produced from the same numbers, whatever the file was called.
+                   {"fingerprint", fmt::format("{:016x}", model.fingerprint())}};
   blob["result"] = {{"status", to_string(solution.status)},
                     {"algorithm", solution.algorithm},
                     {"objective", json_number(solution.objective)},

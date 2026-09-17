@@ -169,3 +169,57 @@ there by construction.
 - `scripts/reproduce.sh` is the one command from a fresh clone: configure, build, test,
   fetch, benchmark, robustness sweep, comparison, and regenerate `docs/BENCHMARKS.md`. It
   says which steps need the network and skips them, named, when it is absent.
+
+## 7. Reproducibility, and what is actually promised
+
+`--option deterministic=true` turns on the reproducible mode (#288). It is off by default:
+it refuses a wall-clock `time_limit`, and a caller who asked for one has to keep getting it.
+
+Four different things get called reproducibility, and only some of them are ours to give:
+
+| Level | What it means | SANKHYA today |
+|---|---|---|
+| Mathematical | The same optimal value, whatever route is taken to it | Yes, and the exact rational oracle in `tests/oracles/` is what checks it |
+| Numerical | The same answer inside the documented tolerances | Yes, within `tol::kPrimalFeasibility` and friends; this is what the verifier enforces |
+| Execution determinism | The same decisions in the same order: same algorithm, same iteration count, same nodes, same branches | Yes in deterministic mode, on one build and one machine. This is what `tests/unit/test_deterministic.cpp` measures |
+| Bit for bit | Identical bit patterns in every reported number | Yes for repeated runs of one build on one machine; NOT claimed across compilers, optimization levels, CPUs or GPUs, and nothing here tests that |
+
+What deterministic mode changes, all of it in one function, `apply_deterministic_mode()` in
+`src/core/solve.cpp`, before any engine sees the options:
+
+- a `time_limit` is refused with a warning naming the value, and the search is expected to
+  be bounded with `iteration_limit` or `node_limit` instead, which count the same on every
+  machine;
+- `polish_max_seconds` stops bounding the interior-point polish; `polish_max_factor_nonzeros`
+  does, which is a property of the model rather than of the machine;
+- PDHG's 70 percent share of a finite time limit is not taken, because there is no finite
+  time limit left to share;
+- `threads` becomes 1 unless the caller set it. Set explicitly, it is honoured and the log
+  says that reproducibility then rests on #57's measurement that the column loops are
+  order-independent rather than on anything this mode re-checks.
+
+What it does not touch, because the audit in the PR for #288 found it already deterministic:
+every randomized component in the solver is a power iteration started from a fixed seed
+(`src/pdhg/pdhg.cpp`, `src/la/scaling.cpp`, `src/qp/qp_condat_vu.cpp`), all three now derived
+from `random_seed` rather than from a literal, and nothing anywhere seeds from the clock or
+from an address. The ratio tests break ties on the larger pivot and then on the first
+candidate reached, scanning in index order. Node selection keeps the first node achieving the
+best bound while scanning the open list in order, and the open list is built in index order.
+Presolve walks rows and columns in index order; its `unordered_map`s are lookup tables that
+are never iterated, so no reduction depends on a bucket order. Cover-cut variables are sorted
+by coefficient descending and then by column index (`src/mip/cuts.cpp`).
+
+What it cannot remove: `solve_seconds` and every timing in the log, which are measurements
+of this run and are meant to differ; and a progress callback, whose window is wall-clock, so
+how often it fires varies between runs. A callback that only reports is harmless, one that
+interrupts decides the answer on the clock, and deterministic mode warns when one is
+attached.
+
+Two runs that want to be compared should first check they were handed the same model:
+`Model::fingerprint()` is a 64-bit FNV-1a over the canonical numbers, reported in the log in
+deterministic mode and written to every stats blob as `model.fingerprint`. It hashes bit
+patterns, so -0.0 and 0.0 are different inputs, and it ignores names, because two models
+that differ only in what their columns are called solve identically.
+
+The GPU path is out of scope here: `src/gpu/` is guarded by `SANKHYA_ENABLE_CUDA` and this
+mode makes no claim about CUDA reductions. `docs/PS26119_COVERAGE.md` says what exists.

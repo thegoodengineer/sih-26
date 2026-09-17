@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 
 #include <fmt/format.h>
 
@@ -437,6 +438,76 @@ void Solution::recompute_quality(const Model& model) {
   absolute_gap = std::fabs(objective - dual_bound);
   const double scale = std::max(1.0, std::fabs(objective));
   relative_gap = absolute_gap / scale;
+}
+
+// =========================================================================================
+// Model identity (#288)
+// =========================================================================================
+
+namespace {
+
+/// FNV-1a, 64-bit. Fowler-Noll-Vo, public domain: h = (h XOR byte) * prime, one byte at a
+/// time. Chosen over anything cryptographic because the job is identity, not secrecy - see
+/// Model::fingerprint - and because a hash the reader can check by eye against the reference
+/// is worth more here than a fast one.
+constexpr std::uint64_t kFnvOffsetBasis = 1469598103934665603ULL;
+constexpr std::uint64_t kFnvPrime = 1099511628211ULL;
+
+void mix_bytes(std::uint64_t* hash, const void* data, std::size_t bytes) noexcept {
+  const auto* p = static_cast<const unsigned char*>(data);
+  for (std::size_t i = 0; i < bytes; ++i) {
+    *hash ^= static_cast<std::uint64_t>(p[i]);
+    *hash *= kFnvPrime;
+  }
+}
+
+void mix_double(std::uint64_t* hash, double value) noexcept {
+  // The BIT PATTERN, not the value: a fingerprint that called -0.0 and 0.0 the same thing
+  // would report identity between two models the solver can treat differently at a bound.
+  std::uint64_t bits = 0;
+  std::memcpy(&bits, &value, sizeof(bits));
+  mix_bytes(hash, &bits, sizeof(bits));
+}
+
+void mix_index(std::uint64_t* hash, Index value) noexcept {
+  mix_bytes(hash, &value, sizeof(value));
+}
+
+void mix_doubles(std::uint64_t* hash, const std::vector<double>& values) noexcept {
+  mix_index(hash, static_cast<Index>(values.size()));
+  for (const double value : values) mix_double(hash, value);
+}
+
+void mix_matrix(std::uint64_t* hash, const SparseMatrix& matrix) noexcept {
+  mix_index(hash, matrix.num_rows());
+  mix_index(hash, matrix.num_cols());
+  // The stored order. Two matrices that hold the same entries in a different column order
+  // are different inputs to the factorization and are meant to fingerprint differently.
+  for (const Index start : matrix.column_starts()) mix_index(hash, start);
+  for (const Index row : matrix.row_indices()) mix_index(hash, row);
+  for (const double value : matrix.values()) mix_double(hash, value);
+}
+
+}  // namespace
+
+std::uint64_t Model::fingerprint() const noexcept {
+  std::uint64_t hash = kFnvOffsetBasis;
+  mix_index(&hash, num_rows());
+  mix_index(&hash, num_cols());
+  mix_bytes(&hash, &sense, sizeof(sense));
+  mix_double(&hash, objective_offset);
+  mix_doubles(&hash, col_cost);
+  mix_doubles(&hash, col_lower);
+  mix_doubles(&hash, col_upper);
+  mix_doubles(&hash, row_lower);
+  mix_doubles(&hash, row_upper);
+  mix_index(&hash, static_cast<Index>(col_type.size()));
+  for (const VarType type : col_type) mix_bytes(&hash, &type, sizeof(type));
+  mix_matrix(&hash, matrix);
+  mix_matrix(&hash, hessian);
+  // Names are metadata: two models that differ only in what their columns are called solve
+  // identically, so they fingerprint identically and the report says so.
+  return hash;
 }
 
 }  // namespace sankhya

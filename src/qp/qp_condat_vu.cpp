@@ -69,12 +69,15 @@ namespace {
 
 /// Power iteration for the largest singular value of A, i.e. ||A||_2.
 ///
-/// Twenty iterations from a fixed seed. This is used only to pick a step size, so a few
-/// percent of underestimate would break the convergence condition - the result is therefore
-/// inflated by a small margin below rather than used raw.
-[[nodiscard]] double spectral_norm(const SparseMatrix& matrix, Index rows, Index cols) {
+/// Twenty iterations from the configured seed. This is used only to pick a step size, so a
+/// few percent of underestimate would break the convergence condition - the result is
+/// therefore inflated by a small margin below rather than used raw. The seed comes from
+/// random_seed rather than from a literal so that every randomised decision in the solver
+/// answers to one option (#288); the default reproduces the previous starting vector.
+[[nodiscard]] double spectral_norm(const SparseMatrix& matrix, Index rows, Index cols,
+                                   unsigned seed) {
   if (rows == 0 || cols == 0 || matrix.num_nonzeros() == 0) return 0.0;
-  std::mt19937 rng(26119);
+  std::mt19937 rng(26119u + seed);
   std::uniform_real_distribution<double> unit(-1.0, 1.0);
 
   std::vector<double> v(static_cast<std::size_t>(cols));
@@ -102,11 +105,11 @@ namespace {
 }
 
 /// Largest eigenvalue of the symmetric Q held as a lower triangle, by the same route.
-[[nodiscard]] double hessian_norm(const Model& model) {
+[[nodiscard]] double hessian_norm(const Model& model, unsigned seed) {
   const Index n = model.num_cols();
   if (model.hessian.num_nonzeros() == 0 || n == 0) return 0.0;
 
-  std::mt19937 rng(20260826);
+  std::mt19937 rng(20260826u + seed);
   std::uniform_real_distribution<double> unit(-1.0, 1.0);
   std::vector<double> v(static_cast<std::size_t>(n));
   for (double& value : v) value = unit(rng);
@@ -190,8 +193,9 @@ Solution solve_convex_qp(const Model& model, const Options& options, Logger& log
   const double sense = model.sense_multiplier();
 
   // ---- step sizes -------------------------------------------------------------------------
-  const double norm_a = spectral_norm(model.matrix, m, n);
-  const double norm_q = hessian_norm(model);
+  const auto seed = static_cast<unsigned>(options.get_int("random_seed"));
+  const double norm_a = spectral_norm(model.matrix, m, n, seed);
+  const double norm_q = hessian_norm(model, seed);
 
   // Condat-Vu needs 1/tau - sigma ||A||^2 >= L/2. Take sigma ||A||^2 = 1/(2 tau) and solve,
   // with a 5% margin because both norms are power-iteration ESTIMATES and an underestimate

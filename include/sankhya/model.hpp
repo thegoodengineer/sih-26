@@ -201,6 +201,20 @@ class Model {
   /// answer rather than a crash, which is exactly the failure mode ENGINEERING_RULES.md warns
   /// about.
   [[nodiscard]] std::string validate() const;
+
+  /// A 64-bit identity for this model: two runs that report the same fingerprint solved the
+  /// same numbers (#288).
+  ///
+  /// FROZEN INTERFACE, ADDITION. This adds a member function to Model; nothing existing
+  /// changes shape or meaning, and no engine is required to call it.
+  ///
+  /// It is FNV-1a over a canonical byte image of the dimensions, the sense, the offset, the
+  /// column and row data and both matrices in their stored order - not a cryptographic
+  /// digest, and it is not used for security. Distinct models CAN collide; what it is for is
+  /// telling a reproducibility report that run 2 was handed the model run 1 was handed,
+  /// which the name in a header cannot. Bit patterns are hashed, so -0.0 and 0.0 differ, and
+  /// two NaNs differ unless they carry the same payload.
+  [[nodiscard]] std::uint64_t fingerprint() const noexcept;
 };
 
 // =========================================================================================

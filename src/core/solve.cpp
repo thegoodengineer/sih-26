@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <string>
 #include <string_view>
 
@@ -32,6 +33,7 @@
 #include "sankhya/qp.hpp"
 #include "sankhya/solve_control.hpp"
 #include "sankhya/timer.hpp"
+#include "sankhya/version.hpp"
 #include "simplex/ranging.hpp"
 #include "util/threads.hpp"
 
@@ -202,7 +204,9 @@ void polish_with_the_interior_point(Solution* first, const Model& model, const O
   // polish_max_seconds and the first-order answer stands, which is the honest outcome.
   double budget = options.get_double("polish_max_seconds");
   const double time_limit = options.get_double("time_limit");
-  if (time_limit > 0.0 && std::isfinite(time_limit)) {
+  // In deterministic mode the polish is bounded by polish_max_factor_nonzeros alone (#288):
+  // what the clock has left is exactly the kind of decision that mode exists to remove.
+  if (!options.get_bool("deterministic") && time_limit > 0.0 && std::isfinite(time_limit)) {
     const double remaining = time_limit - timer.elapsed_seconds();
     if (remaining <= 0.0) {
       first->message += "; no time left for the interior-point polish";
@@ -330,12 +334,76 @@ void reconcile_status_with_measurement(Solution* solution, const Options& option
   }
 }
 
+/// The value the termination options carry when nothing is to stop the solve on the clock.
+constexpr double kNoWallClockLimit = std::numeric_limits<double>::max();
+
+/// The options a deterministic solve actually runs with (#288).
+///
+/// WHAT DETERMINISTIC MODE IS. Every decision the solver makes is a function of the model and
+/// the options, except the ones that ask the clock: how much time is left decides when a
+/// solve stops, how long the polish may run, and how the time limit is split between a
+/// first-order pass and its finish. Those answers differ between two runs on one machine and
+/// between two machines, so a run that ends on any of them is not reproducible. This turns
+/// each of them into its deterministic counterpart, once, before any engine sees the options.
+///
+/// WHAT IT IS NOT. It does not make floating-point arithmetic associative, and it makes no
+/// claim about a different compiler, a different CPU or a different build of this project.
+/// The guarantee is: same build, same machine, same model, same options, same numbers.
+///
+/// A time limit is REFUSED rather than quietly ignored. A caller who asked for both
+/// determinism and a deadline has asked for two things that cannot both hold, and the one
+/// thing worse than picking for them is picking silently.
+[[nodiscard]] Options apply_deterministic_mode(const Options& requested, Logger& logger) {
+  if (!requested.get_bool("deterministic")) return requested;
+
+  const Options defaults;
+  Options effective = requested;
+
+  const double time_limit = requested.get_double("time_limit");
+  if (time_limit != defaults.get_double("time_limit")) {
+    logger.warning(
+        "deterministic: time_limit={:g}s is refused - a solve that stops on the clock "
+        "returns a different answer on a slower machine. Use iteration_limit or node_limit, "
+        "which count the same on every machine",
+        time_limit);
+    effective.set_double("time_limit", defaults.get_double("time_limit"));
+  }
+
+  const double polish_seconds = requested.get_double("polish_max_seconds");
+  if (polish_seconds != defaults.get_double("polish_max_seconds")) {
+    logger.warning(
+        "deterministic: polish_max_seconds={:g} is refused; the polish is bounded by "
+        "polish_max_factor_nonzeros, which is a property of the model rather than of the "
+        "machine",
+        polish_seconds);
+  }
+  // Even at its default the seconds budget would decide whether the polish finishes, so it
+  // goes entirely, set to the same no-limit sentinel the termination options use. What
+  // bounds the polish afterwards is polish_max_factor_nonzeros, a property of the model.
+  effective.set_double("polish_max_seconds", kNoWallClockLimit);
+
+  const std::int64_t threads = requested.get_int("threads");
+  if (threads == defaults.get_int("threads")) {
+    effective.set_int("threads", 1);
+  } else {
+    // The measurement in #57 says the column loops are bit-identical at 1 and 8 threads, and
+    // a caller who set threads has read that. Saying so here is the difference between
+    // relying on the claim and relying on it knowingly.
+    logger.warning(
+        "deterministic: running on {} threads; reproducibility then rests on the parallel "
+        "reductions being order-independent, which #57 measured but this mode does not "
+        "re-check",
+        threads);
+  }
+  return effective;
+}
+
 namespace {
 Solution solve_unguarded(const Model& model, const Options& options, SolveControl* control,
                          Logger& logger, const Timer& timer);
 }  // namespace
 
-Solution solve(const Model& model, const Options& options, SolveControl* control) {
+Solution solve(const Model& model, const Options& requested_options, SolveControl* control) {
   Timer timer;
   {
     Solution solution;
@@ -348,7 +416,29 @@ Solution solve(const Model& model, const Options& options, SolveControl* control
       return solution;
     }
   }
-  Logger logger(options.get_bool("log_to_console") ? stdout : nullptr);
+  Logger logger(requested_options.get_bool("log_to_console") ? stdout : nullptr);
+  // Rewritten once, here, so no engine below has to know about the mode - and so the log
+  // says what was changed before anything runs (#288).
+  const Options options = apply_deterministic_mode(requested_options, logger);
+  if (options.get_bool("deterministic")) {
+    logger.info("Deterministic mode: no decision depends on the clock");
+    // The reproducibility fingerprint (#288): what a second run has to match for the same
+    // numbers to be expected of it. No CPU model or driver version here - this binary does
+    // not detect them, and a field filled with a guess is worse than a field that is absent.
+    logger.info("Reproducibility: model {:016x}, seed {}, threads {}", model.fingerprint(),
+                options.get_int("random_seed"), options.get_int("threads"));
+    logger.info("Reproducibility: {} {} ({}), {}, CUDA {}", version_string(), git_commit(),
+                build_type(), compiler_string(), cuda_enabled() ? "built in" : "not built in");
+    if (control != nullptr && control->progress_callback) {
+      // The one clock this mode cannot take away. The callback is due on a wall-clock
+      // window, so HOW OFTEN it fires differs between runs; a callback that only reports is
+      // harmless, one that interrupts decides the answer on the clock after all.
+      logger.warning(
+          "deterministic: a progress callback is attached and its window is wall-clock, so "
+          "it fires a different number of times each run; interrupting from it makes the "
+          "result non-reproducible");
+    }
+  }
   // The whole dispatch runs under the out-of-memory guard (#246): an engine that exhausts
   // the machine comes back as a status with the engine named, not as an aborted process.
   const std::string engine = options.get_string("algorithm");
@@ -486,7 +576,8 @@ Solution solve_unguarded(const Model& model, const Options& options, SolveContro
       if (want_pdhg) {
         Options first_pass = options;
         const double time_limit = options.get_double("time_limit");
-        if (options.get_bool("pdhg_polish") && time_limit > 0.0 && std::isfinite(time_limit)) {
+        if (options.get_bool("pdhg_polish") && !options.get_bool("deterministic") &&
+            time_limit > 0.0 && std::isfinite(time_limit)) {
           first_pass.set_double("time_limit", time_limit * kPdhgShareOfTheTimeLimit);
         }
         Solution first = pdhg::solve_pdhg(target, first_pass, logger, control);
