@@ -645,6 +645,12 @@ def cuts_ab_paragraph() -> str:
     per = [nodes(on[n]) / nodes(off[n]) for n in same if nodes(off[n]) > 0]
     ratio = (nodes_on / nodes_off) if nodes_off else float("nan")
 
+    def proved_now(row: dict) -> bool:
+        if int(row.get("proved_optimal") or 0):
+            return True
+        return ("gap target" in (row.get("message") or "")
+                and bool(int(row.get("matched_published") or 0)))
+
     def tally(table: dict) -> tuple[int, int]:
         """Matched, and proved UNDER THE CURRENT CONVENTION.
 
@@ -657,13 +663,7 @@ def cuts_ab_paragraph() -> str:
         proofs when one of the two was only a renamed status.
         """
         matched = sum(int(r.get("matched_published") or 0) for r in table.values())
-        proved = 0
-        for row in table.values():
-            if int(row.get("proved_optimal") or 0):
-                proved += 1
-            elif ("gap target" in (row.get("message") or "")
-                  and int(row.get("matched_published") or 0)):
-                proved += 1
+        proved = sum(1 for r in table.values() if proved_now(r))
         return (matched, proved)
 
     matched_off, proved_off = tally(off)
@@ -677,6 +677,22 @@ def cuts_ab_paragraph() -> str:
         return f"{text} ({message})" if message else text
 
     changed_text = "; ".join(outcome(n) for n in changed) if changed else "none"
+
+    def yes_no(flag: bool) -> str:
+        return "yes" if flag else "no"
+
+    # Instances whose matched or proved verdict differs between the two runs, whatever their
+    # status word did. Computed, so the sentence cannot name an instance the CSVs do not.
+    moved = [n for n in common
+             if (int(off[n].get("matched_published") or 0), proved_now(off[n]))
+             != (int(on[n].get("matched_published") or 0), proved_now(on[n]))]
+    moved_text = "; ".join(
+        f"`{n}`: objective {off[n].get('our_objective') or '-'} without cuts and "
+        f"{on[n].get('our_objective') or '-'} with them (matched "
+        f"{yes_no(bool(int(off[n].get('matched_published') or 0)))} -> "
+        f"{yes_no(bool(int(on[n].get('matched_published') or 0)))}, proved "
+        f"{yes_no(proved_now(off[n]))} -> {yes_no(proved_now(on[n]))})"
+        for n in moved) if moved else "none"
     spread = (f" (per instance from {min(per):.3f}x to {max(per):.3f}x)" if per else "")
     return (f"**Root cuts, on versus off** (`bench/results/miplib-cuts-off.csv` and "
             f"`miplib-cuts-on.csv`, both at `{commit}`, {len(common)} "
@@ -688,13 +704,11 @@ def cuts_ab_paragraph() -> str:
             f"recomputed under #188, where a search meeting its gap target is optimal; the "
             f"CSVs predate that and their own `proved_optimal` column would read "
             f"{sum(int(r.get('proved_optimal') or 0) for r in off.values())} and "
-            f"{sum(int(r.get('proved_optimal') or 0) for r in on.values())}, which is where "
-            f"the claim that the cuts cost TWO proofs came from. One of those two was only a "
-            f"renamed status: `f2gap40400` met the gap target in 321 nodes with cuts against "
-            f"509 without, which is the cuts working. The genuine loss is `enlight8`, which "
-            f"proves its optimum in 53.5 s without them and runs out of the 60 s limit with "
-            f"them, because a cut row makes every node LP dearer. That single lost proof, "
-            f"against a node count of {ratio:.3f}x, is why `enable_root_cuts` is off by "
+            f"{sum(int(r.get('proved_optimal') or 0) for r in on.values())}. Instances "
+            f"whose matched or proved verdict differs between the two runs: {moved_text}. "
+            f"Cuts make every node LP dearer, because each cut is a row; on this measurement "
+            f"they prove {proved_on - proved_off:+d} and match {matched_on - matched_off:+d} "
+            f"against a node count of {ratio:.3f}x, which is why `enable_root_cuts` is off by "
             f"default: a measurement, not caution.")
 
 
@@ -1545,22 +1559,26 @@ of Beale and Kuhn.
 
 ## 6. What these numbers do not say
 
-- **The large-model evidence is sections 1d and 1f, and it stops well short of "millions".**
-  1d is Mittelmann's set, a table of named time limits. 1f is generated instances whose
-  optimum is exact by construction, where the first-order engine reaches 100,000 rows and
-  columns and the other two do not. Neither is evidence about a million-variable industrial
-  model, and no pass rate in the Netlib sections above substitutes for either. Tracked as
-  #198 and as part of #54.
+- **The large-model evidence is sections 1d and 1f to 1f.3, and none of it is a real
+  million-variable industrial model.** 1d is Mittelmann's set, a table of named time limits.
+  1f to 1f.3 are generated instances whose optimum is exact by construction: under a clock
+  the first-order engine reaches 100,000 rows and columns, the interior point 5,000 on the
+  random shape and 20,000 on the staircase, and the dual simplex 1,000; under a fixed
+  iteration budget the random shape goes to 1,000,000; the largest refinery-shaped model
+  solved exactly is 32,485 rows. No pass rate in the Netlib sections above substitutes for
+  any of it. Tracked as #198 and as part of #54.
 - Wall-clock times at this size are dominated by process start-up and file reading, so
   ratios between solvers are not meaningful until the instances get big enough to matter.
   The comparison in section 4 uses solver-internal time on both sides for that reason.
 - The failures in section 1b are real and are not going to be quietly dropped from a later
   edition of this file. Each one carries the issue tracking it.
 - One engine named in PS26119 is not measured on this page at all: there is no GPU backend
-  on `main` (#16-#19). The interior-point method (`algorithm=ipm`, #56) is opt-in and
-  produces no basis, so it is not the engine behind any Netlib or MIPLIB table above -
-  section 1f is the exception, where it appears beside the others and does not scale past
-  1,000 rows (#193). Its own Netlib run is committed as `netlib-full-*-ipm.csv` and quoted in
+  on `main` - the CUDA backend is PR #274, open, not yet built or measured on a GPU
+  (#16-#19). The interior-point method (`algorithm=ipm`, #56) is opt-in and produces no
+  basis, so it is not the engine behind any Netlib or MIPLIB table above - sections 1f to
+  1f.3 are the exception, where it appears beside the others: since the AMD ordering (#193)
+  it reaches 5,000 rows on the random shape and 20,000 on the staircase, and solves the
+  32,485-row refinery year exactly (#206, #211). Its own Netlib run is committed as `netlib-full-*-ipm.csv` and quoted in
   `docs/PS26119_COVERAGE.md`, not here, because a run made with a non-default option is a
   measurement of that option rather than the tier's evidence. `docs/PROVENANCE.md` and issue #54 carry the full accounting.
 """

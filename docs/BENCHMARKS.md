@@ -475,7 +475,7 @@ Commit `bf3df02` · machine `Windows-AMD64`
 Every row above was counted under the #188 convention: a search that meets the requested gap target reports `optimal`, because the incumbent is within the tolerance that was asked for. Only a node or time limit leaves a row unproved.
 Those are different claims and are kept apart deliberately. Branch and bound here finds good incumbents far more often than it finishes the proof: reliability branching (#69) and warm-started dual node LPs (#65) do the searching, and the root cutting planes that exist (#159: Gomory mixed-integer and lifted knapsack cover) are off by default, for the reason measured below. Collapsing the two columns would hide exactly the thing cuts are meant to improve.
 
-**Root cuts, on versus off** (`bench/results/miplib-cuts-off.csv` and `miplib-cuts-on.csv`, both at `bf3df02`, 30 instances, the same time limit): with cuts on, 12 of 30 reach the published optimum and 9 prove it, against 13 and 9 with them off. Over the 30 instances that end the same way either way, the cuts take the total node count to 0.918x (per instance from 0.082x to 1.539x). The outcome changed on 0: none. Both counts above are recomputed under #188, where a search meeting its gap target is optimal; the CSVs predate that and their own `proved_optimal` column would read 9 and 9, which is where the claim that the cuts cost TWO proofs came from. One of those two was only a renamed status: `f2gap40400` met the gap target in 321 nodes with cuts against 509 without, which is the cuts working. The genuine loss is `enlight8`, which proves its optimum in 53.5 s without them and runs out of the 60 s limit with them, because a cut row makes every node LP dearer. That single lost proof, against a node count of 0.918x, is why `enable_root_cuts` is off by default: a measurement, not caution.
+**Root cuts, on versus off** (`bench/results/miplib-cuts-off.csv` and `miplib-cuts-on.csv`, both at `bf3df02`, 30 instances, the same time limit): with cuts on, 12 of 30 reach the published optimum and 9 prove it, against 13 and 9 with them off. Over the 30 instances that end the same way either way, the cuts take the total node count to 0.918x (per instance from 0.082x to 1.539x). The outcome changed on 0: none. Both counts above are recomputed under #188, where a search meeting its gap target is optimal; the CSVs predate that and their own `proved_optimal` column would read 9 and 9. Instances whose matched or proved verdict differs between the two runs: `noswot`: objective -41.0 without cuts and -39.0 with them (matched yes -> no, proved no -> no). Cuts make every node LP dearer, because each cut is a row; on this measurement they prove +0 and match -1 against a node count of 0.918x, which is why `enable_root_cuts` is off by default: a measurement, not caution.
 
 **The time limit decides some of these, not the solver.** A row that stops at the limit with a small gap says "needs more time than we gave it", not "cannot"; which side of the limit such a row lands on moves with the machine's speed rather than with anything about the search. The remedy is a longer limit, and the reason this table does not already use one is that the set already adds up to 21 minutes of solve time per run at this one.
 
@@ -647,21 +647,25 @@ Reading the table: the `conditioning` cliff is `kZeroDrop` (`tolerances.hpp`), t
 
 ## 6. What these numbers do not say
 
-- **The large-model evidence is sections 1d and 1f, and it stops well short of "millions".**
-  1d is Mittelmann's set, a table of named time limits. 1f is generated instances whose
-  optimum is exact by construction, where the first-order engine reaches 100,000 rows and
-  columns and the other two do not. Neither is evidence about a million-variable industrial
-  model, and no pass rate in the Netlib sections above substitutes for either. Tracked as
-  #198 and as part of #54.
+- **The large-model evidence is sections 1d and 1f to 1f.3, and none of it is a real
+  million-variable industrial model.** 1d is Mittelmann's set, a table of named time limits.
+  1f to 1f.3 are generated instances whose optimum is exact by construction: under a clock
+  the first-order engine reaches 100,000 rows and columns, the interior point 5,000 on the
+  random shape and 20,000 on the staircase, and the dual simplex 1,000; under a fixed
+  iteration budget the random shape goes to 1,000,000; the largest refinery-shaped model
+  solved exactly is 32,485 rows. No pass rate in the Netlib sections above substitutes for
+  any of it. Tracked as #198 and as part of #54.
 - Wall-clock times at this size are dominated by process start-up and file reading, so
   ratios between solvers are not meaningful until the instances get big enough to matter.
   The comparison in section 4 uses solver-internal time on both sides for that reason.
 - The failures in section 1b are real and are not going to be quietly dropped from a later
   edition of this file. Each one carries the issue tracking it.
 - One engine named in PS26119 is not measured on this page at all: there is no GPU backend
-  on `main` (#16-#19). The interior-point method (`algorithm=ipm`, #56) is opt-in and
-  produces no basis, so it is not the engine behind any Netlib or MIPLIB table above -
-  section 1f is the exception, where it appears beside the others and does not scale past
-  1,000 rows (#193). Its own Netlib run is committed as `netlib-full-*-ipm.csv` and quoted in
+  on `main` - the CUDA backend is PR #274, open, not yet built or measured on a GPU
+  (#16-#19). The interior-point method (`algorithm=ipm`, #56) is opt-in and produces no
+  basis, so it is not the engine behind any Netlib or MIPLIB table above - sections 1f to
+  1f.3 are the exception, where it appears beside the others: since the AMD ordering (#193)
+  it reaches 5,000 rows on the random shape and 20,000 on the staircase, and solves the
+  32,485-row refinery year exactly (#206, #211). Its own Netlib run is committed as `netlib-full-*-ipm.csv` and quoted in
   `docs/PS26119_COVERAGE.md`, not here, because a run made with a non-default option is a
   measurement of that option rather than the tier's evidence. `docs/PROVENANCE.md` and issue #54 carry the full accounting.

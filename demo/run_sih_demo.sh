@@ -228,7 +228,8 @@ rule "2.5. Scale: an instance orders of magnitude larger than anything committed
 # ===========================================================================================
 cat <<'SCALE'
     Section 6 below is honest that the committed Netlib set is small and settles nothing
-    about the "thousands to millions of variables" this project has not yet benchmarked at.
+    about the "thousands to millions of variables"; docs/BENCHMARKS.md sections 1f-1f.3 are where that
+    is measured, on generated instances only, and this run does not repeat them.
     This does not close that gap - one instance is not a benchmark suite - but it is a live
     demonstration at a size none of the case studies above reach, on an LP whose optimum is
     known before the solver ever sees the file (bench/runners/generate_large_lp.py builds the
@@ -650,14 +651,16 @@ cat <<'GAPS' | fill_gaps
     Cutting planes      EXIST, OFF BY DEFAULT. Root Gomory mixed-integer and lifted knapsack
                         cover cuts landed in #159 (--option enable_root_cuts=true), validity
                         gated against the exact rational optimum. Off because the A/B on the
-                        30 MIPLIB instances at 60 s cut nodes but cost one proof - enlight8,
-                        which runs out of the limit with them, because a cut row makes every
-                        node LP dearer (bench/results/miplib-cuts-{off,on}.csv).
+                        30 MIPLIB instances at 60 s proves the same 9 either way, cuts nodes
+                        to 0.918x, and costs one published match - noswot, -39 with cuts
+                        against -41 without, because a cut row makes every node LP dearer
+                        (bench/results/miplib-cuts-{off,on}.csv).
                         No MIR cuts, and none below the root. Branch and bound itself has
                         reliability branching (#69) and warm-starts every node LP in the
                         dual simplex (#65).
-    GPU acceleration    NOT WRITTEN. The first-order method it needs exists and runs on CPU;
-                        the CUDA backend is issues #16-#19. --gpu today prints a warning and
+    GPU acceleration    NOT ON MAIN. The first-order method it needs exists and runs on CPU;
+                        the CUDA backend is PR #274, open, not yet built or measured on a
+                        GPU (issues #16-#19). --gpu today prints a warning and
                         falls back to CPU. We are not claiming a speed-up we have not measured.
     Scale               Section 2.5 above solves one 5000 x 5000 instance, which is the
                         largest thing here by two orders of magnitude and is checked against
@@ -665,7 +668,9 @@ cat <<'GAPS' | fill_gaps
                         demonstration, not a benchmark, and it says nothing about the sparse
                         industrial structure real models have. Everything else here is small.
                         Nothing in this run supports a claim about the "millions of
-                        variables" end of what the problem statement asks for.
+                        variables" end of what the problem statement asks for; the measured
+                        scale evidence is docs/BENCHMARKS.md sections 1f-1f.3, generated
+                        instances with exact optima, and no real industrial model at that size.
 
                         THE HONEST HEADLINE IS THE FULL NETLIB SET - not the @NCOUNT@ solved
                         live above, and not the medium tier either:
@@ -709,9 +714,10 @@ cat <<'GAPS' | fill_gaps
                         They are the weakest numbers in the project: branch and bound reaches
                         a feasible incumbent on most of the set but PROVES optimality on few.
                         Root cuts (#159) exist and are off by default because at 60 s they
-                        cost proofs; reliability branching (#69) moved the count by one each
-                        way. Stated here rather than left out - a reader
-                        who opens bench/results/ finds it either way, and #54 is the tracker.
+                        prove no more and cost a published match; reliability branching
+                        (#69) moved the count by one each way. Stated here rather than left
+                        out - a reader who opens bench/results/ finds it either way, and #54
+                        is the tracker.
     Parallelism         Single-threaded by default. --option threads=N runs an iteration's
                         column loops under OpenMP, deterministically (bit-identical results at
                         1 and 8 threads), and at Netlib scale it is measured to buy nothing:
