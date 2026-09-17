@@ -182,22 +182,9 @@ Solution BranchAndBound::run() {
       }
     }
 
-    // Depth-first while diving, best-bound when the dive ends. Diving reaches an incumbent
-    // quickly, which is what makes every later bound able to prune; best-bound then keeps
-    // the tree from growing where it cannot pay.
-    std::size_t pick = open_.size() - 1;
-    if (!dive) {
-      double best = std::numeric_limits<double>::infinity();
-      for (std::size_t k = 0; k < open_.size(); ++k) {
-        const double bound = nodes_[static_cast<std::size_t>(open_[k])].bound;
-        if (bound < best) {
-          best = bound;
-          pick = k;
-        }
-      }
-    }
-    const Index node_index = open_[pick];
-    open_.erase(open_.begin() + static_cast<std::ptrdiff_t>(pick));
+    // Which node to take next is the configured policy's decision (#293), and only the
+    // order it decides: the tree, the bounds and the incumbent test are the same either way.
+    const Index node_index = take_next_open_node(dive);
     dive = false;
 
     const TreeNode& node = nodes_[static_cast<std::size_t>(node_index)];
@@ -396,6 +383,11 @@ Solution BranchAndBound::run() {
 
     // Two children: x <= floor(v) and x >= floor(v) + 1. Together they cover every integer
     // point, so nothing is lost.
+    // Both children inherit the parent's estimate: it is a property of the relaxation they
+    // were branched from, and the branched column's own contribution is the one term the
+    // branch is about to settle.
+    const double child_estimate = estimate_from(relaxation.col_value, node_bound);
+
     TreeNode down;
     down.parent = node_index;
     down.has_change = true;
@@ -404,6 +396,7 @@ Solution BranchAndBound::run() {
     down.depth = node.depth + 1;
     down.warm = children_warm;
     down.fraction = value - floor_value;
+    down.estimate = child_estimate;
 
     TreeNode up;
     up.parent = node_index;
@@ -413,6 +406,7 @@ Solution BranchAndBound::run() {
     up.depth = node.depth + 1;
     up.warm = children_warm;
     up.fraction = floor_value + 1.0 - value;
+    up.estimate = child_estimate;
 
     nodes_.push_back(down);
     const auto down_index = static_cast<Index>(nodes_.size() - 1);
@@ -546,6 +540,10 @@ Solution BranchAndBound::run() {
                to_string(solution.status), solution.objective, solution.dual_bound,
                solution.nodes, solution.solve_seconds);
   logger_.info("Nodes pruned {}, tree {} node(s) at exit", nodes_pruned_, open_.size());
+  logger_.info(
+      "Node selection {}: {} node(s) taken deepest-first, {} by the policy, deepest node at "
+      "depth {}",
+      to_string(node_selection_), selected_by_dive_, selected_by_policy_, deepest_node_);
   if (!quadratic_) {
     // How the node LPs were solved (#65). The ratio of warm to cold is the whole point of
     // the dual node engine, and the iterations per solve are the evidence it pays.

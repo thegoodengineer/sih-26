@@ -678,6 +678,21 @@ TEST(BranchAndBound, FuzzAgainstTheExactMilpOracle) {
   expect_clean_sweep(run_milp_fuzz(mip_options(), "no cuts"));
 }
 
+// NODE SELECTION CHANGES THE ORDER AND NOTHING ELSE (#293).
+//
+// Every policy takes a different node next, so every policy explores the tree in a different
+// order, prunes different nodes at different moments and arrives at its incumbent by a
+// different route. What none of them may do is change the ANSWER. The exact rational oracle
+// knows the true optimum of each instance below, so a policy that fathomed a node it had no
+// right to fathom shows up here as a mismatch rather than as a plausible objective.
+TEST(BranchAndBound, EveryNodeSelectionPolicyAgreesWithTheExactOracle) {
+  for (const char* policy : {"best-bound", "depth-first", "best-estimate"}) {
+    Options options = mip_options();
+    options.set_string("mip_node_selection", policy);
+    expect_clean_sweep(run_milp_fuzz(options, policy));
+  }
+}
+
 // =========================================================================================
 // The acceptance bar #23 sets for cutting planes
 //

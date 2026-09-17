@@ -134,6 +134,17 @@ const std::vector<OptionSpec>& Options::registry() {
                  0.0,
                  0.0,
                  {"reliability", "most-fractional"}});
+    s.push_back({"mip_node_selection",
+                 OptionType::String,
+                 std::string("hybrid"),
+                 "Which open node branch and bound takes next (#293): hybrid (default; dive "
+                 "to a leaf, then best-bound), best-bound (fewest nodes to a proof, widest "
+                 "tree), depth-first (narrow tree, early incumbent, slow bound), or "
+                 "best-estimate (the pseudocost guess at where a good incumbent is). Order "
+                 "only: every policy explores the same tree and proves the same optimum.",
+                 0.0,
+                 0.0,
+                 {"hybrid", "best-bound", "depth-first", "best-estimate"}});
     s.push_back({"mip_node_engine",
                  OptionType::String,
                  std::string("dual"),

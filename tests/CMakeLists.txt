@@ -34,6 +34,7 @@ add_executable(sankhya_tests
   unit/test_pdhg.cpp
   unit/test_qp.cpp
   unit/test_branch_and_bound.cpp
+  unit/test_node_selection.cpp
   unit/test_solution_pool.cpp
   # The verification spine (Phase 3). The oracle is exact-arithmetic reference code
   # that lives only in the test binary; nothing in src/ can reach it.
