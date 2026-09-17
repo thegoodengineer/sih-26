@@ -197,6 +197,7 @@ set(SANKHYA_CORE_SOURCES
   src/la/sparse.cpp
   src/simplex/dense_lu.cpp
   src/mip/branch_and_bound.cpp
+  src/mip/branch_and_bound_node.cpp
   src/mip/cuts.cpp
   src/mip/solution_pool.cpp
   src/presolve/presolve.cpp
