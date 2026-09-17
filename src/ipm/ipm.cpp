@@ -701,8 +701,9 @@ Solution InteriorPoint::finish(SolveStatus status, const std::string& message, C
 // nothing the primal side proved is put at risk; a correction that does not help is
 // discarded and the log says so.
 namespace {
-constexpr double kPurifyInteriorFraction = 1e-5;  ///< slack per unit of |x| that counts as interior
-constexpr double kPurifyShift = 1e-8;             ///< diagonal shift on rows with no interior logical
+constexpr double kPurifyInteriorFraction =
+    1e-5;                              ///< slack per unit of |x| that counts as interior
+constexpr double kPurifyShift = 1e-8;  ///< diagonal shift on rows with no interior logical
 }  // namespace
 
 bool InteriorPoint::purify_duals() {
@@ -730,8 +731,8 @@ bool InteriorPoint::purify_duals() {
     if (k < n_) {
       const ColumnView column = model_.matrix.column(k);
       for (Index q = 0; q < column.size; ++q) {
-        scale = std::max(scale, std::fabs(column.values[q] *
-                                          y[static_cast<std::size_t>(column.rows[q])]));
+        scale = std::max(
+            scale, std::fabs(column.values[q] * y[static_cast<std::size_t>(column.rows[q])]));
       }
     } else {
       scale = std::max(scale, std::fabs(y[static_cast<std::size_t>(k - n_)]));
@@ -803,10 +804,12 @@ bool InteriorPoint::purify_duals() {
 
   std::vector<double> dy = rhs;
   ldl_.solve(dy.data());
-  if (!std::all_of(dy.begin(), dy.end(), [](double v) { return std::isfinite(v); })) return false;
+  if (!std::all_of(dy.begin(), dy.end(), [](double v) { return std::isfinite(v); }))
+    return false;
 
   std::vector<double> candidate(y_);
-  for (Index i = 0; i < m_; ++i) candidate[static_cast<std::size_t>(i)] += dy[static_cast<std::size_t>(i)];
+  for (Index i = 0; i < m_; ++i)
+    candidate[static_cast<std::size_t>(i)] += dy[static_cast<std::size_t>(i)];
   std::vector<double> d_after(T);
   reduced_costs(candidate, &d_after);
   double interior_after = 0.0, sign_after = 0.0;
