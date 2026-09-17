@@ -18,6 +18,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import verify_solution as vs  # noqa: E402
+from verify_solution_mps import _parse_mps  # noqa: E402
 
 FAILURES = 0
 
@@ -63,7 +64,7 @@ def test_fixed_format_row_name_with_space() -> None:
         # testing anything. This pins the bug report itself, not just the fix.
         raised = False
         try:
-            vs._parse_mps(path, fixed=False)
+            _parse_mps(path, fixed=False)
         except ValueError:
             raised = True
         check(raised, "free-format tokenisation fails on this file",
