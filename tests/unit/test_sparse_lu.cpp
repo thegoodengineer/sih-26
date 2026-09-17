@@ -617,6 +617,168 @@ TEST(SparseLuUpdate, AsksToRefactorizeOnceTheEtaFileGrows) {
       << "the eta file grew without bound; the refactorization trigger never fired";
 }
 
+// =========================================================================================
+// Forrest-Tomlin update (#279) - the same fresh-factorization agreement tests as
+// SparseLuUpdate above, run against update_forrest_tomlin() instead of update(). A wrong
+// row eta, a wrong shift direction, or an off-by-one in which position the cascade reads
+// produces a plausible-looking vector, not a crash - the fresh factorization is what
+// catches it.
+// =========================================================================================
+
+TEST(SparseLuForrestTomlin, OneUpdateMatchesAFreshFactorization) {
+  std::mt19937 rng(4242);
+  std::uniform_real_distribution<double> value(-4.0, 4.0);
+
+  int compared = 0;
+  double worst_ftran = 0.0;
+  double worst_btran = 0.0;
+
+  for (int trial = 0; trial < 200; ++trial) {
+    const Index m = 2 + static_cast<Index>(trial % 18);
+    const TestMatrix basis = random_basis(rng, m, 0.3);
+
+    SparseLu lu;
+    if (!lu.factorize(basis.columns(), m, tol::kPivotTolerance, kThreshold)) continue;
+
+    const Index leaving = static_cast<Index>(trial) % m;
+    std::vector<double> entering(static_cast<std::size_t>(m));
+    for (Index i = 0; i < m; ++i) {
+      entering[static_cast<std::size_t>(i)] = value(rng) + (i == leaving ? 5.0 : 0.0);
+    }
+
+    std::vector<double> alpha = entering;
+    lu.solve(alpha.data());
+    if (!lu.update_forrest_tomlin(leaving, alpha.data())) continue;
+    ++compared;
+
+    const TestMatrix updated = with_column_replaced(basis, m, leaving, entering);
+    SparseLu reference;
+    ASSERT_TRUE(reference.factorize(updated.columns(), m, tol::kPivotTolerance, kThreshold));
+
+    std::vector<double> rhs(static_cast<std::size_t>(m));
+    for (double& v : rhs) v = value(rng);
+
+    std::vector<double> a = rhs;
+    lu.solve(a.data());
+    std::vector<double> b = rhs;
+    reference.solve(b.data());
+    worst_ftran = std::max(worst_ftran, max_difference(a, b));
+
+    std::vector<double> at = rhs;
+    lu.solve_transpose(at.data());
+    std::vector<double> bt = rhs;
+    reference.solve_transpose(bt.data());
+    worst_btran = std::max(worst_btran, max_difference(at, bt));
+  }
+
+  EXPECT_GT(compared, 150) << "too few usable updates for this test to mean anything";
+  EXPECT_LT(worst_ftran, 1e-8) << "updated FTRAN disagrees with a fresh factorization by "
+                               << worst_ftran;
+  EXPECT_LT(worst_btran, 1e-8) << "updated BTRAN disagrees with a fresh factorization by "
+                               << worst_btran;
+}
+
+TEST(SparseLuForrestTomlin, ManyUpdatesInSequenceStayCorrect) {
+  // As with SparseLuUpdate: a single update can be right while the ORDER the row etas are
+  // applied in is wrong, and that only shows once more than one is stacked - hence checking
+  // after every update, not just at the end.
+  std::mt19937 rng(20260826);
+  std::uniform_real_distribution<double> value(-3.0, 3.0);
+
+  constexpr Index m = 14;
+  TestMatrix current = random_basis(rng, m, 0.35);
+  SparseLu lu;
+  ASSERT_TRUE(lu.factorize(current.columns(), m, tol::kPivotTolerance, kThreshold));
+
+  double worst = 0.0;
+  int applied = 0;
+
+  for (int step = 0; step < 25; ++step) {
+    const Index leaving = static_cast<Index>(step) % m;
+    std::vector<double> entering(static_cast<std::size_t>(m));
+    for (Index i = 0; i < m; ++i) {
+      entering[static_cast<std::size_t>(i)] = value(rng) + (i == leaving ? 6.0 : 0.0);
+    }
+
+    std::vector<double> alpha = entering;
+    lu.solve(alpha.data());
+    if (!lu.update_forrest_tomlin(leaving, alpha.data())) break;
+    ++applied;
+
+    current = with_column_replaced(current, m, leaving, entering);
+
+    SparseLu reference;
+    ASSERT_TRUE(reference.factorize(current.columns(), m, tol::kPivotTolerance, kThreshold));
+
+    std::vector<double> rhs(static_cast<std::size_t>(m));
+    for (double& v : rhs) v = value(rng);
+
+    std::vector<double> a = rhs;
+    lu.solve(a.data());
+    std::vector<double> b = rhs;
+    reference.solve(b.data());
+    worst = std::max(worst, max_difference(a, b));
+
+    std::vector<double> at = rhs;
+    lu.solve_transpose(at.data());
+    std::vector<double> bt = rhs;
+    reference.solve_transpose(bt.data());
+    worst = std::max(worst, max_difference(at, bt));
+  }
+
+  EXPECT_GE(applied, 10) << "the update was rejected too early to test stacking";
+  EXPECT_EQ(lu.ft_update_count(), applied);
+  EXPECT_LT(worst, 1e-7) << "stacked updates drift from a fresh factorization by " << worst;
+}
+
+TEST(SparseLuForrestTomlin, RejectsAnUnsafePivotInsteadOfDividingByIt) {
+  constexpr Index m = 4;
+  TestMatrix matrix(m);
+  for (Index i = 0; i < m; ++i) matrix.set(i, i, 1.0);
+
+  SparseLu lu;
+  ASSERT_TRUE(lu.factorize(matrix.columns(), m, tol::kPivotTolerance, kThreshold));
+
+  std::vector<double> alpha(static_cast<std::size_t>(m), 1.0);
+  alpha[2] = 1e-14;
+  EXPECT_FALSE(lu.update_forrest_tomlin(2, alpha.data()));
+
+  // Unlike update(), a rejected fold may leave U mid-transformation - the same contract
+  // every caller of either update path already relies on (primal_simplex.cpp and
+  // dual_simplex.cpp both refactorize immediately on a false return, never solving again
+  // against the old state first). A fresh factorize() must still leave a clean, usable
+  // instance.
+  ASSERT_TRUE(lu.factorize(matrix.columns(), m, tol::kPivotTolerance, kThreshold));
+  std::vector<double> b{1.0, 2.0, 3.0, 4.0};
+  lu.solve(b.data());
+  EXPECT_DOUBLE_EQ(b[0], 1.0);
+  EXPECT_DOUBLE_EQ(b[3], 4.0);
+}
+
+TEST(SparseLuForrestTomlin, AsksToRefactorizeOnceTheRowEtaFileGrows) {
+  constexpr Index m = 10;
+  std::mt19937 rng(99);
+  const TestMatrix matrix = random_basis(rng, m, 0.3);
+
+  SparseLu lu;
+  ASSERT_TRUE(lu.factorize(matrix.columns(), m, tol::kPivotTolerance, kThreshold));
+  EXPECT_FALSE(lu.should_refactorize()) << "a fresh factorization should not ask immediately";
+
+  std::uniform_real_distribution<double> value(-2.0, 2.0);
+  for (int step = 0; step < 500 && !lu.should_refactorize(); ++step) {
+    const Index leaving = static_cast<Index>(step) % m;
+    std::vector<double> entering(static_cast<std::size_t>(m));
+    for (Index i = 0; i < m; ++i) {
+      entering[static_cast<std::size_t>(i)] = value(rng) + (i == leaving ? 8.0 : 0.0);
+    }
+    std::vector<double> alpha = entering;
+    lu.solve(alpha.data());
+    if (!lu.update_forrest_tomlin(leaving, alpha.data())) break;
+  }
+  EXPECT_TRUE(lu.should_refactorize())
+      << "the row-eta file grew without bound; the refactorization trigger never fired";
+}
+
 TEST(SparseLu, HyperSparseSolveAgreesWithTheReferenceGather) {
   // #68: solve() back-substitutes through U by column, skipping zero results;
   // solve_reference() gathers over every entry of U. Same factors, same right-hand sides,

@@ -42,6 +42,7 @@
 #pragma once
 
 #include <functional>
+#include <utility>
 #include <vector>
 
 #include "sankhya/sparse.hpp"
@@ -149,6 +150,66 @@ class SparseLu {
   /// refactorize from scratch; the factorization is left untouched and usable.
   [[nodiscard]] bool update(Index leaving_position, const double* alpha);
 
+  // -------------------------------------------------------------------------------------
+  // Basis update (Forrest-Tomlin)
+  //
+  // Reference: Forrest & Tomlin, "Updated triangular factors of the basis to maintain
+  // sparsity in the product form simplex method", Mathematical Programming 2 (1972), via
+  // the derivation in Huangfu & Hall, "Novel update techniques for the revised simplex
+  // method" (ERGO 13-001, 2012), section 2.1 - eq. (11) onward is what this follows.
+  //
+  // update() above pays for the pivot on every SOLVE: the eta file is read in full, one
+  // eta per update, whether or not the right-hand side touches most of it (issue #279).
+  // This path pays for the pivot mostly AT THE UPDATE instead, by folding the new column
+  // into U directly and leaving only a much smaller correction (the row eta below) for
+  // solves to apply.
+  //
+  //   1. alpha already IS B^-1 a (the caller's FTRAN), so the column L^-1 P a - which is
+  //      what replaces the leaving position's column of U - is recovered by multiplying the
+  //      CURRENT U into alpha reindexed by step (U * alpha_by_step = that column, read the
+  //      solve the other way), rather than resolving a again.
+  //   2. That column, installed as every OTHER step's reference to the leaving step, is
+  //      always valid regardless of where the leaving step's own diagonal ends up - so it is
+  //      moved to the LAST position, and everything between its old and new position shifts
+  //      down by one to keep the permutation a bijection (a pure relabelling: no entry any
+  //      OTHER step owns is read or written by this).
+  //   3. The leaving step's OWN old row, now invalid at the last position (nothing can
+  //      validly reference it from there), is eliminated - not by rewriting other steps'
+  //      rows, but by a single row transformation R computed via a partial BTRAN through U
+  //      alone (Forrest & Tomlin's r = e_p^T - u_pp * (e_p^T U^-1), the "row spike" the issue
+  //      names). R is applied between L and U on every later solve, exactly where PFI's
+  //      product form is applied outside both - see ft_apply_retas().
+  //
+  // L is never touched. R grows by one small vector per update, same shape as update()'s
+  // eta file but built from U's own sparsity rather than the dense-ish alpha, which is
+  // where the win comes from; should_refactorize() caps it the same way.
+  //
+  // Only one of update() / update_forrest_tomlin() may be used on a given factorization;
+  // calling the other afterwards fails rather than silently mixing the two schemes.
+  // -------------------------------------------------------------------------------------
+
+  /// The Forrest-Tomlin counterpart to update(): same contract (returns false, factors left
+  /// alone in spirit but a refactorize() is required regardless - see below), same `alpha`,
+  /// but the replacement is folded into U instead of appended to an eta file.
+  ///
+  /// A caller that reads false is expected to refactorize before solving again - exactly
+  /// what every caller of update() already does today. Because of that, a rejected update
+  /// here may leave U partway through the fold; that state is never read, since the very
+  /// next call is factorize().
+  [[nodiscard]] bool update_forrest_tomlin(Index leaving_position, const double* alpha);
+
+  /// True once update_forrest_tomlin() has been used at least once since factorize().
+  [[nodiscard]] bool using_forrest_tomlin() const noexcept { return ft_active_; }
+
+  /// Number of Forrest-Tomlin updates applied since factorize().
+  [[nodiscard]] Index ft_update_count() const noexcept {
+    return static_cast<Index>(ft_reta_pivot_step_.size());
+  }
+
+  /// Nonzeros folded into U beyond what factorize() produced: the Forrest-Tomlin analogue of
+  /// eta_nonzeros() above, i.e. the fill the updates themselves introduced.
+  [[nodiscard]] Index ft_extra_nonzeros() const noexcept;
+
   /// Number of updates applied since the last factorize().
   [[nodiscard]] Index eta_count() const noexcept {
     return static_cast<Index>(eta_start_.size()) - 1;
@@ -255,6 +316,57 @@ class SparseLu {
   /// returns false. Cleared at the start of every factorize() call.
   std::vector<Index> dependent_positions_;
   std::vector<Index> uncovered_rows_;
+
+  // ---- Forrest-Tomlin update state (issue #279) ----------------------------------------
+  // Everything below is indexed by STEP, exactly like u_start_/uc_start_ before any update:
+  // a step's identity (which basis position it represents, via pivot_col_) never changes.
+  // What an update changes is (a) a step's DIAGONAL and off-diagonal content, and (b) which
+  // POSITION - purely a processing-order label, used to decide which step's diagonal a
+  // solve may already treat as resolved - that step currently occupies. Position k is
+  // "ready" only once every step it can validly reference (position >= k) has been visited,
+  // exactly as it was when position and step coincided before the first update.
+  bool ft_active_ = false;
+  Index ft_base_row_nonzeros_ = 0;  ///< off-diagonal entry count at the moment FT mode began
+
+  /// Fixed forever once built: the step that has represented basis position p since
+  /// factorize(), i.e. the inverse of pivot_col_.
+  std::vector<Index> ft_step_of_position_;
+  std::vector<Index> ft_position_;  ///< step -> its current position
+  std::vector<Index> ft_step_at_;   ///< position -> the step currently occupying it
+  std::vector<double> ft_diag_;     ///< step -> its current diagonal value
+
+  /// U's off-diagonal entries, both STEP-keyed and mirrored, kept in sync by ft_set() and
+  /// ft_erase(): ft_row_[s] is step s's own row, i.e. the OTHER steps its row references
+  /// (matching u_steps_ before any update); ft_col_[s] is the steps that reference s (their
+  /// ROW has an entry AT s), the mirror image, matching uc_steps_. Both exclude the diagonal.
+  std::vector<std::vector<std::pair<Index, double>>> ft_row_;
+  std::vector<std::vector<std::pair<Index, double>>> ft_col_;
+
+  /// The row-eta file (Forrest & Tomlin 1972, eq. for R): one entry per update, applied
+  /// between L and U rather than appended outside both as update()'s eta file is. Update k
+  /// replaces the basis position whose permanent step identity is ft_reta_pivot_step_[k];
+  /// the entries are the sparse vector r (excluding that step itself, which is always 0 by
+  /// construction). FTRAN applies these oldest first (like apply_etas), BTRAN newest first
+  /// (like apply_etas_transposed) - see ft_apply_retas()/ft_apply_retas_transposed().
+  std::vector<Index> ft_reta_pivot_step_;
+  std::vector<Index> ft_reta_start_;  ///< ft_reta_pivot_step_.size() + 1 entries
+  std::vector<Index> ft_reta_steps_;
+  std::vector<double> ft_reta_values_;
+
+  mutable std::vector<double> ft_scratch_;  ///< step-indexed scratch, reused across calls
+
+  void ft_init();
+  [[nodiscard]] double ft_get(Index owner_step, Index referenced_step) const;
+  void ft_set(Index owner_step, Index referenced_step, double value);
+  void ft_erase(Index owner_step, Index referenced_step);
+  /// The partial BTRAN identified by Forrest & Tomlin as the way to compute the row-eta:
+  /// e~ = e_step^T U_current^-1, i.e. a BTRAN through U ALONE (no L, no earlier retas),
+  /// seeded at a single step. Shares the push logic with ft_forward_substitute() below.
+  void ft_btran_unit(Index step, double* e_tilde_by_step) const;
+  void ft_apply_retas(double* residual_by_step) const;             ///< FTRAN: oldest first
+  void ft_apply_retas_transposed(double* z_by_step) const;         ///< BTRAN: newest first
+  void ft_back_substitute(double* residual_by_step, double* solution_by_step) const;
+  void ft_forward_substitute(double* z_by_step) const;
 };
 
 }  // namespace sankhya

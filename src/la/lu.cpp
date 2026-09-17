@@ -241,6 +241,18 @@ bool SparseLu::factorize(const std::vector<LuColumn>& columns, Index m, double p
   eta_pivot_position_.clear();
   eta_pivot_value_.clear();
   base_nonzeros_ = 0;
+  ft_active_ = false;
+  ft_base_row_nonzeros_ = 0;
+  ft_step_of_position_.clear();
+  ft_position_.clear();
+  ft_step_at_.clear();
+  ft_diag_.clear();
+  ft_row_.clear();
+  ft_col_.clear();
+  ft_reta_pivot_step_.clear();
+  ft_reta_start_.assign(1, 0);
+  ft_reta_steps_.clear();
+  ft_reta_values_.clear();
   work_.assign(static_cast<std::size_t>(m), 0.0);
   smallest_pivot_ = 0.0;
   largest_pivot_ = 0.0;
@@ -390,6 +402,7 @@ bool SparseLu::should_refactorize() const noexcept {
   // replaced by the simplex's measured break-even (see primal_simplex.cpp): a fill ratio
   // assumes a fixed relationship between eta size and eta cost that no single constant
   // captured across instances.
+  if (ft_active_) return static_cast<Index>(ft_reta_pivot_step_.size()) >= kMaxEtaCount;
   return eta_count() >= kMaxEtaCount;
 }
 
@@ -818,6 +831,26 @@ void SparseLu::solve(double* b) const {
   if (m_ == 0) return;
   forward_l(b);
 
+  if (ft_active_) {
+    // Same gather as below (row-permuted into step order - pivot_row_ never changes, so
+    // this is already indexed by step). Then the row-eta file, oldest first, matching
+    // apply_etas()'s order for the same reason: each was computed against the state the
+    // ones before it left behind. Then the Forrest-Tomlin back-substitution instead of the
+    // uc_ push, then the same scatter.
+    for (Index k = 0; k < m_; ++k) {
+      work_[static_cast<std::size_t>(k)] =
+          b[static_cast<std::size_t>(pivot_row_[static_cast<std::size_t>(k)])];
+    }
+    ft_apply_retas(work_.data());
+    ft_scratch_.assign(static_cast<std::size_t>(m_), 0.0);
+    ft_back_substitute(work_.data(), ft_scratch_.data());
+    for (Index s = 0; s < m_; ++s) {
+      b[static_cast<std::size_t>(pivot_col_[static_cast<std::size_t>(s)])] =
+          ft_scratch_[static_cast<std::size_t>(s)];
+    }
+    return;
+  }
+
   // HYPER-SPARSE BACK-SUBSTITUTION (#68; Gilbert & Peierls 1988). U is walked by COLUMN in
   // decreasing step order, and a step whose result is exactly zero pushes nothing: on a
   // right-hand side with a handful of nonzeros - the entering column of a large sparse
@@ -914,6 +947,39 @@ void SparseLu::forward_u_transposed() const {
 
 void SparseLu::solve_transpose(double* b) const {
   if (m_ == 0) return;
+
+  if (ft_active_) {
+    // Gather via pivot_col_ exactly as below, run the Forrest-Tomlin forward substitution
+    // in place of forward_u_transposed(), then the row-eta file NEWEST first (the reverse of
+    // FTRAN's order above, for the same reason apply_etas_transposed() reverses update()'s),
+    // then the same L^T pass (lr_, untouched by every Forrest-Tomlin update) and scatter.
+    for (Index k = 0; k < m_; ++k) {
+      work_[static_cast<std::size_t>(k)] =
+          b[static_cast<std::size_t>(pivot_col_[static_cast<std::size_t>(k)])];
+    }
+    ft_forward_substitute(work_.data());
+    ft_apply_retas_transposed(work_.data());
+
+    std::vector<double>& z = work_;
+    for (Index k = m_ - 1; k >= 0; --k) {
+      const auto uk = static_cast<std::size_t>(k);
+      const double value = z[uk];
+      if (value == 0.0) continue;
+      const Index begin = lr_start_[uk];
+      const Index end = lr_start_[uk + 1];
+      for (Index p = begin; p < end; ++p) {
+        const auto up = static_cast<std::size_t>(p);
+        z[static_cast<std::size_t>(lr_steps_[up])] -= lr_values_[up] * value;
+      }
+    }
+
+    for (Index k = 0; k < m_; ++k) {
+      b[static_cast<std::size_t>(pivot_row_[static_cast<std::size_t>(k)])] =
+          z[static_cast<std::size_t>(k)];
+    }
+    return;
+  }
+
   apply_etas_transposed(b);
 
   // work_ is indexed by step from here to the end: the right-hand side enters through the
@@ -985,6 +1051,316 @@ void SparseLu::solve_transpose_reference(double* b) const {
     }
     b[static_cast<std::size_t>(pivot_row_[uk])] -= accumulated;
   }
+}
+
+// =========================================================================================
+// Basis update (Forrest-Tomlin) - see lu.hpp for the derivation.
+// =========================================================================================
+
+Index SparseLu::ft_extra_nonzeros() const noexcept {
+  Index total = 0;
+  for (const auto& row : ft_row_) total += static_cast<Index>(row.size());
+  return total - ft_base_row_nonzeros_ + static_cast<Index>(ft_reta_steps_.size());
+}
+
+void SparseLu::ft_init() {
+  const Index m = m_;
+  ft_step_of_position_.assign(static_cast<std::size_t>(m), -1);
+  for (Index k = 0; k < m; ++k) {
+    ft_step_of_position_[static_cast<std::size_t>(pivot_col_[static_cast<std::size_t>(k)])] = k;
+  }
+  ft_position_.assign(static_cast<std::size_t>(m), 0);
+  ft_step_at_.assign(static_cast<std::size_t>(m), 0);
+  for (Index k = 0; k < m; ++k) {
+    ft_position_[static_cast<std::size_t>(k)] = k;
+    ft_step_at_[static_cast<std::size_t>(k)] = k;
+  }
+  ft_diag_.assign(pivot_value_.begin(), pivot_value_.end());
+
+  // Copy U's off-diagonal entries out of the frozen row/column-wise arrays factorize() built
+  // (u_start_/u_steps_/u_values_, and their column-wise mirror uc_ - both already keyed by
+  // step) into the mutable STEP-keyed lists an update folds fill into. U itself is left
+  // exactly as factorize() produced it; only these copies ever change.
+  ft_row_.assign(static_cast<std::size_t>(m), {});
+  ft_col_.assign(static_cast<std::size_t>(m), {});
+  for (Index k = 0; k < m; ++k) {
+    const auto uk = static_cast<std::size_t>(k);
+    for (Index p = u_start_[uk]; p < u_start_[uk + 1]; ++p) {
+      const auto up = static_cast<std::size_t>(p);
+      const Index step = u_steps_[up];
+      const double value = u_values_[up];
+      ft_row_[uk].emplace_back(step, value);
+      ft_col_[static_cast<std::size_t>(step)].emplace_back(k, value);
+    }
+  }
+  ft_base_row_nonzeros_ = static_cast<Index>(u_steps_.size());
+  ft_scratch_.assign(static_cast<std::size_t>(m), 0.0);
+  ft_reta_pivot_step_.clear();
+  ft_reta_start_.assign(1, 0);
+  ft_reta_steps_.clear();
+  ft_reta_values_.clear();
+  ft_active_ = true;
+}
+
+double SparseLu::ft_get(Index owner_step, Index referenced_step) const {
+  for (const auto& entry : ft_row_[static_cast<std::size_t>(owner_step)]) {
+    if (entry.first == referenced_step) return entry.second;
+  }
+  return 0.0;
+}
+
+void SparseLu::ft_set(Index owner_step, Index referenced_step, double value) {
+  auto& r = ft_row_[static_cast<std::size_t>(owner_step)];
+  bool found = false;
+  for (auto& entry : r) {
+    if (entry.first == referenced_step) {
+      entry.second = value;
+      found = true;
+      break;
+    }
+  }
+  if (!found) r.emplace_back(referenced_step, value);
+
+  auto& c = ft_col_[static_cast<std::size_t>(referenced_step)];
+  found = false;
+  for (auto& entry : c) {
+    if (entry.first == owner_step) {
+      entry.second = value;
+      found = true;
+      break;
+    }
+  }
+  if (!found) c.emplace_back(owner_step, value);
+}
+
+void SparseLu::ft_erase(Index owner_step, Index referenced_step) {
+  auto& r = ft_row_[static_cast<std::size_t>(owner_step)];
+  for (std::size_t i = 0; i < r.size(); ++i) {
+    if (r[i].first == referenced_step) {
+      r[i] = r.back();
+      r.pop_back();
+      break;
+    }
+  }
+  auto& c = ft_col_[static_cast<std::size_t>(referenced_step)];
+  for (std::size_t i = 0; i < c.size(); ++i) {
+    if (c[i].first == owner_step) {
+      c[i] = c.back();
+      c.pop_back();
+      break;
+    }
+  }
+}
+
+void SparseLu::ft_btran_unit(Index step, double* e_tilde_by_step) const {
+  // e~^T = e_step^T U_current^-1: forward substitution seeded with a single 1, in increasing
+  // POSITION order (ft_step_at_ says which step that position currently holds), pushing each
+  // resolved step's value into the later steps its own row references. Positions before
+  // step's own start at 0 and push nothing, so this only ever touches step's own position
+  // onward - the "partial" in "partial BTRAN".
+  std::fill(e_tilde_by_step, e_tilde_by_step + m_, 0.0);
+  e_tilde_by_step[static_cast<std::size_t>(step)] = 1.0;
+  for (Index k = 0; k < m_; ++k) {
+    const auto uk = static_cast<std::size_t>(k);
+    const Index occupant = ft_step_at_[uk];
+    const auto us = static_cast<std::size_t>(occupant);
+    const double value = e_tilde_by_step[us] / ft_diag_[us];
+    e_tilde_by_step[us] = value;
+    if (value == 0.0) continue;
+    for (const auto& [other_step, coefficient] : ft_row_[us]) {
+      e_tilde_by_step[static_cast<std::size_t>(other_step)] -= coefficient * value;
+    }
+  }
+}
+
+void SparseLu::ft_apply_retas(double* residual_by_step) const {
+  // FTRAN: R_1^-1 ... R_k^-1, oldest first - each R^-1 = I - e_p r^T touches only component
+  // p, subtracting r's dot product with the whole vector (Forrest & Tomlin 1972, eq. 8-9).
+  const Index count = static_cast<Index>(ft_reta_pivot_step_.size());
+  for (Index k = 0; k < count; ++k) {
+    const auto uk = static_cast<std::size_t>(k);
+    const Index begin = ft_reta_start_[uk];
+    const Index end = ft_reta_start_[uk + 1];
+    double dot = 0.0;
+    for (Index t = begin; t < end; ++t) {
+      const auto ut = static_cast<std::size_t>(t);
+      dot += ft_reta_values_[ut] *
+             residual_by_step[static_cast<std::size_t>(ft_reta_steps_[ut])];
+    }
+    residual_by_step[static_cast<std::size_t>(ft_reta_pivot_step_[uk])] -= dot;
+  }
+}
+
+void SparseLu::ft_apply_retas_transposed(double* z_by_step) const {
+  // BTRAN: R_k^-T ... R_1^-T, newest first - R^-T = I - r e_p^T scatters component p's value
+  // into every entry r touches (the transpose of the dot-product-into-one-component above).
+  const Index count = static_cast<Index>(ft_reta_pivot_step_.size());
+  for (Index k = count - 1; k >= 0; --k) {
+    const auto uk = static_cast<std::size_t>(k);
+    const double pivot_value =
+        z_by_step[static_cast<std::size_t>(ft_reta_pivot_step_[uk])];
+    if (pivot_value == 0.0) continue;
+    const Index begin = ft_reta_start_[uk];
+    const Index end = ft_reta_start_[uk + 1];
+    for (Index t = begin; t < end; ++t) {
+      const auto ut = static_cast<std::size_t>(t);
+      z_by_step[static_cast<std::size_t>(ft_reta_steps_[ut])] -=
+          ft_reta_values_[ut] * pivot_value;
+    }
+  }
+}
+
+void SparseLu::ft_back_substitute(double* residual_by_step, double* solution_by_step) const {
+  // FTRAN's back-substitution, hyper-sparse: decreasing position, pushing each resolved
+  // step's value into the earlier-position steps that reference it (ft_col_), exactly as the
+  // frozen uc_ push does when no update has touched U yet - both arrays are step-indexed
+  // throughout; ft_step_at_ only ever decides WHICH step position k resolves.
+  for (Index k = m_ - 1; k >= 0; --k) {
+    const auto uk = static_cast<std::size_t>(k);
+    const Index step = ft_step_at_[uk];
+    const auto us = static_cast<std::size_t>(step);
+    const double value = residual_by_step[us] / ft_diag_[us];
+    solution_by_step[us] = value;
+    if (value == 0.0) continue;
+    for (const auto& [other_step, coefficient] : ft_col_[us]) {
+      residual_by_step[static_cast<std::size_t>(other_step)] -= coefficient * value;
+    }
+  }
+}
+
+void SparseLu::ft_forward_substitute(double* z_by_step) const {
+  // BTRAN's forward substitution, hyper-sparse: increasing position, pushing each resolved
+  // step's value into the later-position steps its own row references (ft_row_), the mirror
+  // image of the back-substitution above and of forward_u_transposed() before any update.
+  for (Index k = 0; k < m_; ++k) {
+    const auto uk = static_cast<std::size_t>(k);
+    const Index step = ft_step_at_[uk];
+    const auto us = static_cast<std::size_t>(step);
+    const double value = z_by_step[us] / ft_diag_[us];
+    z_by_step[us] = value;
+    if (value == 0.0) continue;
+    for (const auto& [other_step, coefficient] : ft_row_[us]) {
+      z_by_step[static_cast<std::size_t>(other_step)] -= coefficient * value;
+    }
+  }
+}
+
+bool SparseLu::update_forrest_tomlin(Index leaving_position, const double* alpha) {
+  if (m_ == 0) return false;
+  if (leaving_position < 0 || leaving_position >= m_) return false;
+  if (!ft_active_) {
+    // Mixing the two update schemes on one factorization is a caller bug, not a case to
+    // support: an eta already on file was never folded into U, so U alone no longer
+    // represents the basis and folding into it now would be silently wrong.
+    if (eta_count() > 0) return false;
+    ft_init();
+  }
+
+  const Index m = m_;
+  const auto up = static_cast<std::size_t>(leaving_position);
+  const Index s0 = ft_step_of_position_[up];
+  const Index q = ft_position_[static_cast<std::size_t>(s0)];
+
+  // Recover the column FTRAN would see just after L, i.e. a~ = L^-1 P a (Huangfu & Hall,
+  // eq. 11 via #243's alpha), from the fully solved `alpha` the caller already has:
+  // work_by_step[s] = alpha[pivot_col_[s]] is what back-substitution through the CURRENT U
+  // produced from a~, so multiplying that same U forward through it recovers a~ again - the
+  // identity U * work_by_step == a~, read the other way. Both loops here are over STEP
+  // directly, since ft_row_/ft_diag_ are step-keyed and never need a position lookup.
+  work_.assign(static_cast<std::size_t>(m), 0.0);
+  for (Index s = 0; s < m; ++s) {
+    work_[static_cast<std::size_t>(s)] =
+        alpha[static_cast<std::size_t>(pivot_col_[static_cast<std::size_t>(s)])];
+  }
+  std::vector<double> spike(static_cast<std::size_t>(m), 0.0);
+  for (Index step = 0; step < m; ++step) {
+    const auto us = static_cast<std::size_t>(step);
+    double value = ft_diag_[us] * work_[us];
+    for (const auto& [other_step, coefficient] : ft_row_[us]) {
+      value += coefficient * work_[static_cast<std::size_t>(other_step)];
+    }
+    spike[us] = value;
+  }
+
+  // The row eta: r^T = u-bar_p^T U^-1, where u-bar_p is s0's OWN off-diagonal row (about to
+  // be eliminated, since s0 is moving to the last position and nothing can validly reference
+  // a row that isn't there any more). Forrest & Tomlin's shortcut (eq. 12): computing the
+  // partial BTRAN of a unit vector at s0 gives the same r after scaling by -diag(s0), since
+  // u-bar_p^T = e_p^T U - diag(s0) e_p^T, and e_p^T U U^-1 cancels the first term.
+  const double old_diagonal_s0 = ft_diag_[static_cast<std::size_t>(s0)];
+  ft_btran_unit(s0, ft_scratch_.data());
+  std::vector<double> r(static_cast<std::size_t>(m), 0.0);
+  for (Index step = 0; step < m; ++step) {
+    if (step == s0) continue;  // r's own pivot entry is always exactly 0
+    r[static_cast<std::size_t>(step)] =
+        -old_diagonal_s0 * ft_scratch_[static_cast<std::size_t>(step)];
+  }
+
+  // Applying R^-1 to the spike modifies only its s0 entry (R^-1 = I - e_s0 r^T): the new
+  // diagonal, once s0 reaches the last position, is spike[s0] minus r's dot product with the
+  // whole spike. Every OTHER entry of the spike is installed unchanged below - R^-1 does not
+  // touch them, which is the entire reason this costs one small row eta and not a rewrite of
+  // every step the spike touches.
+  double largest = 0.0;
+  for (Index k = 0; k < m; ++k) largest = std::max(largest, std::fabs(spike[static_cast<std::size_t>(k)]));
+  double dot = 0.0;
+  for (Index k = 0; k < m; ++k) {
+    dot += r[static_cast<std::size_t>(k)] * spike[static_cast<std::size_t>(k)];
+  }
+  const double new_diagonal = spike[static_cast<std::size_t>(s0)] - dot;
+  if (!std::isfinite(new_diagonal)) return false;
+  if (std::fabs(new_diagonal) < kUpdatePivotThreshold * std::max(1.0, largest)) return false;
+
+  // Eliminate s0's own old row (u-bar_p): it is invalid the moment s0 stops being the last
+  // position's occupant, and R above is exactly what accounts for it - nothing else needs to
+  // change to compensate, which is the point of computing r from it rather than rewriting
+  // every step downstream by hand.
+  const auto old_row = ft_row_[static_cast<std::size_t>(s0)];
+  for (const auto& [other_step, value] : old_row) ft_erase(s0, other_step);
+
+  // Replace s0's old column (other steps' existing references to it): stale regardless of
+  // value, since column s0 is being replaced outright, not perturbed.
+  const auto old_column = ft_col_[static_cast<std::size_t>(s0)];
+  for (const auto& [other_step, value] : old_column) ft_erase(other_step, s0);
+
+  // Install the new column: every OTHER step whose row now references s0, unchanged from
+  // the spike (R^-1 never touched these). Valid regardless of position, once s0 is last.
+  for (Index step = 0; step < m; ++step) {
+    if (step == s0) continue;
+    const double value = spike[static_cast<std::size_t>(step)];
+    if (std::fabs(value) >= kDropTolerance) ft_set(step, s0, value);
+  }
+  ft_diag_[static_cast<std::size_t>(s0)] = new_diagonal;
+
+  // Move s0 to the last position, shifting every step between its old and new position down
+  // by one to keep the permutation a bijection. Every OTHER step's own row/column entries -
+  // untouched above - stay exactly as valid as they were: a uniform shift preserves every
+  // existing "referenced step's position >= referencing step's position" relationship (see
+  // lu.hpp), so this is pure relabelling, no arithmetic.
+  if (q < m - 1) {
+    for (Index c = q; c <= m - 2; ++c) {
+      const Index moving = ft_step_at_[static_cast<std::size_t>(c) + 1];
+      ft_step_at_[static_cast<std::size_t>(c)] = moving;
+      ft_position_[static_cast<std::size_t>(moving)] = c;
+    }
+    ft_step_at_[static_cast<std::size_t>(m - 1)] = s0;
+    ft_position_[static_cast<std::size_t>(s0)] = m - 1;
+  }
+
+  // File the row eta: R is applied between L and U on every later solve (ft_apply_retas() /
+  // ft_apply_retas_transposed()), not folded into U - see lu.hpp for why U alone cannot
+  // represent it.
+  ft_reta_pivot_step_.push_back(s0);
+  for (Index step = 0; step < m; ++step) {
+    const double value = r[static_cast<std::size_t>(step)];
+    if (step != s0 && std::fabs(value) >= kDropTolerance) {
+      ft_reta_steps_.push_back(step);
+      ft_reta_values_.push_back(value);
+    }
+  }
+  ft_reta_start_.push_back(static_cast<Index>(ft_reta_steps_.size()));
+
+  return true;
 }
 
 }  // namespace sankhya
