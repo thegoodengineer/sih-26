@@ -187,6 +187,19 @@ bool MpsParser::do_bounds(std::string* error) {
   } else if (type == "UI") {
     col_type_[u] = VarType::kInteger;
     col_upper_[u] = value;
+    // The same trap as UP, one bound type over (#298). A negative UI on a column whose lower
+    // bound is still the implicit 0 left [0, -5], which validate() rejected, so a file with
+    // `UI BND X -5` could not be loaded at all - while the same bound spelt `UP` on a MARKER
+    // integer column loaded fine. One convention for both spellings, with the same warning,
+    // so the log still shows the ambiguity.
+    if (value < 0.0 && col_lower_explicit_[u] == 0) {
+      col_lower_[u] = -kInfinity;
+      default_logger().warning(
+          "UI bound {} on integer column '{}' with no explicit lower bound: applying the "
+          "negative-upper convention and setting the lower bound to -inf (readers disagree "
+          "on this case for integer columns)",
+          value, col_names_[u]);
+    }
   } else if (type == "SC") {
     *error = reader_.error_at(
         "semi-continuous bounds (SC) are not supported; the model would be misread as a "

@@ -358,6 +358,43 @@ TEST(MpsBounds, LiAndUiMakeTheColumnInteger) {
   EXPECT_EQ(model.col_type[static_cast<std::size_t>(x)], VarType::kInteger);
 }
 
+TEST(MpsBounds, UiWithANegativeValueImpliesAFreeLowerBound) {
+  // #298: the UP convention, one bound type over. `UI BND X -5` used to leave [0, -5] on an
+  // integer column, which validate() rejected - the file could not be loaded at all, while
+  // the same bound spelt UP on a MARKER integer column loaded fine.
+  const Model model = bounded_column(" UI BND       X           -5.0\n");
+  const Index x = col_of(model, "X");
+  ASSERT_GE(x, 0);
+  const auto u = static_cast<std::size_t>(x);
+  EXPECT_EQ(model.col_type[u], VarType::kInteger);
+  EXPECT_TRUE(is_infinite(model.col_lower[u]));
+  EXPECT_LT(model.col_lower[u], 0.0);
+  EXPECT_DOUBLE_EQ(model.col_upper[u], -5.0);
+  EXPECT_EQ(model.validate(), "");
+}
+
+TEST(MpsBounds, UiWithANegativeValueAfterAnExplicitLowerBoundLeavesItAlone) {
+  // As for UP: once the file has stated a lower bound, the modeller has said what they meant,
+  // and a crossed pair is then the modeller's infeasibility to report, not a parse error.
+  const Model model = bounded_column(
+      " LI BND       X          -20.0\n"
+      " UI BND       X           -5.0\n");
+  const Index x = col_of(model, "X");
+  ASSERT_GE(x, 0);
+  EXPECT_DOUBLE_EQ(model.col_lower[static_cast<std::size_t>(x)], -20.0);
+  EXPECT_DOUBLE_EQ(model.col_upper[static_cast<std::size_t>(x)], -5.0);
+  EXPECT_EQ(model.col_type[static_cast<std::size_t>(x)], VarType::kInteger);
+}
+
+TEST(MpsBounds, UiWithZeroLeavesTheImplicitLowerBound) {
+  // Zero is not negative: [0, 0] is a fixed integer column, not a free one.
+  const Model model = bounded_column(" UI BND       X            0.0\n");
+  const Index x = col_of(model, "X");
+  ASSERT_GE(x, 0);
+  EXPECT_DOUBLE_EQ(model.col_lower[static_cast<std::size_t>(x)], 0.0);
+  EXPECT_DOUBLE_EQ(model.col_upper[static_cast<std::size_t>(x)], 0.0);
+}
+
 TEST(MpsBounds, SemiContinuousIsRejectedRatherThanMisread) {
   const std::string error = parse_expecting_failure(
       "NAME          SC\n"
