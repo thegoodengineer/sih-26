@@ -22,8 +22,10 @@ from __future__ import annotations
 
 import argparse
 import csv
+import re
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -68,8 +70,48 @@ def is_default_run(path: Path) -> bool:
     return not (first_row(path).get("solver_options") or "").strip()
 
 
-def latest(pattern: str) -> Path | None:
+_DEFAULT_NAME = re.compile(r"^[0-9a-f]{7,40}(-[A-Za-z0-9]+)*$")
+
+
+def is_default_named(path: Path, prefix: str) -> bool:
+    """False when the filename encodes a named A/B experiment rather than the tier's own
+    per-commit run (#263): `PREFIX-<sha>.csv`, optionally with an ordinal suffix such as
+    `-second`/`-third` for repeated same-commit measurements (#255), is a default run;
+    `PREFIX-cuts-off.csv` or `PREFIX-dual-nodes-<sha>.csv` is not, and unlike
+    is_default_run() above, the CSV's own data (an empty `solver_options` column) does not
+    say so - the filename convention is the only signal. `prefix` is the tier's own name, not
+    a glob: callers that do not need this filter simply omit it from latest().
+    """
+    stem = path.name[: -len(".csv")] if path.name.endswith(".csv") else path.name
+    lead = prefix + "-"
+    if not stem.startswith(lead):
+        return False
+    return bool(_DEFAULT_NAME.match(stem[len(lead):]))
+
+
+def timestamp_of(path: Path) -> float:
+    """POSIX time recorded in a results CSV's first row, or 0.0 if missing or unparseable -
+    part of the CSV's committed content, unlike filesystem mtime, so it is identical on
+    every checkout (#255)."""
+    raw = (first_row(path).get("timestamp_utc") or "").strip()
+    if not raw:
+        return 0.0
+    try:
+        return datetime.fromisoformat(raw).timestamp()
+    except ValueError:
+        return 0.0
+
+
+def latest(pattern: str, *, prefix: str | None = None) -> Path | None:
+    """The most recent CSV matching `pattern`, most-recent by git history then by the
+    timestamp each CSV itself records. `prefix`, when given, additionally excludes any
+    match whose name is not `PREFIX-<sha>[-word].csv` (see is_default_named(); #263) -
+    pass it whenever `pattern` could also match a named A/B experiment committed beside the
+    tier's own runs.
+    """
     candidates = [path for path in RESULTS_DIR.glob(pattern) if is_default_run(path)]
+    if prefix is not None:
+        candidates = [path for path in candidates if is_default_named(path, prefix)]
     if not candidates:
         return None
 
@@ -79,7 +121,7 @@ def latest(pattern: str) -> Path | None:
     # stale number is better than no number, and the caller prints which commit it came from.
     index = {sha: i for i, sha in enumerate(order)}
 
-    def rank(path: Path) -> tuple[int, float]:
+    def rank(path: Path) -> tuple[int, float, str]:
         recorded = commit_of(path)
         position = len(order)
         if recorded:
@@ -87,8 +129,11 @@ def latest(pattern: str) -> Path | None:
                 if sha.startswith(recorded):
                     position = i
                     break
-        # mtime only breaks ties among commits git cannot order.
-        return (position, -path.stat().st_mtime)
+        # Ties at the same commit break on the timestamp the CSV itself records, not
+        # filesystem mtime: a fresh clone stamps every file with the checkout time, so mtime
+        # order is the checkout's file-write order, not the runs' real order (#255). The path
+        # name is the final, merely-stable tiebreaker for two rows sharing a timestamp too.
+        return (position, -timestamp_of(path), path.name)
 
     return sorted(candidates, key=rank)[0]
 

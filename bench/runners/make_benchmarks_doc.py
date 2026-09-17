@@ -89,16 +89,19 @@ def shifted_geometric_mean(values: list[float], shift: float = SHIFT_SECONDS) ->
     return math.exp(total / len(values)) - shift
 
 
-def newest(pattern: str) -> Path | None:
-    """The most recent matching CSV, ordered by GIT HISTORY rather than by mtime.
+def newest(pattern: str, *, prefix: str | None = None) -> Path | None:
+    """The most recent matching CSV, ordered by GIT HISTORY then by each CSV's own recorded
+    timestamp, rather than by mtime.
 
     mtime is right on the machine that produced the files and wrong everywhere else: git
     does not record it, so a fresh clone stamps every file with the checkout time and the
     order becomes arbitrary. That is exactly the situation a judge regenerating this document
-    is in, and the failure is silent - a plausible number from a superseded run. See
-    bench/runners/latest_result.py.
+    is in, and the failure is silent - a plausible number from a superseded run (#255). Pass
+    `prefix` (the tier's own name) when `pattern` could also match a named A/B experiment
+    committed beside the tier's runs, e.g. `miplib-cuts-off.csv` beside `miplib-<sha>.csv`
+    (#263) - both are documented in bench/runners/latest_result.py.
     """
-    return latest_result.latest(pattern)
+    return latest_result.latest(pattern, prefix=prefix)
 
 
 def read_csv(path: Path) -> list[dict]:
@@ -1400,7 +1403,7 @@ def main() -> int:
     small_csv = newest("netlib-small-*.csv")
     medium_csv = newest("netlib-medium-*.csv")
     full_csv = newest("netlib-full-*.csv")
-    milp_csv = newest("miplib-*.csv")
+    milp_csv = newest("miplib-*.csv", prefix="miplib")
     pdhg_csv = newest("pdhg-*.csv")
     mittelmann_csv = newest("mittelmann-*.csv")
     compare_small_csv = newest("compare-highs-small-*.csv")
