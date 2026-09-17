@@ -38,7 +38,9 @@
 // on every row but the ones the moved columns touch. No answer is ever reported about the
 // boxed problem: the boxes are gone before finish() runs, on every exit.
 //
-// WHAT IS NOT HERE. The Harris variant of the dual ratio test. Cost perturbation against
+// THE RATIO TEST'S PIVOT FLOOR IS RELATIVE TO THE ROW (#244), and the optimal exit sums
+// what its wrong-signed reduced costs price before it claims anything (see the loop). What
+// is not here is the Harris variant of the dual ratio test. Cost perturbation against
 // dual degeneracy IS here (COST PERTURBATION, below): a stall perturbs the nonbasic costs
 // and iterates on, and only a stall that survives that hands the basis to the primal loop,
 // which has its own anti-degeneracy machinery - so a stall costs iterations and never a
@@ -390,12 +392,26 @@ DualRatioResult Simplex::dual_ratio_test(Index leaving_slot, bool leaving_to_upp
   std::vector<Candidate> candidates;
   candidates.reserve(64);
 
+  // THE PIVOT FLOOR IS RELATIVE TO THE ROW (#244). An absolute 1e-9 floor is a statement
+  // about scaled rows; on an unscaled one with entries of order 1e+3 it admits a pivot five
+  // orders below its neighbours, and the basis the next factorization sees is singular. So
+  // the floor is the larger of the absolute tolerance and a fraction of the row's largest
+  // entry among the columns that could enter.
+  double alpha_max = 0.0;
+  for (Index k = 0; k < total_; ++k) {
+    const auto u = static_cast<std::size_t>(k);
+    if (basis_position_[u] >= 0 || status_[u] == BasisStatus::kFixed) continue;
+    alpha_max = std::max(alpha_max, std::fabs(pivot_row_[u]));
+  }
+  const double pivot_floor =
+      std::max(tol::kPivotTolerance, tol::kDualPivotRelativeFloor * alpha_max);
+
   for (Index k = 0; k < total_; ++k) {
     const auto u = static_cast<std::size_t>(k);
     if (basis_position_[u] >= 0) continue;
     if (status_[u] == BasisStatus::kFixed) continue;
     const double a = s * pivot_row_[u];
-    if (std::fabs(a) <= tol::kPivotTolerance) continue;
+    if (std::fabs(a) <= pivot_floor) continue;
     bool eligible = false;
     switch (status_[u]) {
       case BasisStatus::kAtLower: eligible = a > 0.0; break;
@@ -459,7 +475,9 @@ DualRatioResult Simplex::dual_ratio_test(Index leaving_slot, bool leaving_to_upp
 
   // Among the candidates tied at the stopping ratio, the largest pivot - the same tie-break
   // the primal ratio test uses, for the same reason: a tiny pivot element is how a basis
-  // decays.
+  // decays. (A Harris two-pass window here was measured for #244 and set aside: without
+  // cost shifting its tolerance-sized wrong-signed reduced costs accumulate across pivots,
+  // 6.8e-6 on etamacro, and the status guard downgrades the claim.)
   const double stop_ratio = candidates[stop].ratio;
   std::size_t best = stop;
   for (std::size_t i = stop; i < candidates.size(); ++i) {
@@ -549,6 +567,46 @@ std::optional<Solution> Simplex::dual_loop(Timer& timer, Count* iterations_io) {
       // it is a phase-2 start for the primal loop: usually a handful of pivots.
       if (cost_perturbed_) {
         return hand_over("optimal under cost perturbation; exact costs restored");
+      }
+      // OPTIMAL WITHIN TOLERANCE IS NOT OPTIMAL WHEN THE TOLERANCE IS WORTH MONEY (#244).
+      // A nonbasic column whose reduced cost drifted a few 1e-6 onto the wrong side - below
+      // the dual tolerance at the scale of its own terms, so every per-column check accepts
+      // it - still prices its whole range: on pilot4 one such column at its lower bound with
+      // d = -4.8e-6 and a range of 3,128 puts 1.5e-2 into the duality gap of a 2,581
+      // objective, the verifier rejects the claim, and the published optimum is indeed
+      // 3.5e-3 lower. The gap is an identity - primal minus dual is the sum over the
+      // nonbasic columns of d_j times the distance from x_j to the bound d_j prices - so it
+      // is summed here against the verifier's own relative tolerance (kDualityGap), and
+      // when it exceeds it the basis goes to the primal loop, which prices exactly those
+      // columns as improving and finishes in a handful of pivots.
+      {
+        double gap = 0.0;
+        for (Index k = 0; k < total_; ++k) {
+          const auto u = static_cast<std::size_t>(k);
+          if (basis_position_[u] >= 0 || status_[u] == BasisStatus::kFixed) continue;
+          const double d = reduced_cost_[u];
+          // A reduced cost inside the dual tolerance is one the verifier excuses in full
+          // (its share of the gap is "accounted"); only a larger one prices its range.
+          if (std::fabs(d) <= dual_tolerance_) continue;
+          double distance = 0.0;
+          if (status_[u] == BasisStatus::kAtLower && d < 0.0) {
+            distance =
+                is_finite_bound(upper_[u]) ? upper_[u] - lower_[u] : std::fabs(lower_[u]);
+          } else if (status_[u] == BasisStatus::kAtUpper && d > 0.0) {
+            distance =
+                is_finite_bound(lower_[u]) ? upper_[u] - lower_[u] : std::fabs(upper_[u]);
+          } else if (status_[u] == BasisStatus::kNonbasicFree && d != 0.0) {
+            distance = 1.0;
+          }
+          gap += std::fabs(d) * distance;
+        }
+        const double objective = minimization_objective();
+        if (gap > tol::kDualityGap * std::max(1.0, std::fabs(objective))) {
+          return hand_over(fmt::format(
+              "primal feasible, but the wrong-signed reduced costs price {:.3e} of objective "
+              "against a {:.1e} relative duality tolerance",
+              gap, tol::kDualityGap));
+        }
       }
       remove_artificial_bounds();
       return finish(SolveStatus::kOptimal, {}, iterations, timer.elapsed_seconds());

@@ -133,6 +133,16 @@ inline constexpr double kMarkowitzThreshold = 0.01;
 /// Below this, a computed pivot element is treated as a singular basis rather than a pivot.
 inline constexpr double kPivotTolerance = 1e-9;
 
+/// The dual ratio test's pivot floor RELATIVE to the row it is choosing from (#244):
+/// a candidate whose |alpha_rj| is below this fraction of the row's largest |alpha_rj| is
+/// skipped even when it clears kPivotTolerance. On an unscaled row whose entries are O(1e+3)
+/// an absolute 1e-9 floor lets a pivot of 1e-8 through, and that is how a basis went
+/// singular a few iterations later on every generated scale model (five repairs in 1,200
+/// iterations on the 5,000-row random one). Koberstein, "The dual simplex method,
+/// techniques for a fast and stable implementation" (thesis, 2005), sec. 6.2.2.2, uses
+/// this value.
+inline constexpr double kDualPivotRelativeFloor = 1e-7;
+
 // ---------------------------------------------------------------------------------------
 // Simplex
 // ---------------------------------------------------------------------------------------

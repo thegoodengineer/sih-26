@@ -383,3 +383,44 @@ TEST(DualSimplex, AWarmStartThatIsNotABasisFallsBackToTheSlackBasis) {
 
 }  // namespace
 }  // namespace sankhya
+
+namespace sankhya {
+namespace {
+
+TEST(DualSimplex, AGapWorthMoneyAtTheOptimalExitGoesToThePrimalLoop) {
+  // #244: with the ratio test's pivot floor made relative to the row, the unscaled dual
+  // simplex on pilot4 reached a basis that was primal feasible and dual feasible within
+  // tolerance - one column at its lower bound carrying d = -4.8e-6, below the tolerance at
+  // the scale of its terms - and claimed optimal at -2581.1371, 2.1e-3 above the published
+  // -2581.1392641; that column's 3,128-wide range priced 1.5e-2 into the duality gap and the
+  // verifier rejected the claim. The optimal exit now sums what wrong-signed reduced costs
+  // price and hands such a basis to the primal loop instead. Unscaled, presolve off, so the
+  // dual loop itself is what is tested; the yardstick is the published optimum.
+  Model model;
+  const std::string path =
+      (std::filesystem::path(__FILE__).parent_path().parent_path().parent_path() /
+       "data/netlib/pilot4.mps")
+          .string();
+  const io::ReadResult read = io::read_model(path, &model);
+  ASSERT_TRUE(read.ok) << path << ": " << read.error;
+  Options options = engine_options("dual-simplex");
+  options.set_bool("scaling", false);
+  const Solution s = solve(model, options);
+  ASSERT_EQ(s.status, SolveStatus::kOptimal) << s.message;
+  EXPECT_NEAR(s.objective, -2581.1392641, 1e-6 * 2581.0) << s.message;
+  // And the same guarantee the verifier checks: no nonbasic column's reduced cost prices a
+  // range worth more than the duality tolerance.
+  double gap = 0.0;
+  for (Index j = 0; j < model.num_cols(); ++j) {
+    const auto u = static_cast<std::size_t>(j);
+    const double d = s.col_dual[u];
+    const double x = s.col_value[u];
+    if (std::fabs(d) <= tol::kDualFeasibility) continue;
+    const double priced = d > 0.0 ? model.col_lower[u] : model.col_upper[u];
+    if (std::isfinite(priced)) gap += std::fabs(d) * std::fabs(x - priced);
+  }
+  EXPECT_LE(gap, 1e-6 * 2581.0) << "wrong-signed reduced costs price " << gap;
+}
+
+}  // namespace
+}  // namespace sankhya
