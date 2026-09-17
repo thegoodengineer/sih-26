@@ -44,8 +44,9 @@ does not — see the Evidence rules in [`ENGINEERING_RULES.md`](ENGINEERING_RULE
 
 Benchmark results against Netlib, headline first: **80 of 89** on the full set — matched
 to the published optimum to a relative 1e-6 *and* passed independent verification —
-measured on `main` at `e134aeb` (`bench/results/netlib-full-e134aeb.csv`, alone on the
-machine, on mains). The narrower
+measured on `main` at `b3f1660` (`bench/results/netlib-full-b3f1660.csv`, alone on the
+machine, on mains; the same 80 and the same nine as `netlib-full-e134aeb.csv` before the
+dual ratio test's pivot floor became relative to the row, #244). The narrower
 tiers read higher (**48 of 50** on the medium tier, **9 of 9** on the small set the demo
 runs) because both are defined by a row cap, which makes them the easier half by
 construction; the full set is the number Phase 6's ">= 95% of Netlib" criterion is
@@ -98,7 +99,9 @@ reliability branching landed (#166), presolve's postsolve runs its dual passes t
 point (#162), and the FTRAN went hyper-sparse (#169): between them the full set went from
 71 to 78 verified passes, and `degen3`, which took 123.6 s, takes 0.9 s
 (`bench/results/netlib-full-2b4eb6b.csv`); the iteration-cost work of #242, #265 and #278
-took it to 80 (`bench/results/netlib-full-e134aeb.csv`).
+took it to 80 (`bench/results/netlib-full-e134aeb.csv`), and the relative pivot floor of
+#244 kept it at 80 with the handovers to the primal loop down from 22 to 15 and `dfl001`
+finishing inside the scaled attempt (`bench/results/netlib-full-b3f1660.csv`).
 
 That is a better class of problem to have, and a different roadmap: speed at size rather
 than robustness. Tracked in #214 (`maros-r7`, the one non-pass that is ours to fix) and,
@@ -315,7 +318,7 @@ earned.
 |---|---|---|
 | **The dual simplex's cost per iteration at size** | [#210](https://github.com/thegoodengineers/SANKHYA/issues/210), [#243](https://github.com/thegoodengineers/SANKHYA/issues/243) | #242 removed two O(m)-per-step sweeps from the factorization and the per-iteration recomputation of the basic values and duals; the per-phase clock it added (verbose log) now puts the pivot row - a BTRAN of a unit vector plus a gather over every column - at a quarter to a third of an iteration at 20,000 rows. Both standard remedies are in: the gather runs over rho's support through a row-wise copy of A (#265) and the transposed solve applies L^T in push form (#278), and the second measured to no change, because counters put a transposed solve's cost in the eta file (20,000 to 27,000 entries read per solve against a few hundred pushes through the factors) and in the four full-length passes over m; the next lever is a Forrest-Tomlin update ([#279](https://github.com/thegoodengineers/SANKHYA/issues/279)). None of the four 5,000- and 20,000-row scale models reaches the optimum in 120 s yet, but the iteration count inside those 120 s is up on every one: on `main` at `e134aeb` (`bench/results/scale-e134aeb.csv`, `scale-staircase-e134aeb.csv`) the dual simplex does 33,019 / 42,448 iterations at 5,000 rows (random / staircase) and 34,163 / 40,108 at 20,000, against 24,316 / 13,761 and 28,564 / 10,144 on the last runs before this work (`scale-f545f83.csv`, `scale-staircase-bf3df02.csv`). |
 | **The unscaled retry on badly scaled generated models** | [#244](https://github.com/thegoodengineers/SANKHYA/issues/244) | When the scaled dual simplex times out, the unscaled retry repairs singular bases and hands over to the primal on a fresh-factor pivot disagreement. The dual ratio test accepts any pivot above an absolute 1e-9; a relative floor with a Harris pass is what production codes do. |
-| **Netlib 80 of 89** | [#214](https://github.com/thegoodengineers/SANKHYA/issues/214) | The full-set re-run on `main` at `e134aeb` is done (`bench/results/netlib-full-e134aeb.csv`): `pilot87` and `dfl001` now finish inside 120 s and `pilot` verifies as optimal, so eight of the nine non-passes are Netlib's own table being the outlier with HiGHS agreeing with us. The one left that is ours to fix is `maros-r7`, which runs the clock out inside a factorization on the scaled attempt and does not finish on the unscaled retry (#247 for the history of that basis). |
+| **Netlib 80 of 89** | [#214](https://github.com/thegoodengineers/SANKHYA/issues/214) | The full-set re-run on `main` at `e134aeb` is done, and `b3f1660` after #244 repeats it instance for instance (`bench/results/netlib-full-b3f1660.csv`): `pilot87` and `dfl001` now finish inside 120 s and `pilot` verifies as optimal, so eight of the nine non-passes are Netlib's own table being the outlier with HiGHS agreeing with us. The one left that is ours to fix is `maros-r7`, which runs the clock out inside a factorization on the scaled attempt and does not finish on the unscaled retry (#247 for the history of that basis). |
 | **Mittelmann 0 of 8 (simplex), 2 of 8 (PDHG)** | [#216](https://github.com/thegoodengineers/SANKHYA/issues/216) | The default dual simplex finishes nothing, re-measured on `main` at `e134aeb` with the same result (`bench/results/mittelmann-e134aeb.csv`; every row a named time limit, `bdry2` now stopped at 303 s). The per-engine table in section 1d (`mittelmann-{pdhg,ipm}-d24662f.csv`) shows the first-order engine finishing `chromaticindex1024-7` and `brazil3`, verified, and the interior point finishing none: two `std::bad_alloc` (#246), two non-finite iterates, four time limits, `Linf_520c` overrunning to 367 s inside a factorization. `qap15` stays a time limit under all three; the rest are size. |
 | **MIPLIB: 13 of 30 reach the optimum, 9 prove it** | [#215](https://github.com/thegoodengineers/SANKHYA/issues/215) | The weakest number in the project, and the issue says where each of the other instances stands. The levers are #221 and #222. |
 | **Interior point on the largest random model** | [#246](https://github.com/thegoodengineers/SANKHYA/issues/246) | On the 100,000-row random scale model it dies of `std::bad_alloc` 170 s past its 120 s limit with no status and no stats file, on an 8 GB machine: an out-of-memory condition must come back as a status, and the ordering needs a memory budget the way the polish has a factor budget. |
