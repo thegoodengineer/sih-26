@@ -353,7 +353,7 @@ class SparseLu {
   // solve may already treat as resolved - that step currently occupies. Position k is
   // "ready" only once every step it can validly reference (position >= k) has been visited,
   // exactly as it was when position and step coincided before the first update.
-  bool forrest_tomlin_ = false;  ///< the scheme update() dispatches to; sticky across factorize()
+  bool forrest_tomlin_ = false;  ///< what update() dispatches to; sticky across factorize()
   bool ft_active_ = false;
   Index ft_base_row_nonzeros_ = 0;  ///< off-diagonal entry count at the moment FT mode began
   /// Running total of ft_row_'s entries, maintained by ft_set()/ft_erase() so

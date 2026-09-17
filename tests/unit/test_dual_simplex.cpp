@@ -104,8 +104,10 @@ TEST(DualSimplex, ForrestTomlinReachesTheSameOptimumAsTheProductForm) {
     const char* name;
     double published;
   };
-  const Instance instances[] = {{"afiro", -464.75314286}, {"sc50b", -70.0},
-                                {"share2b", -415.73224074}, {"stocfor1", -41131.976219}};
+  const Instance instances[] = {{"afiro", -464.75314286},
+                                {"sc50b", -70.0},
+                                {"share2b", -415.73224074},
+                                {"stocfor1", -41131.976219}};
   for (const char* algorithm : {"dual-simplex", "simplex"}) {
     for (const Instance& instance : instances) {
       Model model;
