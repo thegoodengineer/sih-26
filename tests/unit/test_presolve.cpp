@@ -21,9 +21,13 @@
 
 #include <gtest/gtest.h>
 
+#include "sankhya/certificate.hpp"
+#include "sankhya/logging.hpp"
 #include "sankhya/model.hpp"
 #include "sankhya/options.hpp"
 #include "sankhya/tolerances.hpp"
+
+#include "presolve/presolve.hpp"
 
 namespace sankhya {
 namespace {
@@ -170,6 +174,75 @@ TEST(Presolve, EmptyRowExcludingZeroIsInfeasible) {
   Model model = make_lp({{0.0}}, {2.0}, {kInfinity}, {1.0}, {0.0}, {kInfinity});
   const Solution on = solve(model, with_presolve(true));
   EXPECT_EQ(on.status, SolveStatus::kInfeasible) << on.message;
+  // #253: the row is its own certificate, and the verdict carries it.
+  std::string why;
+  ASSERT_EQ(on.farkas_dual.size(), 1u) << on.message;
+  EXPECT_TRUE(farkas_proves_infeasible(model, on.farkas_dual, &why)) << why;
+}
+
+TEST(Presolve, CrossedSingletonRowsProveInfeasibilityWithACertificate) {
+  // #253: x free, x >= 5 and x <= 2 as two singleton rows. Presolve turns both into bounds
+  // on x, finds them crossed, and used to say `infeasible` with nothing to check. The rows
+  // that implied the bounds are the proof: +1/a on the first and -1/b on the second cancel x
+  // and leave 5 - 2 > 0 required of an empty aggregate.
+  Model model = make_lp({{1.0}, {1.0}}, {5.0, -kInfinity}, {kInfinity, 2.0}, {1.0},
+                        {-kInfinity}, {kInfinity});
+  const Solution on = solve(model, with_presolve(true));
+  ASSERT_EQ(on.status, SolveStatus::kInfeasible) << on.message;
+  std::string why;
+  ASSERT_EQ(on.farkas_dual.size(), 2u) << on.message;
+  EXPECT_TRUE(farkas_proves_infeasible(model, on.farkas_dual, &why)) << why;
+  EXPECT_NE(on.message.find("proof:"), std::string::npos) << on.message;
+  // With coefficients that are not one, the weights are 1/a and -1/b, and the sign of the
+  // second flips with its coefficient.
+  Model scaled = make_lp({{2.0}, {-3.0}}, {10.0, -6.0}, {kInfinity, kInfinity}, {1.0},
+                         {-kInfinity}, {kInfinity});  // 2x >= 10 and -3x >= -6, so x <= 2
+  const Solution on2 = solve(scaled, with_presolve(true));
+  ASSERT_EQ(on2.status, SolveStatus::kInfeasible) << on2.message;
+  ASSERT_EQ(on2.farkas_dual.size(), 2u) << on2.message;
+  EXPECT_TRUE(farkas_proves_infeasible(scaled, on2.farkas_dual, &why)) << why;
+}
+
+TEST(Presolve, ActivityInfeasibilityProvesItselfThroughTheRowsThatTightenedTheBounds) {
+  // #253: x1 + x2 >= 10 with x1 in [0, 3] from the model and x2 <= 3 implied by a singleton
+  // row 2 x2 <= 6. The activity can reach at most 6, so presolve stops; the certificate is
+  // +1 on the row and -1/2 on the singleton that capped x2, which substitutes 6/2 for x2's
+  // upper bound so the original bound (infinite) is never relied on.
+  Model model = make_lp({{1.0, 1.0}, {0.0, 2.0}}, {10.0, -kInfinity}, {kInfinity, 6.0},
+                        {1.0, 1.0}, {0.0, 0.0}, {3.0, kInfinity});
+  const Solution on = solve(model, with_presolve(true));
+  ASSERT_EQ(on.status, SolveStatus::kInfeasible) << on.message;
+  std::string why;
+  ASSERT_EQ(on.farkas_dual.size(), 2u) << on.message;
+  EXPECT_TRUE(farkas_proves_infeasible(model, on.farkas_dual, &why)) << why;
+  // The same model without presolve: the simplex's own certificate, for the record.
+  const Solution off = solve(model, with_presolve(false));
+  ASSERT_EQ(off.status, SolveStatus::kInfeasible) << off.message;
+  EXPECT_TRUE(farkas_proves_infeasible(model, off.farkas_dual, &why)) << why;
+}
+
+TEST(Presolve, ACandidateThatNeededIntegerRoundingIsDroppedNotPublished) {
+  // #253's other half: never an unchecked vector. For integer x, x >= 2.2 rounds to x >= 3
+  // and 2x <= 5 rounds to x <= 2, which cross; over the continuous relaxation x = 2.4
+  // satisfies both rows, so the Farkas argument does not hold and the verdict must carry no
+  // certificate rather than a wrong one. (The verdict itself is right: no integer x lies in
+  // [2.2, 2.5].)
+  // solve() never runs presolve on an integer model (branch and bound proves this one on
+  // its own), so the presolve step is called directly: its candidate, built from a bound
+  // that integrality rounded, must FAIL the checker over the continuous relaxation - that
+  // failing is exactly what solve()'s validation of every candidate is there to catch.
+  Model model = make_lp({{1.0}, {2.0}}, {2.2, -kInfinity}, {kInfinity, 5.0}, {1.0},
+                        {-kInfinity}, {kInfinity});
+  model.col_type = {VarType::kInteger};
+  Logger logger(nullptr);
+  const presolve::Result reduced = presolve::presolve(model, with_presolve(true), logger);
+  ASSERT_TRUE(reduced.proved_infeasible) << reduced.message;
+  std::string why;
+  EXPECT_FALSE(farkas_proves_infeasible(model, reduced.farkas_dual, &why)) << reduced.message;
+  // And through the front door the verdict carries no certificate at all.
+  const Solution on = solve(model, with_presolve(true));
+  ASSERT_EQ(on.status, SolveStatus::kInfeasible) << on.message;
+  EXPECT_TRUE(on.farkas_dual.empty()) << on.message;
 }
 
 TEST(Presolve, AnUnboundedObjectiveIsNotReportedAsInfeasible) {

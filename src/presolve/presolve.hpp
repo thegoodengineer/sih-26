@@ -106,6 +106,16 @@ struct Result {
   /// know the answer to.
   bool proved_infeasible = false;
 
+  /// With proved_infeasible: a Farkas vector over the ORIGINAL rows, built from the rows the
+  /// contradiction rests on (#253) - the empty row itself, the singleton rows whose bounds
+  /// crossed, or the row whose activity range the column bounds cannot reach together with
+  /// the singleton rows that tightened those bounds. It is a CANDIDATE: solve() validates it
+  /// against the original model with farkas_proves_infeasible() and drops it if it does not
+  /// hold (a contradiction that needed integrality rounding or a doubleton substitution has
+  /// no such vector), so a caller never sees an unchecked one. Empty when no candidate could
+  /// be built.
+  std::vector<double> farkas_dual;
+
   std::string message;
 
   [[nodiscard]] Index rows_removed() const { return original_rows - model.num_rows(); }

@@ -406,15 +406,13 @@ Solution solve(const Model& model, const Options& options, SolveControl* control
         // The same bound convention the engines use for an infeasible verdict (#299): the
         // worst value the objective can take, on the model's own sense.
         solution.dual_bound = model.sense == ObjSense::kMaximize ? -kInfinity : kInfinity;
-        // Presolve proves infeasibility from bound arithmetic, and the chain of tightenings
-        // that led there is not kept, so there is no Farkas vector to hand over. The reason
-        // is in the message, which names the row and the two quantities that collide, and
-        // the .sol file says `certificate none` rather than pretending otherwise. Turning
-        // presolve off makes the simplex prove the same conclusion with a certificate (#191).
-        solution.message =
-            reduced.message +
-            "; proved by presolve, which carries no Farkas certificate - re-run with "
-            "--option presolve=false for one";
+        // Presolve's proof is a small Farkas argument over the rows it used (#253), handed
+        // over as a candidate and checked here against the ORIGINAL model exactly as an
+        // engine's certificate is; one that does not hold (a contradiction that needed
+        // integrality rounding, say) is dropped and the message says so.
+        solution.message = reduced.message + "; proved by presolve";
+        solution.farkas_dual = reduced.farkas_dual;
+        keep_only_a_proved_certificate(&solution, model, logger);
         solution.solve_seconds = timer.elapsed_seconds();
         logger.info("Result: {} (proved during presolve)  {:.3f}s", to_string(solution.status),
                     solution.solve_seconds);

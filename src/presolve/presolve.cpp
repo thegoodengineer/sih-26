@@ -59,6 +59,11 @@ struct Workspace {
   /// trades a rarer reduction opportunity for a postsolve that is provably correct in every
   /// case it fires.
   std::vector<bool> doubleton_touched;
+  /// Where each column bound came from, for the Farkas candidate (#253): the original row
+  /// whose singleton reduction last tightened it and that row's coefficient on the column,
+  /// or -1 when the bound is the model's own.
+  std::vector<Index> lower_row, upper_row;
+  std::vector<double> lower_coef, upper_coef;
   /// Every row whose coefficient on a column doubleton fill-in touched, indexed by column:
   /// the accumulated DELTA for (column, row), whether that fill-in adjusted an entry already
   /// in `original` or created a brand-new one. `original->matrix.column()` alone - what
@@ -224,6 +229,10 @@ Result presolve(const Model& model, const Options& options, Logger& logger) {
   work.row_count.assign(static_cast<std::size_t>(m), 0);
   work.col_cost = model.col_cost;
   work.doubleton_touched.assign(static_cast<std::size_t>(n), false);
+  work.lower_row.assign(static_cast<std::size_t>(n), -1);
+  work.upper_row.assign(static_cast<std::size_t>(n), -1);
+  work.lower_coef.assign(static_cast<std::size_t>(n), 0.0);
+  work.upper_coef.assign(static_cast<std::size_t>(n), 0.0);
   work.singleton_row_touched.assign(static_cast<std::size_t>(n), false);
   work.extra_row_delta.assign(static_cast<std::size_t>(n), {});
   work.extra_new_rows.assign(static_cast<std::size_t>(n), {});
@@ -241,6 +250,47 @@ Result presolve(const Model& model, const Options& options, Logger& logger) {
     result.proved_infeasible = true;
     result.message = std::move(why);
   };
+  // THE PROOF BEHIND THE VERDICT (#253). Every presolve infeasibility is a small Farkas
+  // argument over original rows; the three builders below write it down, and solve()
+  // checks it against the original model before anyone sees it. A multiplier 1/a on a
+  // singleton row `a x in [l, u]` puts coefficient 1 on x and l/a (or u/a when a < 0) into
+  // the aggregate's requirement - exactly the bound the reduction implied - so the rows that
+  // implied a crossed pair of bounds, or the bounds a row's activity cannot reach, cancel the
+  // column and leave a contradiction between constants.
+  const auto fresh_candidate = [&]() -> std::vector<double>& {
+    result.farkas_dual.assign(static_cast<std::size_t>(m), 0.0);
+    return result.farkas_dual;
+  };
+  const auto lean_on_lower_bound = [&](std::vector<double>& y, Index column, double weight) {
+    // The aggregate uses column's LOWER bound with this weight; if a singleton row implied
+    // that bound, take the row instead so the original bound is not relied on.
+    const auto u = static_cast<std::size_t>(column);
+    if (work.lower_row[u] >= 0)
+      y[static_cast<std::size_t>(work.lower_row[u])] += weight / work.lower_coef[u];
+  };
+  const auto lean_on_upper_bound = [&](std::vector<double>& y, Index column, double weight) {
+    const auto u = static_cast<std::size_t>(column);
+    if (work.upper_row[u] >= 0)
+      y[static_cast<std::size_t>(work.upper_row[u])] += weight / work.upper_coef[u];
+  };
+
+  const auto activity_certificate = [&](Index row, double sign) {
+    // Weight `sign` on the row (+1 leans on its lower bound, -1 on its upper); the extreme
+    // activity used each live column's upper bound when sign * a > 0 and its lower bound
+    // otherwise, so the rows that implied those bounds join with the cancelling weight.
+    std::vector<double>& y = fresh_candidate();
+    y[static_cast<std::size_t>(row)] = sign;
+    for (const auto& entry : work.rows[static_cast<std::size_t>(row)]) {
+      const Index j = entry.first;
+      if (work.col_dead[static_cast<std::size_t>(j)]) continue;
+      const double weight = sign * entry.second;
+      if (weight > 0.0) {
+        lean_on_upper_bound(y, j, -weight);
+      } else if (weight < 0.0) {
+        lean_on_lower_bound(y, j, -weight);
+      }
+    }
+  };
 
   // Passes run to a fixed point: fixing a column can empty a row, removing a row can turn a
   // column into a singleton. The cap is a safety net, not an expected limit - each pass must
@@ -257,6 +307,13 @@ Result presolve(const Model& model, const Options& options, Logger& logger) {
       if (work.col_lower[u] > work.col_upper[u] + feasibility) {
         infeasible(fmt::format("column {} has crossed bounds after presolve: [{:.6g}, {:.6g}]",
                                j, work.col_lower[u], work.col_upper[u]));
+        if (work.lower_row[u] >= 0 || work.upper_row[u] >= 0) {
+          // lower_row says x >= L, upper_row says x <= U, L > U: weight +1 on the lower
+          // side and -1 on the upper cancels x and leaves L - U > 0 required of nothing.
+          std::vector<double>& y = fresh_candidate();
+          lean_on_lower_bound(y, j, 1.0);
+          lean_on_upper_bound(y, j, -1.0);
+        }
         break;
       }
 
@@ -429,6 +486,9 @@ Result presolve(const Model& model, const Options& options, Logger& logger) {
               "row {} has no entries but requires activity in [{:.6g}, {:.6g}], which excludes "
               "zero",
               i, work.row_lower[r], work.row_upper[r]));
+          // The row itself is the proof: its entries in the original model sit on fixed
+          // columns, which the checker's box evaluates as the constants they are.
+          fresh_candidate()[r] = violates_lower ? 1.0 : -1.0;
           break;
         }
         Record record;
@@ -465,6 +525,7 @@ Result presolve(const Model& model, const Options& options, Logger& logger) {
         infeasible(fmt::format(
             "row {} needs activity of at least {:.6g} but the column bounds cap it at {:.6g}",
             i, work.row_lower[r], bounds.upper));
+        activity_certificate(i, +1.0);
         break;
       }
       if (bounds.lower_finite && finite(work.row_upper[r]) &&
@@ -473,6 +534,7 @@ Result presolve(const Model& model, const Options& options, Logger& logger) {
             "row {} allows activity of at most {:.6g} but the column bounds force at least "
             "{:.6g}",
             i, work.row_upper[r], bounds.lower));
+        activity_certificate(i, -1.0);
         break;
       }
 
@@ -535,10 +597,16 @@ Result presolve(const Model& model, const Options& options, Logger& logger) {
         result.records.push_back(record);
         work.singleton_row_touched[c] = true;
 
-        if (finite(implied_lower))
-          work.col_lower[c] = std::max(work.col_lower[c], implied_lower);
-        if (finite(implied_upper))
-          work.col_upper[c] = std::min(work.col_upper[c], implied_upper);
+        if (finite(implied_lower) && implied_lower > work.col_lower[c]) {
+          work.col_lower[c] = implied_lower;
+          work.lower_row[c] = i;
+          work.lower_coef[c] = coefficient;
+        }
+        if (finite(implied_upper) && implied_upper < work.col_upper[c]) {
+          work.col_upper[c] = implied_upper;
+          work.upper_row[c] = i;
+          work.upper_coef[c] = coefficient;
+        }
         kill_row(&work, i);
         changed = true;
         continue;

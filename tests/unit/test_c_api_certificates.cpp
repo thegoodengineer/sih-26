@@ -95,8 +95,8 @@ TEST(CApiCertificates, AFarkasCertificateCrossesTheBoundaryAndStillProvesInfeasi
   build_contradictory_pair(model);
   OptionsHandle options;
   ASSERT_EQ(sankhya_options_set_bool(options, "log_to_console", 0), SANKHYA_OK);
-  // Presolve off: with it on, presolve settles this model from bound arithmetic alone and
-  // no engine runs, so there is no Farkas vector to carry (see the next test).
+  // Presolve off, so the vector comes from the simplex; the next test takes the presolve
+  // route to the same verdict and expects a certificate there too (#253).
   ASSERT_EQ(sankhya_options_set_bool(options, "presolve", 0), SANKHYA_OK);
 
   SolutionHandle solution;
@@ -132,10 +132,11 @@ TEST(CApiCertificates, AFarkasCertificateCrossesTheBoundaryAndStillProvesInfeasi
             SANKHYA_ERROR_ARGUMENT);
 }
 
-TEST(CApiCertificates, NoCertificateIsLengthZeroAndCopyingNothingSucceeds) {
-  // Default options, so presolve proves the contradiction itself and no Farkas vector
-  // exists. That is a real outcome a caller meets, and it must read as "no proof attached",
-  // not as an error.
+TEST(CApiCertificates, ThePresolveVerdictCarriesACertificateAndAnAbsentRayIsLengthZero) {
+  // Default options, so presolve proves the contradiction itself (#253): the verdict now
+  // carries the Farkas vector built from the two rows, checked against the original model
+  // before it reaches the boundary. A ray, which no infeasible model has, reads as "nothing
+  // attached" - length zero and a copy of nothing succeeds - not as an error.
   ModelHandle model;
   build_contradictory_pair(model);
   OptionsHandle options;
@@ -146,10 +147,14 @@ TEST(CApiCertificates, NoCertificateIsLengthZeroAndCopyingNothingSucceeds) {
       << sankhya_last_error();
   ASSERT_EQ(sankhya_solution_status(solution.handle), SANKHYA_INFEASIBLE);
 
-  if (sankhya_solution_farkas_dual_length(solution.handle) == 0) {
-    EXPECT_EQ(sankhya_solution_farkas_dual(solution.handle, nullptr, 0), SANKHYA_OK)
-        << sankhya_last_error();
-  }
+  const int length = sankhya_solution_farkas_dual_length(solution.handle);
+  ASSERT_EQ(length, 2) << "presolve's proof, one multiplier per row";
+  std::vector<double> y(static_cast<std::size_t>(length), 0.0);
+  ASSERT_EQ(sankhya_solution_farkas_dual(solution.handle, y.data(), length), SANKHYA_OK)
+      << sankhya_last_error();
+  std::string why;
+  EXPECT_TRUE(sankhya::farkas_proves_infeasible(contradictory_pair_in_cpp(), y, &why)) << why;
+
   EXPECT_EQ(sankhya_solution_primal_ray_length(solution.handle), 0);
   EXPECT_EQ(sankhya_solution_primal_ray(solution.handle, nullptr, 0), SANKHYA_OK)
       << sankhya_last_error();
