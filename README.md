@@ -107,8 +107,10 @@ That is a better class of problem to have, and a different roadmap: speed at siz
 than robustness. Tracked in #214 (`maros-r7`, the one non-pass that is ours to fix) and,
 for the scale families, #279.
 
-MIPLIB 2017 is benchmarked too: **13 of 30** easy instances reach the published optimum,
-**9 of 30** also prove it (`bench/results/miplib-bf3df02.csv`, 60 s; it was 6 of 30 at
+MIPLIB 2017 is benchmarked too: **14 of 30** easy instances reach the published optimum,
+**9 of 30** also prove it (`bench/results/miplib-b3f1660.csv`, 60 s, on `main` after presolve
+started running on MILPs (#301) - `neos-3611689-kaihu` is the one that moved, 120 to the
+published 119, still unproved; it was 13 and 9 at `bf3df02`, and 6 proved at
 `2b4eb6b`, before #188 let a search that meets its gap target say `optimal` - three of the
 nine are that renamed status, not a better search) - branch and bound has reliability
 branching and warm-started node LPs, and root cutting planes that are off by default: on the
@@ -332,7 +334,7 @@ earned.
 | **The unscaled retry on badly scaled generated models** | [#244](https://github.com/thegoodengineers/SANKHYA/issues/244) | When the scaled dual simplex times out, the unscaled retry repairs singular bases and hands over to the primal on a fresh-factor pivot disagreement. The dual ratio test accepts any pivot above an absolute 1e-9; a relative floor with a Harris pass is what production codes do. |
 | **Netlib 80 of 89** | [#214](https://github.com/thegoodengineers/SANKHYA/issues/214) | The full-set re-run on `main` at `e134aeb` is done, and `b3f1660` after #244 repeats it instance for instance (`bench/results/netlib-full-b3f1660.csv`): `pilot87` and `dfl001` now finish inside 120 s and `pilot` verifies as optimal, so eight of the nine non-passes are Netlib's own table being the outlier with HiGHS agreeing with us. The one left that is ours to fix is `maros-r7`, which runs the clock out inside a factorization on the scaled attempt and does not finish on the unscaled retry (#247 for the history of that basis). |
 | **Mittelmann 0 of 8 (simplex), 2 of 8 (PDHG)** | [#216](https://github.com/thegoodengineers/SANKHYA/issues/216) | The default dual simplex finishes nothing, re-measured on `main` at `e134aeb` with the same result (`bench/results/mittelmann-e134aeb.csv`; every row a named time limit, `bdry2` now stopped at 303 s). The per-engine table in section 1d (`mittelmann-{pdhg,ipm}-d24662f.csv`) shows the first-order engine finishing `chromaticindex1024-7` and `brazil3`, verified, and the interior point finishing none: two `std::bad_alloc` (#246), two non-finite iterates, four time limits, `Linf_520c` overrunning to 367 s inside a factorization. `qap15` stays a time limit under all three; the rest are size. |
-| **MIPLIB: 13 of 30 reach the optimum, 9 prove it** | [#215](https://github.com/thegoodengineers/SANKHYA/issues/215) | The weakest number in the project, and the issue says where each of the other instances stands. The levers are #221 and #222. |
+| **MIPLIB: 14 of 30 reach the optimum, 9 prove it** | [#215](https://github.com/thegoodengineers/SANKHYA/issues/215) | The weakest number in the project, and the issue says where each of the other instances stands. The levers are #221 and #222. |
 | **Interior point on the largest random model** | [#246](https://github.com/thegoodengineers/SANKHYA/issues/246) | On the 100,000-row random scale model it dies of `std::bad_alloc` 170 s past its 120 s limit with no status and no stats file, on an 8 GB machine: an out-of-memory condition must come back as a status, and the ordering needs a memory budget the way the polish has a factor budget. |
 | **Interior point: stop before the barrier breaks the factorization** | [#209](https://github.com/thegoodengineers/SANKHYA/issues/209) | #241 reads the regularization spike as convergence and stops one factorization earlier; the answer is `feasible`, not `optimal`, because its dual side misses the tolerance by 12%, which crossover (#219) is the honest way to close. |
 
