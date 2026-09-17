@@ -4,6 +4,7 @@
 #include "presolve.hpp"
 
 #include <algorithm>
+#include <cassert>
 #include <cmath>
 #include <limits>
 #include <unordered_map>
@@ -39,6 +40,16 @@ struct Workspace {
   std::vector<double> row_upper;
   std::vector<bool> col_dead;
   std::vector<bool> row_dead;
+  /// Columns that appear in the Hessian, in either index of a stored entry (#301).
+  ///
+  /// These are PROTECTED from every reduction that removes or substitutes a column. The
+  /// reductions here are derived for a LINEAR objective: folding a fixed column's cost into
+  /// the offset is right for c_j * v and silently wrong for 0.5 * Q_jj * v^2 plus the cross
+  /// terms v * Q_ij it leaves behind on the columns that remain, and a doubleton substitution
+  /// into a quadratic objective creates cross terms the reduced model has nowhere to put.
+  /// Bound tightening on such a column is still applied: it changes the feasible set, not the
+  /// objective, and an integer-aware inward round stays valid.
+  std::vector<bool> quadratic_col;
   /// Entries of each row, as (column, coefficient). The Model stores columns, and every
   /// reduction here asks row-wise questions, so this is built once up front.
   std::vector<std::vector<std::pair<Index, double>>> rows;
@@ -224,6 +235,14 @@ Result presolve(const Model& model, const Options& options, Logger& logger) {
   work.row_upper = model.row_upper;
   work.col_dead.assign(static_cast<std::size_t>(n), false);
   work.row_dead.assign(static_cast<std::size_t>(m), false);
+  work.quadratic_col.assign(static_cast<std::size_t>(n), false);
+  for (Index j = 0; j < model.hessian.num_cols(); ++j) {
+    const ColumnView column = model.hessian.column(j);
+    if (column.size > 0) work.quadratic_col[static_cast<std::size_t>(j)] = true;
+    for (Index k = 0; k < column.size; ++k) {
+      work.quadratic_col[static_cast<std::size_t>(column.rows[k])] = true;
+    }
+  }
   work.rows.assign(static_cast<std::size_t>(m), {});
   work.col_count.assign(static_cast<std::size_t>(n), 0);
   work.row_count.assign(static_cast<std::size_t>(m), 0);
@@ -304,6 +323,26 @@ Result presolve(const Model& model, const Options& options, Logger& logger) {
       const auto u = static_cast<std::size_t>(j);
       if (work.col_dead[u]) continue;
 
+      // INTEGER BOUND ROUNDING (#301; Achterberg et al. 2020, sec. 3). An integer column
+      // bounded by [0.5, 2.5] can only take 1 or 2, and saying so here is worth more than it
+      // looks: the relaxation the search branches on is otherwise weaker than the model, and
+      // every node re-derives the same fractional bound the parent had. Inward only - widening
+      // an integer box cannot make the relaxation wrong, but narrowing past a feasible integer
+      // removes it from the problem with no symptom at all.
+      if (model.col_type[u] == VarType::kInteger) {
+        const double rounded_lower = finite(work.col_lower[u])
+                                         ? round_integer_lower(work.col_lower[u])
+                                         : work.col_lower[u];
+        const double rounded_upper = finite(work.col_upper[u])
+                                         ? round_integer_upper(work.col_upper[u])
+                                         : work.col_upper[u];
+        if (rounded_lower > work.col_lower[u] || rounded_upper < work.col_upper[u]) {
+          work.col_lower[u] = rounded_lower;
+          work.col_upper[u] = rounded_upper;
+          changed = true;
+        }
+      }
+
       if (work.col_lower[u] > work.col_upper[u] + feasibility) {
         infeasible(fmt::format("column {} has crossed bounds after presolve: [{:.6g}, {:.6g}]",
                                j, work.col_lower[u], work.col_upper[u]));
@@ -317,8 +356,11 @@ Result presolve(const Model& model, const Options& options, Logger& logger) {
         break;
       }
 
-      // Fixed column: the value is known, so fold it into the rows and drop it.
-      if (work.col_upper[u] - work.col_lower[u] <= feasibility && finite(work.col_lower[u])) {
+      // Fixed column: the value is known, so fold it into the rows and drop it. Not when the
+      // column carries curvature - the fold moves c_j * v into the objective constant and has
+      // no way to move 0.5 * Q_jj * v^2 or the cross terms with it (#301).
+      if (!work.quadratic_col[u] && work.col_upper[u] - work.col_lower[u] <= feasibility &&
+          finite(work.col_lower[u])) {
         const double value = work.col_lower[u];
         Record record;
         record.kind = Record::Kind::kFixedColumn;
@@ -333,7 +375,10 @@ Result presolve(const Model& model, const Options& options, Logger& logger) {
       // Empty column: nothing constrains it, so the cost alone decides. If the cost pushes
       // it toward an infinite bound the problem is unbounded, and we say so rather than
       // parking it somewhere arbitrary and letting the engine discover it later.
-      if (work.col_count[u] == 0) {
+      // An empty column parked at the bound its COST prefers, which is an argument about a
+      // linear objective: with curvature on the column the optimum can sit strictly inside
+      // the box (minimize 0.5 x^2 - x parks at 1, not at a bound), so it is left alone (#301).
+      if (work.col_count[u] == 0 && !work.quadratic_col[u]) {
         const double cost = model.sense_multiplier() * work.col_cost[u];
         double value = 0.0;
         if (cost > 0.0) {
@@ -356,6 +401,14 @@ Result presolve(const Model& model, const Options& options, Logger& logger) {
         // phase 1 before it can report anything about the objective, which is exactly the
         // ordering this reduction cannot reproduce on its own.
         if (!finite(value)) continue;
+        // An integer column parked at a fractional bound would come back out of postsolve
+        // fractional, and the search would never see it to branch on (#301). Bounds on
+        // integer columns are normally integral; when they are not, leaving the column in the
+        // model costs one variable and keeps the answer integral.
+        if (model.col_type[u] == VarType::kInteger &&
+            std::fabs(value - std::round(value)) > tol::kIntegrality) {
+          continue;
+        }
         Record record;
         record.kind = Record::Kind::kEmptyColumn;
         record.index = j;
@@ -379,7 +432,16 @@ Result presolve(const Model& model, const Options& options, Logger& logger) {
       // reason kEmptyColumn above does not: some other, as yet unexamined, row might make the
       // feasible region empty. So this reduction simply declines rather than guess, exactly
       // like kEmptyColumn's own unboundedness case just above it.
-      if (work.col_count[u] == 1 && !finite(work.col_lower[u]) && !finite(work.col_upper[u])) {
+      // Not for a column with curvature (#301): the argument above is "x_j's cost is linear,
+      // so the objective is minimised at an END of the interval", which is exactly the
+      // premise a quadratic term removes.
+      // Nor for an integer column (#301): x_j is recovered in postsolve as
+      // (row target - the rest) / a, which has no reason to be an integer, and an integer
+      // column handed back fractional is exactly the failure the branch and bound exists to
+      // prevent - the search never sees the column to branch on it.
+      if (work.col_count[u] == 1 && !work.quadratic_col[u] &&
+          model.col_type[u] != VarType::kInteger && !finite(work.col_lower[u]) &&
+          !finite(work.col_upper[u])) {
         // The live row's coefficient is read from `original` and then patched by
         // extra_row_delta[j] - a doubleton's fill-in can have adjusted it already, and using
         // the ORIGINAL, stale value here computes a substitution formula for the WRONG row
@@ -660,6 +722,13 @@ Result presolve(const Model& model, const Options& options, Logger& logger) {
         // equality instead.
         if (work.doubleton_touched[ue] || work.doubleton_touched[uk]) continue;
 
+        // Neither column may carry curvature (#301). Substituting x_elim = (rhs - b*x_keep)/a
+        // into 0.5 x'Qx produces a square and a cross term in x_keep that the reduced model
+        // has nowhere to store, and dropping them would solve a different objective. Only
+        // the eliminated column strictly has to be clean, but a Q entry linking the two
+        // would land on the survivor as well, so both are required.
+        if (work.quadratic_col[ue] || work.quadratic_col[uk]) continue;
+
         // A column ALREADY the subject of a kSingletonRow reduction (its bound tightened or
         // fully explained by that row) cannot enter a doubleton either, in either role - see
         // singleton_row_touched's field comment for why: two rows would then be contending
@@ -867,8 +936,53 @@ Result presolve(const Model& model, const Options& options, Logger& logger) {
     }
   }
   reduced.matrix.finalize();
+
+  // THE QUADRATIC OBJECTIVE TRAVELS WITH THE MODEL (#301). This used to reset the Hessian to
+  // empty, which is why presolve could only ever run on an LP: handing a QP's reduced model
+  // to the engine would have dropped its curvature silently and solved a different problem.
+  // Every column carrying a Hessian entry is protected from removal above, so each entry's
+  // two columns are still alive here and the remap is total.
   reduced.hessian.reset(reduced_cols, reduced_cols);
+  bool hessian_column_lost = false;
+  for (Index j = 0; j < model.hessian.num_cols() && !hessian_column_lost; ++j) {
+    const ColumnView column = model.hessian.column(j);
+    const Index mapped_col = new_col_index[static_cast<std::size_t>(j)];
+    for (Index k = 0; k < column.size; ++k) {
+      const Index mapped_row = new_col_index[static_cast<std::size_t>(column.rows[k])];
+      if (mapped_col < 0 || mapped_row < 0) {
+        hessian_column_lost = true;
+        break;
+      }
+      reduced.hessian.add_entry(mapped_row, mapped_col, column.values[k]);
+    }
+  }
   reduced.hessian.finalize();
+
+  // The protection above should make this unreachable: every column carrying a Hessian entry
+  // is refused to every reduction that removes one. If a future reduction forgets that, the
+  // choice here is between a model whose curvature is silently gone and no reductions at all,
+  // and only one of those can be wrong about the answer. So presolve hands back the model it
+  // was given and says why.
+  if (hessian_column_lost) {
+    logger.warning(
+        "Presolve: a column carrying a quadratic term was removed by a reduction that is not "
+        "allowed to remove one; discarding every reduction and solving the model as given");
+    Result identity;
+    identity.model = model;
+    identity.original_rows = result.original_rows;
+    identity.original_cols = result.original_cols;
+    identity.original_nonzeros = result.original_nonzeros;
+    identity.col_to_original.resize(static_cast<std::size_t>(model.num_cols()));
+    identity.row_to_original.resize(static_cast<std::size_t>(model.num_rows()));
+    for (Index j = 0; j < model.num_cols(); ++j) {
+      identity.col_to_original[static_cast<std::size_t>(j)] = j;
+    }
+    for (Index i = 0; i < model.num_rows(); ++i) {
+      identity.row_to_original[static_cast<std::size_t>(i)] = i;
+    }
+    identity.message = "presolve declined: a quadratic column was lost by a reduction";
+    return identity;
+  }
 
   logger.info("Presolve: {} rows -> {}, {} columns -> {}, {} nonzeros -> {}",
               result.original_rows, reduced_rows, result.original_cols, reduced_cols,
@@ -1759,6 +1873,33 @@ Solution postsolve(const Result& result, const Model& original, const Solution& 
   solution.refinement_steps = reduced.refinement_steps;
   solution.residual_before_refinement = reduced.residual_before_refinement;
   solution.residual_after_refinement = reduced.residual_after_refinement;
+
+  // THE SOLUTION POOL COMES BACK TOO (#301, with #225). Every member is a point of the
+  // REDUCED model, which means nothing to a caller who handed us the original: the vectors
+  // are the wrong length and the columns are in the wrong places. Since #301 lets a MILP be
+  // presolved, the pool now travels this path on every presolved MILP solve.
+  //
+  // Each member is mapped by calling this same function on it rather than by a second copy of
+  // the reconstruction above. The replay is the most dangerous code in the project and one
+  // implementation of it is the only way to be sure the pool and the reported point are
+  // restored by identical arithmetic. The recursion is one level deep: the Solution built
+  // here carries no pool of its own.
+  if (!reduced.pool.empty()) {
+    solution.pool.reserve(reduced.pool.size());
+    for (const Solution::PoolEntry& member : reduced.pool) {
+      Solution one;
+      one.status = reduced.status;
+      one.col_value = member.col_value;
+      Solution restored = postsolve(result, original, one);
+      Solution::PoolEntry mapped;
+      mapped.col_value = std::move(restored.col_value);
+      // Recomputed on the ORIGINAL model, the same call recompute_quality() makes below for
+      // the reported point, so pool[0] and `objective` agree to the last bit.
+      mapped.objective = original.evaluate_objective(mapped.col_value.data());
+      solution.pool.push_back(std::move(mapped));
+    }
+  }
+
   solution.recompute_quality(original);
 
   return solution;
