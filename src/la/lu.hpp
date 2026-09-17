@@ -146,8 +146,12 @@ class SparseLu {
   /// `alpha` = B^-1 a for the entering column a. `alpha` must have `dimension()` entries.
   ///
   /// Returns false when the pivot element alpha[leaving_position] is too small relative to
-  /// the rest of the vector for the update to be numerically safe. The caller must then
-  /// refactorize from scratch; the factorization is left untouched and usable.
+  /// the rest of the vector for the update to be numerically safe, OR when
+  /// update_forrest_tomlin() has already been used on this factorization - the two schemes
+  /// are mutually exclusive (see below), and an eta appended here would never be read by
+  /// either solve path once Forrest-Tomlin mode is active, which is silently wrong rather
+  /// than merely inefficient. Either way the caller must refactorize from scratch; the
+  /// factorization itself is left untouched and usable.
   [[nodiscard]] bool update(Index leaving_position, const double* alpha);
 
   // -------------------------------------------------------------------------------------
@@ -185,17 +189,31 @@ class SparseLu {
   // where the win comes from; should_refactorize() caps it the same way.
   //
   // Only one of update() / update_forrest_tomlin() may be used on a given factorization;
-  // calling the other afterwards fails rather than silently mixing the two schemes.
+  // calling the other afterwards fails rather than silently mixing the two schemes (both
+  // directions refuse - see update() above and the guard at the top of this one).
+  //
+  // ACCEPTANCE THRESHOLD. update() rejects a pivot too small relative to max|alpha|, in the
+  // basis's own coordinates. This rejects a pivot too small relative to max|spike|, where
+  // spike = L^-1 P a: the same relative test, but against a vector on a different scale
+  // (already partially reduced through U). The two modes' "declined as unsafe" counts are
+  // therefore not directly comparable.
+  //
+  // KNOWN COST. ft_row_/ft_col_ are vector<vector<pair<Index,double>>>: correct and simple,
+  // but two heap allocations per step at every ft_init() and pointer-chasing on every solve,
+  // rather than the one contiguous array u_start_/u_steps_ gives the product form. A CSR
+  // layout with per-row slack (Koberstein 2005, ch. 5) would keep this O(fill) instead of
+  // O(m) allocations and let solves walk one array; not done here.
   // -------------------------------------------------------------------------------------
 
-  /// The Forrest-Tomlin counterpart to update(): same contract (returns false, factors left
-  /// alone in spirit but a refactorize() is required regardless - see below), same `alpha`,
-  /// but the replacement is folded into U instead of appended to an eta file.
+  /// The Forrest-Tomlin counterpart to update(): same contract, same `alpha`, but the
+  /// replacement is folded into U (plus one row eta) instead of appended to an eta file.
   ///
-  /// A caller that reads false is expected to refactorize before solving again - exactly
-  /// what every caller of update() already does today. Because of that, a rejected update
-  /// here may leave U partway through the fold; that state is never read, since the very
-  /// next call is factorize().
+  /// Returns false, WITHOUT MODIFYING ANYTHING, in exactly two cases: the recovered spike
+  /// column is non-finite, or its entry at the leaving step is too small relative to the
+  /// rest of it to divide by (see ACCEPTANCE THRESHOLD above). Both checks happen before the
+  /// first write; a caller that reads false may keep using this instance exactly as
+  /// update()'s caller does. Every caller today refactorizes anyway once either update
+  /// returns false, but this instance itself is not the reason to.
   [[nodiscard]] bool update_forrest_tomlin(Index leaving_position, const double* alpha);
 
   /// True once update_forrest_tomlin() has been used at least once since factorize().
@@ -327,6 +345,10 @@ class SparseLu {
   // exactly as it was when position and step coincided before the first update.
   bool ft_active_ = false;
   Index ft_base_row_nonzeros_ = 0;  ///< off-diagonal entry count at the moment FT mode began
+  /// Running total of ft_row_'s entries, maintained by ft_set()/ft_erase() so
+  /// ft_extra_nonzeros() is O(1) rather than a sum over every row on every call - the
+  /// simplex's refactorization policy needs to read it every iteration (issue #68).
+  Index ft_row_fill_ = 0;
 
   /// Fixed forever once built: the step that has represented basis position p since
   /// factorize(), i.e. the inverse of pivot_col_.
@@ -354,9 +376,13 @@ class SparseLu {
   std::vector<double> ft_reta_values_;
 
   mutable std::vector<double> ft_scratch_;  ///< step-indexed scratch, reused across calls
+  /// Per-update scratch for update_forrest_tomlin(), sized to m by ft_init() and reused
+  /// across calls for the same reason work_ is: several hundred updates a second must not
+  /// each allocate two fresh vectors.
+  std::vector<double> ft_spike_;
+  std::vector<double> ft_r_;
 
   void ft_init();
-  [[nodiscard]] double ft_get(Index owner_step, Index referenced_step) const;
   void ft_set(Index owner_step, Index referenced_step, double value);
   void ft_erase(Index owner_step, Index referenced_step);
   /// The partial BTRAN identified by Forrest & Tomlin as the way to compute the row-eta:
@@ -367,6 +393,11 @@ class SparseLu {
   void ft_apply_retas_transposed(double* z_by_step) const;  ///< BTRAN: newest first
   void ft_back_substitute(double* residual_by_step, double* solution_by_step) const;
   void ft_forward_substitute(double* z_by_step) const;
+  /// The hyper-sparse transposed-elimination pass (#243), shared by both update schemes
+  /// since neither ever touches L: applies M_k^T in decreasing k to work_, indexed by step
+  /// throughout, picking up wherever forward_u_transposed() or
+  /// ft_forward_substitute()+ft_apply_retas_transposed() left it.
+  void apply_transposed_l() const;
 };
 
 }  // namespace sankhya

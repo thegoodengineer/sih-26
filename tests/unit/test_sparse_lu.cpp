@@ -742,13 +742,11 @@ TEST(SparseLuForrestTomlin, RejectsAnUnsafePivotInsteadOfDividingByIt) {
   std::vector<double> alpha(static_cast<std::size_t>(m), 1.0);
   alpha[2] = 1e-14;
   EXPECT_FALSE(lu.update_forrest_tomlin(2, alpha.data()));
+  EXPECT_EQ(lu.ft_update_count(), 0);
 
-  // Unlike update(), a rejected fold may leave U mid-transformation - the same contract
-  // every caller of either update path already relies on (primal_simplex.cpp and
-  // dual_simplex.cpp both refactorize immediately on a false return, never solving again
-  // against the old state first). A fresh factorize() must still leave a clean, usable
-  // instance.
-  ASSERT_TRUE(lu.factorize(matrix.columns(), m, tol::kPivotTolerance, kThreshold));
+  // Both rejections in update_forrest_tomlin() happen before the first write, exactly like
+  // update()'s own contract, so the factorization is untouched and still solves as it did -
+  // no refactorize() needed first.
   std::vector<double> b{1.0, 2.0, 3.0, 4.0};
   lu.solve(b.data());
   EXPECT_DOUBLE_EQ(b[0], 1.0);
@@ -777,6 +775,26 @@ TEST(SparseLuForrestTomlin, AsksToRefactorizeOnceTheRowEtaFileGrows) {
   }
   EXPECT_TRUE(lu.should_refactorize())
       << "the row-eta file grew without bound; the refactorization trigger never fired";
+}
+
+TEST(SparseLuForrestTomlin, RefusesToMixWithTheProductForm) {
+  // Whichever scheme goes first, the other must refuse rather than silently reading a U
+  // that no longer represents the basis (Forrest-Tomlin went first) or an eta file no solve
+  // path ever applies (the product form went first).
+  constexpr Index m = 4;
+  TestMatrix matrix(m);
+  for (Index i = 0; i < m; ++i) matrix.set(i, i, 1.0);
+  std::vector<double> alpha{2.0, 0.0, 0.0, 0.0};
+
+  SparseLu ft_first;
+  ASSERT_TRUE(ft_first.factorize(matrix.columns(), m, tol::kPivotTolerance, kThreshold));
+  ASSERT_TRUE(ft_first.update_forrest_tomlin(0, alpha.data()));
+  EXPECT_FALSE(ft_first.update(1, alpha.data()));
+
+  SparseLu pf_first;
+  ASSERT_TRUE(pf_first.factorize(matrix.columns(), m, tol::kPivotTolerance, kThreshold));
+  ASSERT_TRUE(pf_first.update(0, alpha.data()));
+  EXPECT_FALSE(pf_first.update_forrest_tomlin(1, alpha.data()));
 }
 
 TEST(SparseLu, HyperSparseSolveAgreesWithTheReferenceGather) {

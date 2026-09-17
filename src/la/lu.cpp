@@ -243,6 +243,7 @@ bool SparseLu::factorize(const std::vector<LuColumn>& columns, Index m, double p
   base_nonzeros_ = 0;
   ft_active_ = false;
   ft_base_row_nonzeros_ = 0;
+  ft_row_fill_ = 0;
   ft_step_of_position_.clear();
   ft_position_.clear();
   ft_step_at_.clear();
@@ -371,6 +372,10 @@ void SparseLu::build_column_u() {
 bool SparseLu::update(Index leaving_position, const double* alpha) {
   if (m_ == 0) return false;
   if (leaving_position < 0 || leaving_position >= m_) return false;
+  // The symmetric guard to update_forrest_tomlin()'s own check: once Forrest-Tomlin mode
+  // has folded any update into U, appending a product-form eta here would never be read by
+  // either solve() path - U itself, not an outer eta file, is what represents those updates.
+  if (ft_active_) return false;
 
   const auto pivot_index = static_cast<std::size_t>(leaving_position);
   const double pivot = alpha[pivot_index];
@@ -842,7 +847,8 @@ void SparseLu::solve(double* b) const {
           b[static_cast<std::size_t>(pivot_row_[static_cast<std::size_t>(k)])];
     }
     ft_apply_retas(work_.data());
-    ft_scratch_.assign(static_cast<std::size_t>(m_), 0.0);
+    // No zero-fill: ft_back_substitute() visits every position exactly once and writes
+    // ft_scratch_ at every one, so a prior call's contents are fully overwritten regardless.
     ft_back_substitute(work_.data(), ft_scratch_.data());
     for (Index s = 0; s < m_; ++s) {
       b[static_cast<std::size_t>(pivot_col_[static_cast<std::size_t>(s)])] =
@@ -881,6 +887,10 @@ void SparseLu::solve(double* b) const {
 }
 
 void SparseLu::solve_reference(double* b) const {
+  // Tests only, and it reads u_start_/uc_start_/pivot_value_ directly - none of which a
+  // Forrest-Tomlin update ever touches, so this would silently answer for the ORIGINAL
+  // basis rather than the updated one. solve() itself dispatches correctly; this does not.
+  assert(!ft_active_ && "solve_reference() ignores update_forrest_tomlin(); use solve()");
   if (m_ == 0) return;
   forward_l(b);
   // Back-substitute in decreasing k. work_ holds x indexed by elimination step, so that the
@@ -945,60 +955,18 @@ void SparseLu::forward_u_transposed() const {
   }
 }
 
-void SparseLu::solve_transpose(double* b) const {
-  if (m_ == 0) return;
-
-  if (ft_active_) {
-    // Gather via pivot_col_ exactly as below, run the Forrest-Tomlin forward substitution
-    // in place of forward_u_transposed(), then the row-eta file NEWEST first (the reverse of
-    // FTRAN's order above, for the same reason apply_etas_transposed() reverses update()'s),
-    // then the same L^T pass (lr_, untouched by every Forrest-Tomlin update) and scatter.
-    for (Index k = 0; k < m_; ++k) {
-      work_[static_cast<std::size_t>(k)] =
-          b[static_cast<std::size_t>(pivot_col_[static_cast<std::size_t>(k)])];
-    }
-    ft_forward_substitute(work_.data());
-    ft_apply_retas_transposed(work_.data());
-
-    std::vector<double>& z = work_;
-    for (Index k = m_ - 1; k >= 0; --k) {
-      const auto uk = static_cast<std::size_t>(k);
-      const double value = z[uk];
-      if (value == 0.0) continue;
-      const Index begin = lr_start_[uk];
-      const Index end = lr_start_[uk + 1];
-      for (Index p = begin; p < end; ++p) {
-        const auto up = static_cast<std::size_t>(p);
-        z[static_cast<std::size_t>(lr_steps_[up])] -= lr_values_[up] * value;
-      }
-    }
-
-    for (Index k = 0; k < m_; ++k) {
-      b[static_cast<std::size_t>(pivot_row_[static_cast<std::size_t>(k)])] =
-          z[static_cast<std::size_t>(k)];
-    }
-    return;
-  }
-
-  apply_etas_transposed(b);
-
-  // work_ is indexed by step from here to the end: the right-hand side enters through the
-  // pivot columns and the answer leaves through the pivot rows, and both triangular passes
-  // run in step space in between, so nothing is scattered to row order and gathered back.
-  for (Index k = 0; k < m_; ++k) {
-    work_[static_cast<std::size_t>(k)] =
-        b[static_cast<std::size_t>(pivot_col_[static_cast<std::size_t>(k)])];
-  }
-  forward_u_transposed();
-
-  // HYPER-SPARSE TRANSPOSED ELIMINATION (#243; Gilbert & Peierls 1988). Apply M_k^T in
-  // DECREASING k. M_k^T subtracts, from the component on pivot row r_k, the multipliers of
-  // step k times the components on the rows they touch; every row a step-k multiplier
-  // touches is retired at a LATER step, so in decreasing k the component on r_k is final
-  // the moment step k is reached and can be pushed into every earlier step that holds a
-  // multiplier on r_k - which is exactly what the row-wise L lists. A zero component
-  // pushes nothing, so a sparse rho costs the rows it reaches rather than the whole of L,
-  // which the gather in solve_transpose_reference() reads regardless.
+void SparseLu::apply_transposed_l() const {
+  // HYPER-SPARSE TRANSPOSED ELIMINATION (#243; Gilbert & Peierls 1988), shared by both
+  // update schemes since neither ever touches L. Apply M_k^T in DECREASING k to work_,
+  // already indexed by step by the caller (forward_u_transposed(), or
+  // ft_forward_substitute() + ft_apply_retas_transposed()). M_k^T subtracts, from the
+  // component on pivot row r_k, the multipliers of step k times the components on the rows
+  // they touch; every row a step-k multiplier touches is retired at a LATER step, so in
+  // decreasing k the component on r_k is final the moment step k is reached and can be
+  // pushed into every earlier step that holds a multiplier on r_k - which is exactly what
+  // the row-wise L lists. A zero component pushes nothing, so a sparse rho costs the rows it
+  // reaches rather than the whole of L, which the gather in solve_transpose_reference()
+  // reads regardless.
   std::vector<double>& z = work_;
   for (Index k = m_ - 1; k >= 0; --k) {
     const auto uk = static_cast<std::size_t>(k);
@@ -1011,14 +979,47 @@ void SparseLu::solve_transpose(double* b) const {
       z[static_cast<std::size_t>(lr_steps_[up])] -= lr_values_[up] * value;
     }
   }
+}
 
+void SparseLu::solve_transpose(double* b) const {
+  if (m_ == 0) return;
+
+  if (ft_active_) {
+    // Gather via pivot_col_ exactly as below, run the Forrest-Tomlin forward substitution in
+    // place of forward_u_transposed(), then the row-eta file NEWEST first (the reverse of
+    // FTRAN's order above, for the same reason apply_etas_transposed() reverses update()'s).
+    for (Index k = 0; k < m_; ++k) {
+      work_[static_cast<std::size_t>(k)] =
+          b[static_cast<std::size_t>(pivot_col_[static_cast<std::size_t>(k)])];
+    }
+    ft_forward_substitute(work_.data());
+    ft_apply_retas_transposed(work_.data());
+  } else {
+    apply_etas_transposed(b);
+
+    // work_ is indexed by step from here to the end: the right-hand side enters through the
+    // pivot columns and the answer leaves through the pivot rows, and both triangular
+    // passes run in step space in between, so nothing is scattered to row order and
+    // gathered back.
+    for (Index k = 0; k < m_; ++k) {
+      work_[static_cast<std::size_t>(k)] =
+          b[static_cast<std::size_t>(pivot_col_[static_cast<std::size_t>(k)])];
+    }
+    forward_u_transposed();
+  }
+
+  // The L^T pass (lr_, untouched by either update scheme) and the final scatter are shared.
+  apply_transposed_l();
   for (Index k = 0; k < m_; ++k) {
     b[static_cast<std::size_t>(pivot_row_[static_cast<std::size_t>(k)])] =
-        z[static_cast<std::size_t>(k)];
+        work_[static_cast<std::size_t>(k)];
   }
 }
 
 void SparseLu::solve_transpose_reference(double* b) const {
+  // Tests only - see the note on solve_reference() above; the same staleness applies here.
+  assert(!ft_active_ &&
+         "solve_transpose_reference() ignores update_forrest_tomlin(); use solve_transpose()");
   if (m_ == 0) return;
   apply_etas_transposed(b);
 
@@ -1058,9 +1059,7 @@ void SparseLu::solve_transpose_reference(double* b) const {
 // =========================================================================================
 
 Index SparseLu::ft_extra_nonzeros() const noexcept {
-  Index total = 0;
-  for (const auto& row : ft_row_) total += static_cast<Index>(row.size());
-  return total - ft_base_row_nonzeros_ + static_cast<Index>(ft_reta_steps_.size());
+  return ft_row_fill_ - ft_base_row_nonzeros_ + static_cast<Index>(ft_reta_steps_.size());
 }
 
 void SparseLu::ft_init() {
@@ -1094,19 +1093,15 @@ void SparseLu::ft_init() {
     }
   }
   ft_base_row_nonzeros_ = static_cast<Index>(u_steps_.size());
+  ft_row_fill_ = ft_base_row_nonzeros_;
   ft_scratch_.assign(static_cast<std::size_t>(m), 0.0);
+  ft_spike_.assign(static_cast<std::size_t>(m), 0.0);
+  ft_r_.assign(static_cast<std::size_t>(m), 0.0);
   ft_reta_pivot_step_.clear();
   ft_reta_start_.assign(1, 0);
   ft_reta_steps_.clear();
   ft_reta_values_.clear();
   ft_active_ = true;
-}
-
-double SparseLu::ft_get(Index owner_step, Index referenced_step) const {
-  for (const auto& entry : ft_row_[static_cast<std::size_t>(owner_step)]) {
-    if (entry.first == referenced_step) return entry.second;
-  }
-  return 0.0;
 }
 
 void SparseLu::ft_set(Index owner_step, Index referenced_step, double value) {
@@ -1119,7 +1114,10 @@ void SparseLu::ft_set(Index owner_step, Index referenced_step, double value) {
       break;
     }
   }
-  if (!found) r.emplace_back(referenced_step, value);
+  if (!found) {
+    r.emplace_back(referenced_step, value);
+    ++ft_row_fill_;
+  }
 
   auto& c = ft_col_[static_cast<std::size_t>(referenced_step)];
   found = false;
@@ -1139,6 +1137,7 @@ void SparseLu::ft_erase(Index owner_step, Index referenced_step) {
     if (r[i].first == referenced_step) {
       r[i] = r.back();
       r.pop_back();
+      --ft_row_fill_;
       break;
     }
   }
@@ -1265,13 +1264,15 @@ bool SparseLu::update_forrest_tomlin(Index leaving_position, const double* alpha
   // work_by_step[s] = alpha[pivot_col_[s]] is what back-substitution through the CURRENT U
   // produced from a~, so multiplying that same U forward through it recovers a~ again - the
   // identity U * work_by_step == a~, read the other way. Both loops here are over STEP
-  // directly, since ft_row_/ft_diag_ are step-keyed and never need a position lookup.
-  work_.assign(static_cast<std::size_t>(m), 0.0);
+  // directly, since ft_row_/ft_diag_ are step-keyed and never need a position lookup. No
+  // zero-fill of work_ first: every entry is about to be overwritten by the loop below.
   for (Index s = 0; s < m; ++s) {
     work_[static_cast<std::size_t>(s)] =
         alpha[static_cast<std::size_t>(pivot_col_[static_cast<std::size_t>(s)])];
   }
-  std::vector<double> spike(static_cast<std::size_t>(m), 0.0);
+  // ft_spike_/ft_r_ are member scratch, sized once by ft_init(), for the same reason work_
+  // is: this runs on the pivot path several hundred times a second.
+  std::vector<double>& spike = ft_spike_;
   for (Index step = 0; step < m; ++step) {
     const auto us = static_cast<std::size_t>(step);
     double value = ft_diag_[us] * work_[us];
@@ -1288,11 +1289,11 @@ bool SparseLu::update_forrest_tomlin(Index leaving_position, const double* alpha
   // u-bar_p^T = e_p^T U - diag(s0) e_p^T, and e_p^T U U^-1 cancels the first term.
   const double old_diagonal_s0 = ft_diag_[static_cast<std::size_t>(s0)];
   ft_btran_unit(s0, ft_scratch_.data());
-  std::vector<double> r(static_cast<std::size_t>(m), 0.0);
+  std::vector<double>& r = ft_r_;
   for (Index step = 0; step < m; ++step) {
-    if (step == s0) continue;  // r's own pivot entry is always exactly 0
-    r[static_cast<std::size_t>(step)] =
-        -old_diagonal_s0 * ft_scratch_[static_cast<std::size_t>(step)];
+    const auto us = static_cast<std::size_t>(step);
+    r[us] = (step == s0) ? 0.0  // r's own pivot entry is always exactly 0
+                         : -old_diagonal_s0 * ft_scratch_[us];
   }
 
   // Applying R^-1 to the spike modifies only its s0 entry (R^-1 = I - e_s0 r^T): the new
@@ -1308,6 +1309,8 @@ bool SparseLu::update_forrest_tomlin(Index leaving_position, const double* alpha
     dot += r[static_cast<std::size_t>(k)] * spike[static_cast<std::size_t>(k)];
   }
   const double new_diagonal = spike[static_cast<std::size_t>(s0)] - dot;
+  // Both rejections happen here, before the first write below: a caller that reads false
+  // may keep using this instance exactly as it would after update() returning false.
   if (!std::isfinite(new_diagonal)) return false;
   if (std::fabs(new_diagonal) < kUpdatePivotThreshold * std::max(1.0, largest)) return false;
 
