@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <cmath>
 #include <string>
+#include <string_view>
 
 #include <fmt/format.h>
 
@@ -329,20 +330,39 @@ void reconcile_status_with_measurement(Solution* solution, const Options& option
   }
 }
 
+namespace {
+Solution solve_unguarded(const Model& model, const Options& options, SolveControl* control,
+                         Logger& logger, const Timer& timer);
+}  // namespace
+
 Solution solve(const Model& model, const Options& options, SolveControl* control) {
   Timer timer;
+  {
+    Solution solution;
+    solution.allocate_for(model);
+    const std::string problem = model.validate();
+    if (!problem.empty()) {
+      solution.status = SolveStatus::kModelError;
+      solution.message = problem;
+      solution.solve_seconds = timer.elapsed_seconds();
+      return solution;
+    }
+  }
+  Logger logger(options.get_bool("log_to_console") ? stdout : nullptr);
+  // The whole dispatch runs under the out-of-memory guard (#246): an engine that exhausts
+  // the machine comes back as a status with the engine named, not as an aborted process.
+  const std::string engine = options.get_string("algorithm");
+  return run_engine_guarded(
+      [&] { return solve_unguarded(model, options, control, logger, timer); },
+      engine == "auto" ? std::string_view("solver") : std::string_view(engine), timer, logger);
+}
+
+namespace {
+Solution solve_unguarded(const Model& model, const Options& options, SolveControl* control,
+                         Logger& logger, const Timer& timer) {
   Solution solution;
   solution.allocate_for(model);
 
-  const std::string problem = model.validate();
-  if (!problem.empty()) {
-    solution.status = SolveStatus::kModelError;
-    solution.message = problem;
-    solution.solve_seconds = timer.elapsed_seconds();
-    return solution;
-  }
-
-  Logger logger(options.get_bool("log_to_console") ? stdout : nullptr);
   apply_thread_option(options, logger);
   LogLevel level = LogLevel::kInfo;
   if (parse_log_level(options.get_string("log_level"), &level)) logger.set_level(level);
@@ -354,6 +374,96 @@ Solution solve(const Model& model, const Options& options, SolveControl* control
               model.name.empty() ? std::string("(unnamed)") : model.name, model.num_rows(),
               model.num_cols(), model.num_nonzeros(), model.num_integer_columns());
   logger.info("Problem class: {}", class_name(problem_class));
+
+  // PRESOLVE RUNS HERE, not inside an engine, and for EVERY class (#301). The reductions are
+  // properties of the model, so every engine gets them, and - more importantly - postsolve
+  // then re-measures the recovered point against the ORIGINAL model before the status guard
+  // sees it. A reduction or postsolve bug therefore surfaces as a feasibility violation on a
+  // model no engine ever touched, and the guard downgrades the status rather than letting a
+  // confident answer to a different problem out of the door.
+  //
+  // Until #301 this wrapper existed only inside the LP branch, so a MILP, QP or MIQP was
+  // handed straight to its engine with `presolve` silently ignored. What made that more than
+  // an oversight is that presolve used to empty the reduced model's Hessian: running it on a
+  // QP would have dropped the curvature. Columns carrying Hessian entries are now protected
+  // from removal and the Hessian travels with the reduced model, so the same pipeline is
+  // correct for all four classes.
+  //
+  // `proved` comes back true when presolve settled the model on its own; the caller then has
+  // a complete Solution and returns it.
+  const auto with_presolve = [&](auto&& engine, bool* proved) -> Solution {
+    *proved = false;
+    // A COMPLETE SOLUTION POOL AND PRESOLVE ASK FOR DIFFERENT THINGS (#301 meeting #225).
+    // pool_complete promises the k best integer assignments OF THE MODEL THE CALLER HANDED
+    // OVER. Presolve's column removals are optimality arguments as much as feasibility ones -
+    // an empty column is parked at the bound its cost prefers, a free singleton is
+    // substituted at the end of its interval - so the assignments they settle are exactly the
+    // alternatives the pool was asked to enumerate. Keeping both would report "the four best
+    // plans" for a model with columns already spent. The complete pool wins, and says so.
+    const bool mixed_integer =
+        problem_class == ProblemClass::kMilp || problem_class == ProblemClass::kMiqp;
+    if (mixed_integer && options.get_bool("presolve") && options.get_bool("pool_complete")) {
+      logger.info(
+          "Presolve skipped: pool_complete enumerates the best assignments of the model as "
+          "given, and presolve settles some of those columns before the search sees them");
+      return engine(model);
+    }
+    if (!options.get_bool("presolve")) {
+      if (!options.get_string("write_presolved").empty()) {
+        logger.warning(
+            "write_presolved: presolve is off, so there is no presolved model to write; "
+            "nothing was written");
+      }
+      return engine(model);
+    }
+
+    const presolve::Result reduced = presolve::presolve(model, options, logger);
+    if (reduced.proved_infeasible) {
+      Solution proof;
+      proof.allocate_for(model);
+      proof.status = SolveStatus::kInfeasible;
+      proof.algorithm = "presolve";
+      // The same bound convention the engines use for an infeasible verdict (#299): the
+      // worst value the objective can take, on the model's own sense.
+      proof.dual_bound = model.sense == ObjSense::kMaximize ? -kInfinity : kInfinity;
+      // Presolve's proof is a small Farkas argument over the rows it used (#253), handed
+      // over as a candidate and checked here against the ORIGINAL model exactly as an
+      // engine's certificate is; one that does not hold (a contradiction that needed
+      // integrality rounding, say) is dropped and the message says so.
+      proof.message = reduced.message + "; proved by presolve";
+      if (problem_class == ProblemClass::kMilp || problem_class == ProblemClass::kMiqp) {
+        // The branch and bound's convention for "nothing was found", which presolve's proof
+        // has to match now that it can settle a MILP: the worst representable objective and
+        // infinite gaps. Leaving them at zero would print `gap 0.00e+00` beside a model that
+        // has no point at all, and a gap of zero reads as a closed search.
+        const double nothing_found =
+            model.sense == ObjSense::kMaximize ? -kInfinity : kInfinity;
+        proof.objective = nothing_found;
+        proof.absolute_gap = kInfinity;
+        proof.relative_gap = kInfinity;
+      }
+      proof.farkas_dual = reduced.farkas_dual;
+      keep_only_a_proved_certificate(&proof, model, logger);
+      proof.solve_seconds = timer.elapsed_seconds();
+      *proved = true;
+      return proof;
+    }
+
+    // Dump the presolved model when --option write_presolved=<path> is set.
+    const std::string presolved_path = options.get_string("write_presolved");
+    if (!presolved_path.empty()) {
+      std::string write_error;
+      if (!io::write_model(presolved_path, reduced.model, &write_error)) {
+        logger.warning("write_presolved: {}", write_error);
+      } else {
+        logger.info("Presolved model written to {}", presolved_path);
+      }
+    }
+
+    Solution inner = engine(reduced.model);
+    return presolve::postsolve(reduced, model, inner);
+  };
+  bool presolve_proved_it = false;
 
   if (problem_class == ProblemClass::kLp) {
     const std::string requested = options.get_string("algorithm");
@@ -408,53 +518,13 @@ Solution solve(const Model& model, const Options& options, SolveControl* control
           "--gpu requested but this build has no CUDA backend compiled in; running on CPU");
     }
 
-    // PRESOLVE RUNS HERE, not inside an engine. The reductions are properties of the model,
-    // so both engines get them, and - more importantly - postsolve then re-measures the
-    // recovered point against the ORIGINAL model before the status guard below sees it. A
-    // reduction or postsolve bug therefore surfaces as a feasibility violation on a model no
-    // engine ever touched, and the guard downgrades the status rather than letting a
-    // confident answer to a different problem out of the door.
-    if (options.get_bool("presolve")) {
-      const presolve::Result reduced = presolve::presolve(model, options, logger);
-      if (reduced.proved_infeasible) {
-        solution.status = SolveStatus::kInfeasible;
-        solution.algorithm = "presolve";
-        // The same bound convention the engines use for an infeasible verdict (#299): the
-        // worst value the objective can take, on the model's own sense.
-        solution.dual_bound = model.sense == ObjSense::kMaximize ? -kInfinity : kInfinity;
-        // Presolve's proof is a small Farkas argument over the rows it used (#253), handed
-        // over as a candidate and checked here against the ORIGINAL model exactly as an
-        // engine's certificate is; one that does not hold (a contradiction that needed
-        // integrality rounding, say) is dropped and the message says so.
-        solution.message = reduced.message + "; proved by presolve";
-        solution.farkas_dual = reduced.farkas_dual;
-        keep_only_a_proved_certificate(&solution, model, logger);
-        solution.solve_seconds = timer.elapsed_seconds();
-        logger.info("Result: {} (proved during presolve)  {:.3f}s", to_string(solution.status),
-                    solution.solve_seconds);
-        return solution;
-      }
-      // Dump the presolved model when --option write_presolved=<path> is set.
-      const std::string presolved_path = options.get_string("write_presolved");
-      if (!presolved_path.empty()) {
-        std::string write_error;
-        if (!io::write_model(presolved_path, reduced.model, &write_error)) {
-          logger.warning("write_presolved: {}", write_error);
-        } else {
-          logger.info("Presolved model written to {}", presolved_path);
-        }
-      }
-      Solution inner = run_lp_engine(reduced.model);
-      solution = presolve::postsolve(reduced, model, inner);
-      solution.solve_seconds = timer.elapsed_seconds();
-    } else {
-      if (!options.get_string("write_presolved").empty()) {
-        logger.warning(
-            "write_presolved: presolve is off, so there is no presolved model to write; "
-            "nothing was written");
-      }
-      solution = run_lp_engine(model);
+    solution = with_presolve(run_lp_engine, &presolve_proved_it);
+    if (presolve_proved_it) {
+      logger.info("Result: {} (proved during presolve)  {:.3f}s", to_string(solution.status),
+                  solution.solve_seconds);
+      return solution;
     }
+    solution.solve_seconds = timer.elapsed_seconds();
     reconcile_status_with_measurement(&solution, options, logger, /*check_dual=*/true);
     refuse_a_non_finite_answer(&solution, logger);
     keep_only_a_proved_certificate(&solution, model, logger);
@@ -471,7 +541,16 @@ Solution solve(const Model& model, const Options& options, SolveControl* control
   }
 
   if (problem_class == ProblemClass::kMilp) {
-    solution = mip::solve_branch_and_bound(model, options, logger, control);
+    solution = with_presolve(
+        [&](const Model& target) {
+          return mip::solve_branch_and_bound(target, options, logger, control);
+        },
+        &presolve_proved_it);
+    if (presolve_proved_it) {
+      logger.info("Result: {} (proved during presolve)  {:.3f}s", to_string(solution.status),
+                  solution.solve_seconds);
+      return solution;
+    }
     reconcile_status_with_measurement(&solution, options, logger, /*check_dual=*/false);
     // NOT for the branch and bound's "nothing found" convention, which deliberately reports
     // the worst representable objective - an infinity there is a considered statement that
@@ -487,7 +566,16 @@ Solution solve(const Model& model, const Options& options, SolveControl* control
   }
 
   if (problem_class == ProblemClass::kQp) {
-    solution = qp::solve_convex_qp(model, options, logger, control);
+    solution = with_presolve(
+        [&](const Model& target) {
+          return qp::solve_convex_qp(target, options, logger, control);
+        },
+        &presolve_proved_it);
+    if (presolve_proved_it) {
+      logger.info("Result: {} (proved during presolve)  {:.3f}s", to_string(solution.status),
+                  solution.solve_seconds);
+      return solution;
+    }
     // check_dual is false: the QP's reduced costs are c + Qx - A'y, which is not the
     // quantity Solution::recompute_quality() tests, and applying the LP dual rule here
     // would reject correct answers. Primal feasibility and the status still have to agree.
@@ -510,7 +598,16 @@ Solution solve(const Model& model, const Options& options, SolveControl* control
     // rather than the quantity recompute_quality() measures. Integrality and primal
     // feasibility are what distinguish an MIQP answer from its relaxation, and both are
     // checked.
-    solution = mip::solve_branch_and_bound(model, options, logger, control);
+    solution = with_presolve(
+        [&](const Model& target) {
+          return mip::solve_branch_and_bound(target, options, logger, control);
+        },
+        &presolve_proved_it);
+    if (presolve_proved_it) {
+      logger.info("Result: {} (proved during presolve)  {:.3f}s", to_string(solution.status),
+                  solution.solve_seconds);
+      return solution;
+    }
     reconcile_status_with_measurement(&solution, options, logger, /*check_dual=*/false);
     logger.info("Result: {}  objective {:.10g}  bound {:.10g}  {} nodes  {:.3f}s",
                 to_string(solution.status), solution.objective, solution.dual_bound,
@@ -529,5 +626,6 @@ Solution solve(const Model& model, const Options& options, SolveControl* control
   solution.solve_seconds = timer.elapsed_seconds();
   return solution;
 }
+}  // namespace
 
 }  // namespace sankhya

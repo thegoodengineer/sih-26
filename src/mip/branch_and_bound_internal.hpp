@@ -53,6 +53,32 @@ struct DomainChange {
 /// A node holds only its OWN bound change and a link to its parent. The full domain is
 /// recovered by walking to the root, which is why the tree costs O(depth) per node instead
 /// of O(columns).
+/// Which open node the search takes next (#293).
+///
+/// Node selection changes the ORDER the tree is explored in and nothing else: the same nodes
+/// exist, the same bounds prune them, and the optimum is the optimum under every policy. What
+/// it does change is when the first incumbent arrives, how fast the global bound moves, and
+/// how many nodes stay open at once - which is why one fixed policy suits no model.
+///
+/// Reference: Achterberg, "Constraint Integer Programming" (thesis, 2007), ch. 6, for the
+/// best-estimate rule and the dive-then-best-bound hybrid.
+enum class NodeSelection {
+  /// Dive to a leaf, then best-bound. An early incumbent is what makes every later bound able
+  /// to prune, and best-bound afterwards keeps the tree from growing where it cannot pay.
+  kHybrid,
+  /// Always the smallest bound. Proves optimality in the fewest nodes and keeps the widest
+  /// tree open, so the memory is the price.
+  kBestBound,
+  /// Always the deepest node. Narrow tree, fast to a first incumbent, and the global bound
+  /// barely moves until the search backtracks.
+  kDepthFirst,
+  /// Smallest pseudocost estimate of where the node's subtree will end up, which is a guess
+  /// at where a GOOD incumbent is rather than at where the bound is.
+  kBestEstimate,
+};
+
+[[nodiscard]] const char* to_string(NodeSelection selection) noexcept;
+
 struct TreeNode {
   Index parent = -1;
   DomainChange change;
@@ -68,6 +94,10 @@ struct TreeNode {
   /// for the down child, ceil(v) - v for the up child. The pseudocost observation (#69) is
   /// this node's bound gain divided by it.
   double fraction = 0.0;
+  /// Where the pseudocosts expect this subtree's integer answer to land (#293), computed from
+  /// the parent's relaxation when the node is created. Only kBestEstimate reads it; it equals
+  /// `bound` until the pseudocosts have seen anything.
+  double estimate = 0.0;
 };
 
 /// Convergence tolerance for a QP node relaxation in an MIQP search.
@@ -107,6 +137,16 @@ class BranchAndBound {
     sense_ = model.sense_multiplier();
 
     node_engine_dual_ = options.get_string("mip_node_engine") != "primal";
+    const std::string selection = options.get_string("mip_node_selection");
+    if (selection == "best-bound") {
+      node_selection_ = NodeSelection::kBestBound;
+    } else if (selection == "depth-first") {
+      node_selection_ = NodeSelection::kDepthFirst;
+    } else if (selection == "best-estimate") {
+      node_selection_ = NodeSelection::kBestEstimate;
+    } else {
+      node_selection_ = NodeSelection::kHybrid;
+    }
     reliability_branching_ = options.get_string("mip_branching") != "most-fractional";
     const auto columns = static_cast<std::size_t>(model.num_cols());
     pseudo_down_sum_.assign(columns, 0.0);
@@ -194,6 +234,15 @@ class BranchAndBound {
 
   /// Fold one observed bound gain into a column's pseudocost.
   void record_pseudocost(Index column, bool downward, double gain, double fraction);
+
+  /// Take the next open node under the configured policy (#293), removing it from `open_`.
+  /// `diving` is the hybrid's signal that the previous node just produced children.
+  [[nodiscard]] Index take_next_open_node(bool diving);
+
+  /// Where the pseudocosts expect a node branched from this relaxation to end up: the node's
+  /// own bound plus, for every column still fractional, the cheaper of the two directions
+  /// (Achterberg 2007, sec. 6.1). Returns `bound` unchanged when nothing is fractional.
+  [[nodiscard]] double estimate_from(const std::vector<double>& x, double bound) const;
 
   /// Round the relaxation to the nearest integers and test the result. Cheap, and on models
   /// with a lot of structure it finds the incumbent that makes every later bound useful.
@@ -359,6 +408,12 @@ class BranchAndBound {
 
   /// mip_node_engine: warm-started dual (default) or cold primal for every node.
   bool node_engine_dual_ = true;
+  /// mip_node_selection (#293). Order only: every policy explores the same tree.
+  NodeSelection node_selection_ = NodeSelection::kHybrid;
+  /// How many nodes each rule chose, for the report at the end of the search.
+  Count selected_by_dive_ = 0;
+  Count selected_by_policy_ = 0;
+  Index deepest_node_ = 0;
   /// mip_branching: reliability (default) or the most-fractional rule it replaced.
   bool reliability_branching_ = true;
   /// Pseudocosts (#69): per integer column, the sum and count of observed bound gains per

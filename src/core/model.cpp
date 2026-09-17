@@ -138,6 +138,23 @@ std::string Model::validate() const {
     return "row_names is neither empty nor num_rows long";
   }
 
+  // The nonzero ceiling, before anything reads the pattern (#305). An overflowed matrix was
+  // frozen empty on purpose, so every shape check below would pass on a model whose
+  // coefficients are gone; this is the only place that can still tell the difference.
+  if (matrix.overflowed()) {
+    return fmt::format(
+        "the constraint matrix exceeds the {} nonzero limit this build supports; the model "
+        "was refused rather than assembled with wrapped offsets",
+        matrix.nonzero_limit());
+  }
+  if (hessian.overflowed()) {
+    return fmt::format(
+        "the quadratic objective exceeds the {} nonzero limit this build "
+        "supports; the model was refused rather than assembled with wrapped "
+        "offsets",
+        hessian.nonzero_limit());
+  }
+
   if (!matrix.frozen()) return "constraint matrix is not finalized";
   if (matrix.num_rows() != m)
     return fmt::format("matrix has {} rows, model has {}", matrix.num_rows(), m);

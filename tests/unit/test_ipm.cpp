@@ -258,3 +258,42 @@ TEST(InteriorPoint, RespectsSolveControlInterruption) {
 
 }  // namespace
 }  // namespace sankhya
+
+namespace sankhya {
+namespace {
+
+TEST(InteriorPoint, RefusesWithAStatusWhenTheOrderingPassesItsBudget) {
+  // #246: the plain algorithm=ipm path had no size budget; the ordering of the 100,000-row
+  // random model ran the machine out of memory 170 s past the time limit. It now stops at
+  // ipm_max_ordering_entries with a numerical error that names the option, so a caller can
+  // raise it or pick another engine - and the stats file is still written, since a status
+  // came back at all.
+  const Model model = make_lp({{1.0, 1.0}, {1.0, -1.0}}, {1.0, -kInfinity}, {kInfinity, 1.0},
+                              {1.0, 2.0}, {0.0, 0.0}, {kInfinity, kInfinity});
+  Options options = with_algorithm("ipm");
+  options.set_int("ipm_max_ordering_entries", 1);
+  const Solution solution = solve(model, options);
+  EXPECT_EQ(solution.status, SolveStatus::kNumericalError) << solution.message;
+  EXPECT_NE(solution.message.find("ipm_max_ordering_entries"), std::string::npos)
+      << solution.message;
+  EXPECT_NE(solution.message.find("(#246)"), std::string::npos) << solution.message;
+}
+
+TEST(InteriorPoint, RefusesWithAStatusWhenTheFactorWouldPassItsCap) {
+  // The factor cap used to apply only to the polish of a first-order answer; the plain path
+  // now has ipm_max_factor_nonzeros, and a cap of 1 trips on any model with a row.
+  const Model model = make_lp({{1.0, 1.0}, {1.0, -1.0}}, {1.0, -kInfinity}, {kInfinity, 1.0},
+                              {1.0, 2.0}, {0.0, 0.0}, {kInfinity, kInfinity});
+  Options options = with_algorithm("ipm");
+  options.set_int("ipm_max_factor_nonzeros", 1);
+  const Solution solution = solve(model, options);
+  EXPECT_EQ(solution.status, SolveStatus::kNumericalError) << solution.message;
+  EXPECT_NE(solution.message.find("ipm_max_factor_nonzeros = 1"), std::string::npos)
+      << solution.message;
+  // And the same model with the defaults is simply solved.
+  const Solution fine = solve(model, with_algorithm("ipm"));
+  EXPECT_EQ(fine.status, SolveStatus::kOptimal) << fine.message;
+}
+
+}  // namespace
+}  // namespace sankhya

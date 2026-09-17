@@ -108,12 +108,12 @@ def main() -> int:
 
     binary = args.binary
     if binary is None:
-        for candidate in ("build/sankhya", "build/sankhya.exe"):
-            if (REPO_ROOT / candidate).exists():
-                binary = REPO_ROOT / candidate
-                break
-    if binary is None:
-        raise SystemExit("no solver binary found; pass --binary")
+        sys.path.insert(0, str(REPO_ROOT / "bindings" / "python"))
+        import sankhya
+        try:
+            binary = sankhya.locate_executable()
+        except sankhya.SankhyaError as error:
+            raise SystemExit(str(error))
 
     names = sorted(args.instances or reference)
     rows = []

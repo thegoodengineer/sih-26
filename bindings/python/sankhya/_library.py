@@ -34,7 +34,7 @@ _LIBRARY_NAMES = ("libsankhya.dll", "sankhya.dll", "libsankhya.so", "libsankhya.
 
 # Searched in order. The build directories come first because a developer running from a
 # checkout means the one they just built, not one installed elsewhere on the machine.
-_SEARCH_DIRECTORIES = ("build", "build-release", "build-fresh", "cmake-build-release", ".")
+_SEARCH_DIRECTORIES = ("build", "build-cuda", "build-release", "build-fresh", "cmake-build-release", ".")
 
 
 def _repository_root() -> Path:

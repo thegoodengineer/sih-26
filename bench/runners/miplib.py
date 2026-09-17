@@ -96,11 +96,12 @@ def as_number(value):
 def find_binary(explicit: Path | None) -> Path | None:
     if explicit is not None:
         return explicit if explicit.exists() else None
-    for candidate in ("build/sankhya", "build/sankhya.exe", "build/Release/sankhya.exe"):
-        path = REPO_ROOT / candidate
-        if path.exists():
-            return path
-    return None
+    sys.path.insert(0, str(REPO_ROOT / "bindings" / "python"))
+    import sankhya
+    try:
+        return sankhya.locate_executable()
+    except sankhya.SankhyaError:
+        return None
 
 
 def git_commit() -> str:

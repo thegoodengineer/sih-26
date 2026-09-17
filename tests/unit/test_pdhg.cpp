@@ -685,3 +685,38 @@ TEST(Pdhg, PolishDeclinesWhenTheFactorCapSaysSoAndTheFirstOrderAnswerStands) {
 
 }  // namespace
 }  // namespace sankhya
+
+namespace sankhya {
+namespace {
+
+TEST(SolveStatusGuard, AnOutOfMemoryEngineComesBackAsAStatusNotADeadProcess) {
+  // #246: a std::bad_alloc escaping solve() killed the CLI with its log buffer, gave the C
+  // API's caller an error code and nothing else, and showed the benchmark runner
+  // `no_output`. Every engine now runs under run_engine_guarded(), tested here directly so
+  // the test does not depend on an engine that happens to exhaust memory today.
+  Logger logger(nullptr);
+  Timer timer;
+  const Solution solution = run_engine_guarded([]() -> Solution { throw std::bad_alloc(); },
+                                               "interior point", timer, logger);
+  EXPECT_EQ(solution.status, SolveStatus::kNumericalError);
+  EXPECT_EQ(solution.algorithm, "interior point");
+  EXPECT_NE(solution.message.find("ran out of memory inside the interior point"),
+            std::string::npos)
+      << solution.message;
+  EXPECT_GE(solution.solve_seconds, 0.0);
+
+  // A body that returns normally is passed through untouched.
+  const Solution passed = run_engine_guarded(
+      []() -> Solution {
+        Solution s;
+        s.status = SolveStatus::kOptimal;
+        s.message = "fine";
+        return s;
+      },
+      "dual simplex", timer, logger);
+  EXPECT_EQ(passed.status, SolveStatus::kOptimal);
+  EXPECT_EQ(passed.message, "fine");
+}
+
+}  // namespace
+}  // namespace sankhya

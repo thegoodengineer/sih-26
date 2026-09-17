@@ -363,3 +363,44 @@ TEST(SparseLdl, ADeadlineNeverAskedIsADeadlineThatChangesNothing) {
 
 }  // namespace
 }  // namespace sankhya
+
+namespace sankhya {
+namespace {
+
+TEST(SparseLdl, TheOrderingGivesUpPastItsBudgetAndSaysWhy) {
+  // #246: on an expander-like matrix the quotient graph grows with the fill until the
+  // allocation fails. The ordering now counts what it holds live and gives up past a budget,
+  // reporting that as a refusal distinct from a deadline. A 2,000-row tridiagonal matrix
+  // holds about 4,000 adjacency entries from the start, so a budget of 10 trips on the first
+  // step; the default budget lets the same matrix through untouched.
+  const Index n = 2000;
+  SparseMatrix lower;
+  lower.reset(n, n);
+  for (Index i = 0; i < n; ++i) {
+    lower.add_entry(i, i, 4.0);
+    if (i + 1 < n) lower.add_entry(i + 1, i, -1.0);
+  }
+  lower.finalize(0.0);
+
+  SparseLdl capped;
+  capped.set_ordering_budget(10);
+  EXPECT_FALSE(capped.analyze(lower));
+  EXPECT_TRUE(capped.ordering_too_large());
+  EXPECT_FALSE(capped.stopped_early()) << "a budget is not a deadline";
+
+  SparseLdl uncapped;
+  ASSERT_TRUE(uncapped.analyze(lower));
+  EXPECT_FALSE(uncapped.ordering_too_large());
+  EXPECT_EQ(uncapped.factor_nonzeros(), n - 1);
+
+  // The budget survives a failed analyze() and a second call resets the verdict.
+  SparseLdl reused;
+  reused.set_ordering_budget(10);
+  EXPECT_FALSE(reused.analyze(lower));
+  reused.set_ordering_budget(static_cast<std::size_t>(-1));
+  EXPECT_TRUE(reused.analyze(lower));
+  EXPECT_FALSE(reused.ordering_too_large());
+}
+
+}  // namespace
+}  // namespace sankhya

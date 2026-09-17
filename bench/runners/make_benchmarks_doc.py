@@ -494,6 +494,73 @@ def mittelmann_section(path: Path | None) -> str:
     return chr(10).join(out)
 
 
+def newest_option_run(pattern: str, option: str) -> Path | None:
+    """The most recent CSV matching `pattern` whose `solver_options` column contains
+    `option` - the per-engine Mittelmann runs of #216 (`--solver-option algorithm=pdhg`),
+    which latest_result.latest() deliberately skips because they are not the default
+    evidence. Ordered the same way: git history first, then the CSV's own timestamp.
+    """
+    order = latest_result.commit_order()
+    index = {sha: i for i, sha in enumerate(order)}
+    candidates = []
+    for path in latest_result.RESULTS_DIR.glob(pattern):
+        options = (latest_result.first_row(path).get("solver_options") or "").split()
+        if option not in options:
+            continue
+        recorded = latest_result.commit_of(path)
+        position = len(order)
+        for sha, i in index.items():
+            if recorded and sha.startswith(recorded):
+                position = i
+                break
+        candidates.append((position, -latest_result.timestamp_of(path), path.name, path))
+    return sorted(candidates)[0][3] if candidates else None
+
+
+def mittelmann_engines_section(default: Path | None, pdhg: Path | None,
+                               ipm: Path | None) -> str:
+    """All three continuous engines on the same eight instances (#216).
+
+    The default table above runs the dual simplex. This one puts the first-order engine
+    and the interior point beside it, each from its own committed option run, so that the
+    reader sees per instance which engine got closest rather than only that the default
+    did not finish. `optimal` is the solver's word; the verifier's verdict is beside it,
+    because a first-order `optimal` is a tolerance, not a vertex.
+    """
+    runs = [("dual simplex", default), ("PDHG", pdhg), ("interior point", ipm)]
+    present = [(name, path) for name, path in runs if path is not None]
+    if len(present) < 2:
+        return ("The per-engine comparison needs the PDHG and interior-point option runs "
+                "(`bench/runners/mittelmann.py --solver-option algorithm=pdhg`, and "
+                "`algorithm=ipm`); none is committed at this commit." + chr(10))
+    tables = {name: {r["instance"]: r for r in read_csv(path)} for name, path in present}
+    instances = sorted(set().union(*(t.keys() for t in tables.values())))
+    out = ["Source CSVs: " + ", ".join(f"`bench/results/{p.name}` ({n})" for n, p in present)
+           + "  ", "Same 300 s limit per instance and engine; HiGHS is not re-run here.", ""]
+    head = "| instance | " + " | ".join(f"{n}: status · verified · time (s)" for n, _ in present) + " |"
+    out += [head, "|---|" + "---|" * len(present)]
+    finished = {n: 0 for n, _ in present}
+    for name in instances:
+        cells = []
+        for engine, _ in present:
+            row = tables[engine].get(name)
+            if row is None:
+                cells.append("not run")
+                continue
+            status = row.get("status", "")
+            verified = str(row.get("independently_verified", "")).strip()
+            mark = {"1": "yes", "true": "yes", "0": "**NO**", "false": "**NO**"}.get(verified, "-")
+            seconds = as_float(row, "solver_seconds")
+            if status == "optimal" and mark == "yes":
+                finished[engine] += 1
+            cells.append(f"{status} · {mark} · {'-' if seconds is None else f'{seconds:.1f}'}")
+        out.append(f"| `{name}` | " + " | ".join(cells) + " |")
+    out += ["", "Finished and verified inside the limit: "
+            + ", ".join(f"{engine} **{count} of {len(instances)}**" for engine, count in finished.items())
+            + ".", ""]
+    return chr(10).join(out)
+
+
 def pdhg_section(path: Path | None) -> str:
     """The first-order engine, at two tolerances, with restarts on and off (#28, #179).
 
@@ -1406,6 +1473,8 @@ def main() -> int:
     milp_csv = newest("miplib-*.csv", prefix="miplib")
     pdhg_csv = newest("pdhg-*.csv")
     mittelmann_csv = newest("mittelmann-*.csv")
+    mittelmann_pdhg_csv = newest_option_run("mittelmann-*.csv", "algorithm=pdhg")
+    mittelmann_ipm_csv = newest_option_run("mittelmann-*.csv", "algorithm=ipm")
     compare_small_csv = newest("compare-highs-small-*.csv")
     compare_medium_csv = newest("compare-highs-medium-*.csv")
     compare_csv = compare_medium_csv or compare_small_csv or newest("compare-highs-*.csv")
@@ -1477,6 +1546,9 @@ Mittelmann's LP test set (`bench/runners/fetch_mittelmann.py`, provenance in
 `data/mittelmann/reference.json`).
 
 {mittelmann_section(mittelmann_csv)}
+#### The same eight under each engine
+
+{mittelmann_engines_section(mittelmann_csv, mittelmann_pdhg_csv, mittelmann_ipm_csv)}
 ### 1e. The first-order engine — PDHG
 
 The simplex is not the only continuous engine. Restarted PDHG (`--option algorithm=pdhg`) is

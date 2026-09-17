@@ -306,6 +306,93 @@ def test_callback() -> None:
         check(str(e) == "test exception", "callback exception propagated correctly")
 
 
+def test_executable_discovery() -> None:
+    import tempfile
+    import os
+    import sys
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory() as temp_dir_str:
+        temp_dir = Path(temp_dir_str)
+        # Mock repository root
+        original_root = sankhya._executable._repository_root
+        sankhya._executable._repository_root = lambda: temp_dir
+
+        original_platform = sys.platform
+
+        # We need to save environ
+        old_env = dict(os.environ)
+
+        try:
+            os.environ.pop("SANKHYA_EXECUTABLE", None)
+            os.environ.pop("SANKHYA_BIN", None)
+
+            # Unix-like test
+            sys.platform = "linux"
+            build_dir = temp_dir / "build"
+            build_dir.mkdir()
+            exe = build_dir / "sankhya"
+            exe.touch(mode=0o755)
+
+            found = sankhya.locate_executable()
+            check(found == exe, "discovered build/sankhya on unix", str(found))
+
+            # Remove unix exe
+            exe.unlink()
+
+            # Windows test with build-cuda
+            sys.platform = "win32"
+            build_cuda_dir = temp_dir / "build-cuda"
+            build_cuda_dir.mkdir()
+            exe_win = build_cuda_dir / "sankhya.exe"
+            exe_win.touch(mode=0o755)
+
+            found = sankhya.locate_executable()
+            check(found == exe_win, "discovered build-cuda/sankhya.exe on windows", str(found))
+
+            # Test 4: explicit SANKHYA_EXECUTABLE override
+            override_exe = temp_dir / "override.exe"
+            override_exe.touch(mode=0o755)
+            os.environ["SANKHYA_EXECUTABLE"] = str(override_exe)
+
+            found = sankhya.locate_executable()
+            check(found == override_exe, "SANKHYA_EXECUTABLE override works", str(found))
+
+            # Test 5 & 6: SANKHYA_BIN compatibility and precedence
+            bin_exe = temp_dir / "bin_override.exe"
+            bin_exe.touch(mode=0o755)
+            os.environ["SANKHYA_BIN"] = str(bin_exe)
+
+            # Both set, SANKHYA_EXECUTABLE wins
+            found = sankhya.locate_executable()
+            check(found == override_exe, "SANKHYA_EXECUTABLE takes precedence over SANKHYA_BIN")
+
+            # Only SANKHYA_BIN set
+            os.environ.pop("SANKHYA_EXECUTABLE")
+            found = sankhya.locate_executable()
+            check(found == bin_exe, "SANKHYA_BIN compatibility works")
+
+            # Test 7: Missing executable diagnostic
+            os.environ.pop("SANKHYA_BIN")
+            exe_win.unlink() # remove the build-cuda exe
+
+            try:
+                sankhya.locate_executable()
+                check(False, "missing executable did not raise SankhyaError")
+            except sankhya.SankhyaError as e:
+                msg = str(e)
+                check("was not found" in msg, "error mentions not found")
+                check("sankhya.exe" in msg, "error mentions requested name")
+                check("build-cuda" in msg, "error mentions searched paths")
+                check("SANKHYA_EXECUTABLE" in msg, "error mentions override vars")
+
+        finally:
+            sankhya._executable._repository_root = original_root
+            sys.platform = original_platform
+            os.environ.clear()
+            os.environ.update(old_env)
+
+
 def main() -> int:
     print(f"SANKHYA Python bindings, against solver version {sankhya.version()}\n")
     for name, function in sorted(globals().items()):

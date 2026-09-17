@@ -134,6 +134,17 @@ const std::vector<OptionSpec>& Options::registry() {
                  0.0,
                  0.0,
                  {"reliability", "most-fractional"}});
+    s.push_back({"mip_node_selection",
+                 OptionType::String,
+                 std::string("hybrid"),
+                 "Which open node branch and bound takes next (#293): hybrid (default; dive "
+                 "to a leaf, then best-bound), best-bound (fewest nodes to a proof, widest "
+                 "tree), depth-first (narrow tree, early incumbent, slow bound), or "
+                 "best-estimate (the pseudocost guess at where a good incumbent is). Order "
+                 "only: every policy explores the same tree and proves the same optimum.",
+                 0.0,
+                 0.0,
+                 {"hybrid", "best-bound", "depth-first", "best-estimate"}});
     s.push_back({"mip_node_engine",
                  OptionType::String,
                  std::string("dual"),
@@ -422,6 +433,29 @@ const std::vector<OptionSpec>& Options::registry() {
                  "nonzeros than this - the ordering says so before anything is built; 5e7 "
                  "doubles is 400 MB - and PDHG's answer stands, with the reason in the "
                  "message. -1 for no cap.",
+                 -1.0,
+                 kNoLimit,
+                 {}});
+    s.push_back({"ipm_max_ordering_entries",
+                 OptionType::Int,
+                 std::int64_t{100000000},
+                 "The interior point gives up the ordering of its normal equations when the "
+                 "quotient graph holds more than this many list entries (4 bytes each; 1e8 is "
+                 "400 MB), reporting a numerical error with the number rather than running "
+                 "the machine out of memory: on the 100,000-row random scale model the "
+                 "ordering's fill grew until a std::bad_alloc killed the process 170 s past "
+                 "its time limit (#246). -1 for no cap.",
+                 -1.0,
+                 kNoLimit,
+                 {}});
+    s.push_back({"ipm_max_factor_nonzeros",
+                 OptionType::Int,
+                 std::int64_t{100000000},
+                 "The interior point declines when the ordering says its factor would hold "
+                 "more nonzeros than this (1e8 is 800 MB of values and 400 MB of pattern), "
+                 "before any of it is allocated; the message carries both numbers. The polish "
+                 "of a first-order answer has its own, tighter cap in "
+                 "polish_max_factor_nonzeros. -1 for no cap.",
                  -1.0,
                  kNoLimit,
                  {}});

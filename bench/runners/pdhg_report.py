@@ -56,12 +56,12 @@ def as_number(value):
 
 
 def default_binary() -> Path:
-    for candidate in ("build/sankhya.exe", "build/sankhya", "build-gate/sankhya.exe",
-                      "build-gate/sankhya", "build-main/sankhya.exe", "build-main/sankhya"):
-        path = REPO_ROOT / candidate
-        if path.exists():
-            return path
-    raise SystemExit("no solver binary found; pass --binary")
+    sys.path.insert(0, str(REPO_ROOT / "bindings" / "python"))
+    import sankhya
+    try:
+        return sankhya.locate_executable()
+    except sankhya.SankhyaError as error:
+        raise SystemExit(str(error))
 
 
 def run(binary: Path, mps: Path, algorithm: str, tolerance: float | None,

@@ -53,7 +53,31 @@ class SparseMatrix {
 
   /// Transition BUILD -> FROZEN. Sorts by (col, row), sums duplicates, and drops entries
   /// whose magnitude is below drop_tol. Idempotent on an already-frozen matrix.
+  ///
+  /// A matrix that overflowed its nonzero limit during the build is NOT frozen into a
+  /// half-formed state: finalize() leaves it empty and keeps the flag set, so a caller that
+  /// ignores overflowed() sees a matrix with no entries rather than one with wrapped offsets.
   void finalize(double drop_tol = tol::kZeroDrop);
+
+  /// True when more entries were offered than the nonzero limit allows (#305).
+  ///
+  /// Sticky: it survives finalize() and is cleared only by reset(). Model::validate() reports
+  /// it, so a model built through any path - reader, presolve, C API - is refused with a
+  /// diagnostic instead of reaching an engine with a corrupted pattern.
+  [[nodiscard]] bool overflowed() const noexcept { return overflowed_; }
+
+  /// The most entries this matrix will accept before it refuses and flags itself.
+  [[nodiscard]] Index nonzero_limit() const noexcept { return nonzero_limit_; }
+
+  /// Lower the nonzero limit below kMaxNonzeros.
+  ///
+  /// Exists so the overflow path is TESTABLE: the guard it protects triggers at 2^31 entries,
+  /// which no test can allocate (24 GB of triplets), and an untested guard is not evidence
+  /// that the guard works. A caller may also use it to cap the memory a single matrix can
+  /// take. Values above kMaxNonzeros are clamped to it; the limit survives reset().
+  void set_nonzero_limit(Index limit) noexcept {
+    nonzero_limit_ = limit < 0 ? 0 : (limit > kMaxNonzeros ? kMaxNonzeros : limit);
+  }
 
   /// Return to BUILD state, keeping the existing entries as triplets. Used by presolve,
   /// which mutates a model that a reader already froze.
@@ -105,6 +129,11 @@ class SparseMatrix {
   Index num_rows_ = 0;
   Index num_cols_ = 0;
   bool frozen_ = false;
+
+  // The nonzero ceiling and whether it was hit (#305). The limit is per instance rather than
+  // global so a test can lower it without touching the type system or other matrices.
+  Index nonzero_limit_ = kMaxNonzeros;
+  bool overflowed_ = false;
 
   // FROZEN representation. column_starts_ has num_cols_ + 1 entries.
   std::vector<Index> column_starts_;

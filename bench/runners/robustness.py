@@ -299,12 +299,12 @@ def git_commit() -> str:
         return "unknown"
 
 def default_binary() -> Path:
-    for candidate in ("build/sankhya.exe", "build/sankhya", "build-main/sankhya.exe",
-                      "build-main/sankhya"):
-        path = REPO_ROOT / candidate
-        if path.exists():
-            return path
-    raise SystemExit("no solver binary found; build first, or pass --binary")
+    sys.path.insert(0, str(REPO_ROOT / "bindings" / "python"))
+    import sankhya
+    try:
+        return sankhya.locate_executable()
+    except sankhya.SankhyaError as error:
+        raise SystemExit(str(error))
 
 
 def solve_one(binary: Path, instance: Instance, mps: Path, time_limit: float,

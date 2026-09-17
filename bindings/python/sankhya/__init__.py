@@ -40,7 +40,9 @@ Progress = collections.namedtuple("Progress", [
     "phase", "iterations", "nodes", "objective", "best_bound", "gap", "elapsed_seconds", "open_nodes"
 ])
 
-__all__ = ["Model", "Options", "Result", "SankhyaError", "INFINITY", "version"]
+from ._executable import locate as locate_executable
+
+__all__ = ["Model", "Options", "Result", "SankhyaError", "INFINITY", "version", "locate_executable"]
 
 _lib = None
 

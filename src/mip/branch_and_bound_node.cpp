@@ -178,6 +178,98 @@ Index BranchAndBound::most_fractional(const std::vector<double>& x) const {
   return best;
 }
 
+const char* to_string(NodeSelection selection) noexcept {
+  switch (selection) {
+    case NodeSelection::kHybrid: return "hybrid";
+    case NodeSelection::kBestBound: return "best-bound";
+    case NodeSelection::kDepthFirst: return "depth-first";
+    case NodeSelection::kBestEstimate: return "best-estimate";
+  }
+  return "unknown";
+}
+
+// NODE SELECTION (#293). Achterberg, "Constraint Integer Programming" (thesis, 2007), ch. 6.
+//
+// Every policy here removes one node from `open_` and changes nothing else. That is the whole
+// safety argument: the set of open nodes, the bounds that prune them and the incumbent test
+// are untouched, so a policy can make the search slower or faster but cannot make it wrong.
+//
+// TIES ARE BROKEN BY NODE INDEX, always, and that is not cosmetic. Nodes are created in a
+// deterministic order, so the smallest index is the oldest node; without it, two runs of the
+// same model could take different nodes whenever two bounds compared equal - which on a
+// degenerate MILP is most of the tree - and a search that explores a different tree each time
+// cannot be debugged, benchmarked or reproduced.
+Index BranchAndBound::take_next_open_node(bool diving) {
+  std::size_t pick = open_.size() - 1;  // the newest node: depth-first, and the hybrid's dive
+
+  const auto choose_smallest = [&](auto key) {
+    double best = std::numeric_limits<double>::infinity();
+    Index best_node = std::numeric_limits<Index>::max();
+    for (std::size_t k = 0; k < open_.size(); ++k) {
+      const Index candidate = open_[k];
+      const double value = key(nodes_[static_cast<std::size_t>(candidate)]);
+      if (value < best || (value == best && candidate < best_node)) {
+        best = value;
+        best_node = candidate;
+        pick = k;
+      }
+    }
+  };
+
+  switch (node_selection_) {
+    case NodeSelection::kDepthFirst: break;  // pick is already the newest
+    case NodeSelection::kHybrid:
+      if (!diving) choose_smallest([](const TreeNode& node) { return node.bound; });
+      break;
+    case NodeSelection::kBestBound:
+      choose_smallest([](const TreeNode& node) { return node.bound; });
+      break;
+    case NodeSelection::kBestEstimate:
+      choose_smallest([](const TreeNode& node) { return node.estimate; });
+      break;
+  }
+
+  if (node_selection_ == NodeSelection::kDepthFirst ||
+      (node_selection_ == NodeSelection::kHybrid && diving)) {
+    ++selected_by_dive_;
+  } else {
+    ++selected_by_policy_;
+  }
+
+  const Index node_index = open_[pick];
+  open_.erase(open_.begin() + static_cast<std::ptrdiff_t>(pick));
+  deepest_node_ = std::max(deepest_node_, nodes_[static_cast<std::size_t>(node_index)].depth);
+  return node_index;
+}
+
+// The best-estimate key (Achterberg 2007, sec. 6.1): the node's bound plus, for every column
+// still fractional in the relaxation it was branched from, the cheaper of the two directions
+// as the pseudocosts price them. It is a guess at where the subtree's integer answer lands,
+// which is a different question from the bound - and a better one when what you want is a
+// good incumbent early rather than a proof.
+//
+// Before any pseudocost has been observed the sum is zero and the estimate is the bound, so
+// the policy degrades to best-bound at the root rather than to noise.
+double BranchAndBound::estimate_from(const std::vector<double>& x, double bound) const {
+  double estimate = bound;
+  for (const Index j : integer_columns_) {
+    const auto u = static_cast<std::size_t>(j);
+    const double value = x[u];
+    const double fraction = value - std::floor(value);
+    if (fraction <= integrality_tolerance_ || fraction >= 1.0 - integrality_tolerance_) {
+      continue;
+    }
+    const double down = pseudo_down_count_[u] > 0
+                            ? pseudo_down_sum_[u] / static_cast<double>(pseudo_down_count_[u])
+                            : 0.0;
+    const double up = pseudo_up_count_[u] > 0
+                          ? pseudo_up_sum_[u] / static_cast<double>(pseudo_up_count_[u])
+                          : 0.0;
+    estimate += std::min(down * fraction, up * (1.0 - fraction));
+  }
+  return estimate;
+}
+
 void BranchAndBound::record_pseudocost(Index column, bool downward, double gain,
                                        double fraction) {
   const auto u = static_cast<std::size_t>(column);

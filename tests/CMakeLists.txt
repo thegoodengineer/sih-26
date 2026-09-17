@@ -8,6 +8,7 @@ include(GoogleTest)
 
 add_executable(sankhya_tests
   unit/test_sparse.cpp
+  unit/test_nnz_limits.cpp
   unit/test_sparse_vector.cpp
   unit/test_arena.cpp
   unit/test_c_api.cpp
@@ -23,6 +24,7 @@ add_executable(sankhya_tests
   unit/test_lp_reader.cpp
   unit/test_presolve.cpp
   unit/test_diagnose.cpp
+  unit/test_presolve_all_classes.cpp
   unit/test_simplex.cpp
   unit/test_dual_simplex.cpp
   unit/test_ranging.cpp
@@ -33,8 +35,11 @@ add_executable(sankhya_tests
   unit/test_writer.cpp
   unit/test_iis.cpp
   unit/test_pdhg.cpp
+  unit/test_pdhg_cuda_regression.cpp
   unit/test_qp.cpp
+  unit/test_convexity_sparse.cpp
   unit/test_branch_and_bound.cpp
+  unit/test_node_selection.cpp
   unit/test_solution_pool.cpp
   # The verification spine (Phase 3). The oracle is exact-arithmetic reference code
   # that lives only in the test binary; nothing in src/ can reach it.

@@ -37,6 +37,24 @@
 
 namespace sankhya {
 
+/// What a semidefiniteness probe concluded about a symmetric matrix (#303).
+///
+/// `column` is an index into the ORIGINAL matrix, not the permuted one: the caller asked
+/// about its own matrix and the AMD ordering is an implementation detail.
+struct SemidefiniteReport {
+  enum class Verdict {
+    kPositiveSemidefinite,  ///< every pivot non-negative; x^T A x >= 0 for all x
+    kIndefinite,            ///< a direction with x^T A x < 0 was exhibited
+    kUndecided,             ///< the probe was abandoned (deadline, or a factor that cannot fit)
+  };
+
+  Verdict verdict = Verdict::kUndecided;
+  /// The original column that decided an kIndefinite verdict, or -1.
+  Index column = -1;
+  /// The pivot at that column, or the residual that contradicted a zero pivot.
+  double pivot = 0.0;
+};
+
 class SparseLdl {
  public:
   /// Symbolic analysis of a symmetric matrix given by its LOWER triangle (entries with
@@ -62,6 +80,39 @@ class SparseLdl {
   /// input, or if `should_stop` asked it to give up.
   [[nodiscard]] bool analyze(const SparseMatrix& lower, const ShouldStop& should_stop = {});
 
+  /// Cap the quotient graph's live storage during the ordering, in list entries (#246).
+  ///
+  /// On an expander-like matrix the minimum-degree ordering's fill is catastrophic and the
+  /// element lists grow with it until the allocation fails: on the 100,000-row random scale
+  /// model that was a std::bad_alloc 170 s past the time limit, on an 8 GB machine. The
+  /// ordering counts the entries it holds live and gives up past this many, reporting
+  /// ordering_too_large() rather than a deadline. One entry is one Index (4 bytes).
+  /// SIZE_MAX (the default) means no cap.
+  void set_ordering_budget(std::size_t entries) noexcept { ordering_budget_ = entries; }
+  [[nodiscard]] std::size_t ordering_budget() const noexcept { return ordering_budget_; }
+
+  /// Cap the factor's pattern, in strictly-lower nonzeros (#246). analyze() counts the
+  /// pattern before storing it and gives up past this many, reporting factor_too_large();
+  /// -1 (the default) means no cap. The interior point passes its ipm_max_factor_nonzeros
+  /// or polish_max_factor_nonzeros here so a factor that would not fit is refused after a
+  /// fraction of the counting, not after all of it and an allocation.
+  void set_factor_budget(std::int64_t nonzeros) noexcept {
+    factor_budget_ =
+        nonzeros < 0 ? static_cast<std::size_t>(-1) : static_cast<std::size_t>(nonzeros);
+  }
+  [[nodiscard]] bool factor_too_large() const noexcept { return factor_too_large_; }
+
+  /// True when analyze() returned false because the ordering's storage passed the budget
+  /// set by set_ordering_budget() (#246). Not a deadline and not a malformed matrix: the
+  /// matrix fills in faster than this machine can afford to follow.
+  [[nodiscard]] bool ordering_too_large() const noexcept { return ordering_too_large_; }
+
+  /// True when analyze() returned false because the factor's pattern would hold more
+  /// nonzeros than an Index offset can name (#305). Distinct from a deadline and from a
+  /// malformed matrix: the input was well formed and the ordering finished, and the factor
+  /// it implies is simply larger than this build addresses.
+  [[nodiscard]] bool pattern_too_large() const noexcept { return pattern_too_large_; }
+
   /// True when the last analyze() or factorize() returned false because the deadline was
   /// reached rather than because the matrix was wrong. The caller reports a time limit in
   /// that case, not a numerical failure.
@@ -73,6 +124,33 @@ class SparseLdl {
   /// called or the pattern does not fit.
   [[nodiscard]] bool factorize(const SparseMatrix& lower, double regularization,
                                const ShouldStop& should_stop = {});
+
+  /// Is `lower` positive semidefinite? (#303)
+  ///
+  /// The same LDL^T that factorize() runs, with the IPM's regularization REMOVED and the
+  /// semidefinite rule put in its place, because the two answer different questions.
+  /// factorize() wants usable factors for a matrix it already knows is positive definite, so
+  /// it lifts a small pivot to the regularization floor and carries on. A convexity test must
+  /// not: lifting a NEGATIVE pivot to a positive floor would turn the one piece of evidence
+  /// that matters - a direction of negative curvature - into a clean factorization, and the
+  /// caller would solve a non-convex model and report a local point as optimal.
+  ///
+  /// Three outcomes, on a pivot measured against `slack_factor * max(1, largest |diagonal|)`:
+  ///   pivot < -slack        indefinite, and the column is the certificate
+  ///   |pivot| <= slack      a legitimately singular direction of a semidefinite matrix. The
+  ///                         column is skipped rather than divided through - but only after
+  ///                         checking that the entries that would have been divided are
+  ///                         themselves negligible. For a semidefinite matrix they must be
+  ///                         (Higham 1990); when they are not, the zero pivot sits beside a
+  ///                         nonzero off-diagonal and the matrix is indefinite. Skipping
+  ///                         without that check is how [[0, 1], [1, 0]] passed for convex.
+  ///   otherwise             an ordinary positive pivot.
+  ///
+  /// Calls analyze() itself. Leaves no usable factors behind: this is a decision procedure,
+  /// not a factorization, and the D it computes has deliberate zeros in it.
+  [[nodiscard]] SemidefiniteReport check_semidefinite(const SparseMatrix& lower,
+                                                      double slack_factor,
+                                                      const ShouldStop& should_stop = {});
 
   /// Solve (P^T L D L^T P) x = b in place.
   void solve(double* b) const;
@@ -88,9 +166,14 @@ class SparseLdl {
 
  private:
   [[nodiscard]] bool minimum_degree(const SparseMatrix& lower, const ShouldStop& should_stop);
+  bool pattern_too_large_ = false;
+  bool ordering_too_large_ = false;
+  std::size_t ordering_budget_ = static_cast<std::size_t>(-1);
+  bool factor_too_large_ = false;
+  std::size_t factor_budget_ = static_cast<std::size_t>(-1);
   void build_permuted_pattern(const SparseMatrix& lower);
   void elimination_tree();
-  void symbolic_pattern();
+  [[nodiscard]] bool symbolic_pattern(const ShouldStop& should_stop);
 
   Index n_ = 0;
   bool analyzed_ = false;
