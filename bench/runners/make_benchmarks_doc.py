@@ -561,6 +561,91 @@ def mittelmann_engines_section(default: Path | None, pdhg: Path | None,
     return chr(10).join(out)
 
 
+def newest_named(pattern: str) -> Path | None:
+    """The most recent CSV matching `pattern` by git history then the CSV's own timestamp,
+    with no default-run filter: for files whose NAME says what they are (`miplib-600s-*.csv`,
+    #215), which latest_result.latest() would otherwise rank beside the tier's own runs."""
+    order = latest_result.commit_order()
+    index = {sha: i for i, sha in enumerate(order)}
+    candidates = []
+    for path in latest_result.RESULTS_DIR.glob(pattern):
+        recorded = latest_result.commit_of(path)
+        position = len(order)
+        for sha, i in index.items():
+            if recorded and sha.startswith(recorded):
+                position = i
+                break
+        candidates.append((position, -latest_result.timestamp_of(path), path.name, path))
+    return sorted(candidates)[0][3] if candidates else None
+
+
+def milp_long_section(short: Path | None, long: Path | None) -> str:
+    """The same MIPLIB set at a ten-times longer limit, beside the 60 s table (#215).
+
+    The point is one column the 60 s table cannot carry: for every instance that stopped on
+    the clock, whether more time closes it. A row that proves at 600 s "needed time"; a row
+    that reaches the optimum at both limits and proves at neither "needs a bound" - the
+    tree is not tightening it, which is what cutting planes below the root are for (#221);
+    a row whose incumbent is still wrong at 600 s needs a better incumbent (#290).
+    """
+    if long is None:
+        return ("Not yet run at this commit: `python bench/runners/miplib.py --time-limit 600 "
+                "--out bench/results/miplib-600s-<commit>.csv`." + chr(10))
+    long_rows = {r["instance"]: r for r in read_csv(long)}
+    short_rows = {r["instance"]: r for r in read_csv(short)} if short is not None else {}
+    if not long_rows:
+        return "No 600 s results recorded yet." + chr(10)
+    commit = next(iter(long_rows.values())).get("git_commit", "unknown")
+    matched = sum(r.get("matched_published") == "1" for r in long_rows.values())
+    proved = sum(r.get("proved_optimal") == "1" for r in long_rows.values())
+    out = [
+        f"Source CSV: `bench/results/{long.name}` (600 s per instance), beside "
+        f"`bench/results/{short.name if short else '-'}` (60 s)  ",
+        f"Commit `{commit}`",
+        "",
+        f"At 600 s: **{matched} of {len(long_rows)}** reach the published optimum, "
+        f"**{proved} of {len(long_rows)}** prove it.",
+        "",
+        "| instance | 60 s: status · matched · proved | 600 s: status · matched · proved · gap | "
+        "verdict |",
+        "|---|---|---|---|",
+    ]
+    needs_time, needs_bound, needs_incumbent = [], [], []
+    for name in sorted(long_rows):
+        lr = long_rows[name]
+        sr = short_rows.get(name, {})
+        def cell(r: dict) -> str:
+            if not r:
+                return "not run"
+            m = "yes" if r.get("matched_published") == "1" else "no"
+            pv = "yes" if r.get("proved_optimal") == "1" else "no"
+            return f"{r.get('status', '')} · {m} · {pv}"
+        gap = as_float(lr, "relative_gap")
+        long_cell = cell(lr) + (f" · {gap:.1e}" if gap is not None and math.isfinite(gap) else " · -")
+        if lr.get("proved_optimal") == "1":
+            verdict = "proved" if sr.get("proved_optimal") == "1" else "**needed time**"
+            if sr.get("proved_optimal") != "1":
+                needs_time.append(name)
+        elif lr.get("matched_published") == "1":
+            verdict = "needs a bound (#221)"
+            needs_bound.append(name)
+        else:
+            verdict = "needs an incumbent (#290)"
+            needs_incumbent.append(name)
+        out.append(f"| `{name}` | {cell(sr)} | {long_cell} | {verdict} |")
+    def names(items: list[str]) -> str:
+        return ", ".join(f"`{n}`" for n in items) if items else "none"
+    out += [
+        "",
+        f"**Needed time** (proved at 600 s, not at 60 s): {names(needs_time)}. "
+        f"**Needs a bound** (optimum reached at both limits, proved at neither): "
+        f"{names(needs_bound)}. **Needs an incumbent** (wrong answer even at 600 s): "
+        f"{names(needs_incumbent)}.",
+        "",
+    ]
+    return chr(10).join(out)
+
+
 def pdhg_section(path: Path | None) -> str:
     """The first-order engine, at two tolerances, with restarts on and off (#28, #179).
 
@@ -1471,6 +1556,7 @@ def main() -> int:
     medium_csv = newest("netlib-medium-*.csv")
     full_csv = newest("netlib-full-*.csv")
     milp_csv = newest("miplib-*.csv", prefix="miplib")
+    milp_long_csv = newest_named("miplib-600s-*.csv")
     pdhg_csv = newest("pdhg-*.csv")
     mittelmann_csv = newest("mittelmann-*.csv")
     mittelmann_pdhg_csv = newest_option_run("mittelmann-*.csv", "algorithm=pdhg")
@@ -1583,6 +1669,9 @@ The LP tiers above say nothing about the branch and bound. This is the MILP evid
 is a harder library: MIPLIB instances are chosen to be difficult for mature solvers.
 
 {milp_section(milp_csv)}
+#### The same set at 600 s
+
+{milp_long_section(milp_csv, milp_long_csv)}
 ---
 
 ## 3. Correctness beyond the objective value
