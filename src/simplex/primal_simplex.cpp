@@ -1204,7 +1204,17 @@ Solution Simplex::finish(SolveStatus status, const std::string& message, Count i
       status == SolveStatus::kUnbounded || status == SolveStatus::kInterrupted;
   if (!have_point) {
     solution.recompute_quality(model_);
-    solution.dual_bound = status == SolveStatus::kInfeasible ? kInfinity : -kInfinity;
+    // An infeasible model's optimum is the worst value the objective can take: +inf when
+    // minimizing, -inf when maximizing, and the bound sits there with it. Anything else
+    // without a point (a numerical failure, say) has an unknown bound, which is the infinity
+    // on the unexplored side: -inf when minimizing, +inf when maximizing. This used to say
+    // +inf for every infeasible model whatever the sense (#299).
+    const bool maximize = model_.sense == ObjSense::kMaximize;
+    if (status == SolveStatus::kInfeasible) {
+      solution.dual_bound = maximize ? -kInfinity : kInfinity;
+    } else {
+      solution.dual_bound = maximize ? kInfinity : -kInfinity;
+    }
     return solution;
   }
 

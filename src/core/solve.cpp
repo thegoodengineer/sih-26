@@ -403,6 +403,9 @@ Solution solve(const Model& model, const Options& options, SolveControl* control
       if (reduced.proved_infeasible) {
         solution.status = SolveStatus::kInfeasible;
         solution.algorithm = "presolve";
+        // The same bound convention the engines use for an infeasible verdict (#299): the
+        // worst value the objective can take, on the model's own sense.
+        solution.dual_bound = model.sense == ObjSense::kMaximize ? -kInfinity : kInfinity;
         // Presolve proves infeasibility from bound arithmetic, and the chain of tightenings
         // that led there is not kept, so there is no Farkas vector to hand over. The reason
         // is in the message, which names the row and the two quantities that collide, and

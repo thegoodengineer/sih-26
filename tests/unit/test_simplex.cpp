@@ -366,6 +366,36 @@ TEST(PrimalSimplex, DetectsAnInfeasibleModel) {
   EXPECT_EQ(solution.status, SolveStatus::kInfeasible) << solution.message;
 }
 
+TEST(PrimalSimplex, AnInfeasibleModelPutsTheBoundOnTheInfeasibleSide) {
+  // #299: an infeasible model has no optimum, and the convention is the worst value the
+  // objective can take - +inf minimizing, -inf maximizing. Both were reported as +inf, so a
+  // maximizing caller read a bound that said "no better than +inf", which is no statement,
+  // where "-inf" says what happened. Checked through every path that can reach the verdict:
+  // both simplex engines with presolve off, and presolve's own proof with it on.
+  const auto infeasible = [](ObjSense sense) {
+    //   x >= 5 and x <= 2 simultaneously.
+    return make_model(sense, {1.0}, {0.0}, {kInf}, {{1.0}, {1.0}}, {5.0, -kInf}, {kInf, 2.0});
+  };
+  for (const char* algorithm : {"simplex", "dual-simplex"}) {
+    for (const bool presolve : {false, true}) {
+      Options options;
+      options.set_bool("log_to_console", false);
+      options.set_string("algorithm", algorithm);
+      options.set_bool("presolve", presolve);
+
+      const Solution minimize = solve(infeasible(ObjSense::kMinimize), options);
+      ASSERT_EQ(minimize.status, SolveStatus::kInfeasible) << minimize.message;
+      EXPECT_TRUE(std::isinf(minimize.dual_bound)) << algorithm << " presolve=" << presolve;
+      EXPECT_GT(minimize.dual_bound, 0.0) << algorithm << " presolve=" << presolve;
+
+      const Solution maximize = solve(infeasible(ObjSense::kMaximize), options);
+      ASSERT_EQ(maximize.status, SolveStatus::kInfeasible) << maximize.message;
+      EXPECT_TRUE(std::isinf(maximize.dual_bound)) << algorithm << " presolve=" << presolve;
+      EXPECT_LT(maximize.dual_bound, 0.0) << algorithm << " presolve=" << presolve;
+    }
+  }
+}
+
 TEST(PrimalSimplex, DetectsAnInfeasibleEqualitySystem) {
   //   x + y = 1 and x + y = 2.
   const Model model = make_model(ObjSense::kMinimize, {1.0, 1.0}, {0.0, 0.0}, {kInf, kInf},
