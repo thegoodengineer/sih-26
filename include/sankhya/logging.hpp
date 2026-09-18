@@ -38,6 +38,8 @@ enum class LogLevel : int {
 /// Parse a level name ("info", "verbose", ...). Returns false on an unknown name.
 [[nodiscard]] bool parse_log_level(std::string_view text, LogLevel* out) noexcept;
 
+class Profiler;  // util/profiler.hpp - internal; the logger only carries a pointer to one
+
 class Logger {
  public:
   /// Writes to `stream`, which is not owned and must outlive the logger.
@@ -117,6 +119,15 @@ class Logger {
   /// caller does not need to check for failure, the solve continues either way.
   void enable_progress_output(const std::string& path);
 
+  // ---- Profiling (issue #285) ------------------------------------------------------------
+
+  /// The profiler of the solve this logger belongs to, or null when profiling is off. The
+  /// logger is the per-solve diagnostics context every engine is already handed, so the
+  /// profiler rides on it rather than on a new parameter to every engine entry point. Not
+  /// owned; solve() keeps it alive for as long as it is set.
+  void set_profiler(Profiler* profiler) noexcept { profiler_ = profiler; }
+  [[nodiscard]] Profiler* profiler() const noexcept { return profiler_; }
+
   ~Logger();
   Logger(const Logger&) = delete;
   Logger& operator=(const Logger&) = delete;
@@ -133,6 +144,7 @@ class Logger {
   int rows_since_header_ = 0;
   bool in_node_table_ = false;
   std::FILE* progress_stream_ = nullptr;
+  Profiler* profiler_ = nullptr;
 
   /// ONE clock for the whole stream, started when progress output is enabled.
   ///

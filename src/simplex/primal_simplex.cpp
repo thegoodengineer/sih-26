@@ -54,11 +54,13 @@
 #include <iterator>
 #include <limits>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <fmt/format.h>
 
 #include "../core/stop_controller.hpp"
+#include "../util/profiler.hpp"
 #include "sankhya/timer.hpp"
 #include "sankhya/tolerances.hpp"
 
@@ -1122,6 +1124,21 @@ Solution Simplex::finish(SolveStatus status, const std::string& message, Count i
     }
     logger_.verbose("dual simplex time by phase over {} iterations and {} refactorizations: {}",
                     iterations, refactorizations_, breakdown);
+    // The same accumulators, handed to the profiler rather than timed a second time (#285):
+    // the dual loop already reads the clock around each phase for #210.
+    if (Profiler* profiler = logger_.profiler();
+        profiler != nullptr && profiler->records(ProfileMode::kDetailed)) {
+      for (std::size_t k = 0; k < dual_phase_seconds_.size(); ++k) {
+        if (dual_phase_seconds_[k] <= 0.0) continue;
+        // Every phase is timed once per iteration, so its count is the iteration count -
+        // except the refactorization, whose clock runs every iteration and whose work happens
+        // only on the iterations that refactorize. Its count is the refactorizations.
+        const bool refactor = std::string_view(kDualPhaseNames[k]) == "refactorize";
+        profiler->record(kDualPhaseNames[k], dual_phase_seconds_[k],
+                         refactor ? static_cast<std::int64_t>(refactorizations_) : iterations);
+      }
+      profiler->count("refactorizations", static_cast<std::int64_t>(refactorizations_));
+    }
     if (pivot_rows_computed_ > 0) {
       logger_.verbose(
           "pivot row split (#243): btran {:.2f}s, gather {:.2f}s; rho has {:.1f}% of the rows "

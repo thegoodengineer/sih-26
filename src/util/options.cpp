@@ -255,12 +255,13 @@ const std::vector<OptionSpec>& Options::registry() {
                  {}});
     s.push_back({"mip_heuristics",
                  OptionType::Bool,
-                 true,
+                 false,
                  "Run the primal heuristics #290 added: lock rounding at every node, a "
                  "repair search at the root, the feasibility pump at the root when nothing "
                  "else found an incumbent, and RINS on mip_rins_frequency. Rounding and the "
                  "root dive run either way. Every candidate is checked against the original "
-                 "model before it can become the incumbent.",
+                 "model before it can become the incumbent. OFF until the MIPLIB A/B on main, "
+                 "alone on the machine, says what it buys; a default is a measurement here.",
                  0.0,
                  0.0,
                  {}});
@@ -286,6 +287,25 @@ const std::vector<OptionSpec>& Options::registry() {
                  "Rounds of the feasibility pump at the root (#290); 0 turns it off.",
                  0.0,
                  kNoLimit,
+                 {}});
+    s.push_back({"nlp_tolerance",
+                 OptionType::Double,
+                 1e-6,
+                 "The convex NLP engine's KKT tolerance (#226): primal feasibility relative to "
+                 "the bounds, stationarity relative to the gradient, complementarity relative "
+                 "to the multipliers and bounds. `optimal` means all three were MEASURED below "
+                 "it at the returned point.",
+                 1e-12,
+                 1e-2,
+                 {}});
+    s.push_back({"nlp_assume_convex",
+                 OptionType::Bool,
+                 false,
+                 "Run the convex NLP engine on an objective the composition rules cannot prove "
+                 "convex (x log x, cross terms), on the caller's word (#226). The answer's "
+                 "message then says the convexity was asserted, not proved.",
+                 0.0,
+                 0.0,
                  {}});
     s.push_back({"enable_mir_cuts",
                  OptionType::Bool,
@@ -632,6 +652,28 @@ const std::vector<OptionSpec>& Options::registry() {
                  0.0,
                  {},
                  "Phase 9"});
+    s.push_back({"profile",
+                 OptionType::String,
+                 std::string("off"),
+                 "Where the solve's time goes (#285): off, basic (the phases - presolve, the "
+                 "engine, postsolve, verification - and the headline counters) or detailed "
+                 "(also the sub-phases inside an engine: the simplex's pricing, ratio test and "
+                 "factorizations, the interior point's ordering and factorization, the "
+                 "branch and bound's node LPs and branching). The table is written to the log; "
+                 "off costs a null-pointer test per scope.",
+                 0.0,
+                 0.0,
+                 {"off", "basic", "detailed"}});
+    s.push_back(
+        {"profile_out",
+         OptionType::String,
+         std::string(""),
+         "Also write the profile as JSON to this file; empty writes the log table only.",
+         0.0,
+         0.0,
+         {},
+         /*planned_for=*/std::string(""),
+         /*case_sensitive=*/true});
     s.push_back({"progress_out",
                  OptionType::String,
                  std::string(""),

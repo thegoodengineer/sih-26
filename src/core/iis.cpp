@@ -22,6 +22,7 @@
 #include "sankhya/sparse.hpp"
 #include "sankhya/tolerances.hpp"
 #include "sankhya/types.hpp"
+#include "util/profiler.hpp"
 
 namespace sankhya {
 
@@ -30,6 +31,7 @@ void compute_iis(const Model& model, Solution* solution, const Options& options,
   if (solution->status != SolveStatus::kInfeasible) return;
   if (solution->farkas_dual.empty()) return;
   if (!options.get_bool("compute_iis")) return;
+  ProfileScope timed(logger.profiler(), "iis");  // #285, after the reasons not to run
 
   const Index m = model.num_rows();
   const Index n = model.num_cols();
