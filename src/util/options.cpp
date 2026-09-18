@@ -253,6 +253,25 @@ const std::vector<OptionSpec>& Options::registry() {
                  1.0,
                  100000.0,
                  {}});
+    s.push_back(
+        {"enable_clique_cuts",
+         OptionType::Bool,
+         true,
+         "Include clique cuts from the conflict graph of the binaries in the cut rounds "
+         "(#358). Only read when enable_root_cuts is set; exists so the family can be "
+         "measured on its own.",
+         0.0,
+         0.0,
+         {}});
+    s.push_back({"enable_zero_half_cuts",
+                 OptionType::Bool,
+                 true,
+                 "Include {0,1/2}-Chvatal-Gomory cuts from pure-integer rows in the cut rounds "
+                 "(#358). Only read when enable_root_cuts is set; exists so the family can be "
+                 "measured on its own.",
+                 0.0,
+                 0.0,
+                 {}});
     s.push_back({"enable_mir_cuts",
                  OptionType::Bool,
                  true,

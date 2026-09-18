@@ -520,6 +520,11 @@ Solution BranchAndBound::run() {
                to_string(solution.status), solution.objective, solution.dual_bound,
                solution.nodes, solution.solve_seconds);
   logger_.info("Nodes pruned {}, tree {} node(s) at exit", nodes_pruned_, open_.size());
+  if (clique_cuts_generated_ + zero_half_cuts_generated_ > 0) {
+    logger_.info(
+        "Combinatorial cut candidates (#358): {} clique, {} zero-half, before the filter",
+        clique_cuts_generated_, zero_half_cuts_generated_);
+  }
   logger_.info(
       "Node selection {}: {} node(s) taken deepest-first, {} by the policy, deepest node at "
       "depth {}",
