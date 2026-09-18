@@ -453,8 +453,12 @@ def verify(model: Model, solution: Solution, primal_tol: float, dual_tol: float,
     # basis: exactly m basic entries, and every nonbasic entry sitting on the bound its
     # status names. A solve that reports no basis (first-order, interior point without
     # crossover) has every status unknown and is not judged on this.
-    statuses_known = any(s not in ("unknown", "") for s in solution.col_status.values()) or \
-        any(s not in ("unknown", "") for s in solution.row_status.values())
+    # A basis is judged only when EVERY status is known: an interior-point or first-order
+    # answer reports unknown throughout, and postsolve may still mark the rows it removed
+    # basic, which is bookkeeping about the reduction, not a claim that a basis exists.
+    statuses_known = bool(solution.col_status) and \
+        all(s not in ("unknown", "") for s in solution.col_status.values()) and \
+        all(s not in ("unknown", "") for s in solution.row_status.values())
     if statuses_known:
         basic = 0
         worst_off_bound = 0.0

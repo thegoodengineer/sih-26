@@ -1399,9 +1399,32 @@ Solution postsolve(const Result& result, const Model& original, const Solution& 
         const double xe =
             (record.substituted_rhs - record.partner_coefficient * xk) / record.coefficient;
         solution.col_value[static_cast<std::size_t>(record.column)] = xe;
-        solution.col_status[static_cast<std::size_t>(record.column)] = BasisStatus::kBasic;
         solution.row_dual[static_cast<std::size_t>(record.index)] = 0.0;
-        // An equation: the eliminated column is its basic entry, the logical is fixed (#341).
+        // An equation: one of its two columns is its basic entry and the logical is fixed
+        // (#341). Which one is geometry: the elimination gave the PARTNER bounds implied by
+        // the eliminated column's own bounds, and an engine that leaves the partner nonbasic
+        // at such an implied bound - strictly inside the partner's ORIGINAL bounds - has
+        // really put the ELIMINATED column at its bound. Then the partner is basic here and
+        // the eliminated column nonbasic on the bound it sits on; otherwise the eliminated
+        // column is basic, as its value was computed from the row.
+        {
+          const auto pc = static_cast<std::size_t>(record.partner_column);
+          const auto ce = static_cast<std::size_t>(record.column);
+          const bool partner_inside =
+              !at_bound(xk, original.col_lower[pc]) && !at_bound(xk, original.col_upper[pc]);
+          const bool elim_at_lower = at_bound(xe, original.col_lower[ce]);
+          const bool elim_at_upper = at_bound(xe, original.col_upper[ce]);
+          if (solution.col_status[pc] != BasisStatus::kBasic && partner_inside &&
+              (elim_at_lower || elim_at_upper)) {
+            solution.col_status[pc] = BasisStatus::kBasic;
+            solution.col_status[ce] = original.col_lower[ce] == original.col_upper[ce]
+                                          ? BasisStatus::kFixed
+                                      : elim_at_lower ? BasisStatus::kAtLower
+                                                      : BasisStatus::kAtUpper;
+          } else {
+            solution.col_status[ce] = BasisStatus::kBasic;
+          }
+        }
         solution.row_status[static_cast<std::size_t>(record.index)] = BasisStatus::kFixed;
         break;
       }
@@ -1520,19 +1543,29 @@ Solution postsolve(const Result& result, const Model& original, const Solution& 
     return false;
   };
 
-  // The status the engine gave each column, before any singleton-row record made it basic
-  // (#341): the passes below run to a fixed point, and a repeat pass must decide from the
-  // engine's status, not from what this record itself set last time.
-  std::vector<BasisStatus> engine_col_status = solution.col_status;
+  // Which singleton-row record made its column basic (#341): the passes below run to a
+  // fixed point, and on a repeat pass a record must undo ITS OWN earlier decision before
+  // deciding again - and only its own. Two singleton rows can constrain the same column
+  // (the staircase family has pairs like 4x >= 13 and 7x >= 28 on one x); the one that
+  // prices the column makes it basic, and the other must see that and leave its own logical
+  // basic, rather than resetting the column to the engine's status and losing a basic entry.
+  std::vector<bool> made_column_basic(result.records.size(), false);
+  const std::vector<BasisStatus> engine_col_status = solution.col_status;
   const auto process_singleton_row = [&](const Record& it) {
     const auto c = static_cast<std::size_t>(it.column);
+    const auto record_index = static_cast<std::size_t>(&it - result.records.data());
     // This row's own placeholder is restored first. The dual passes below run to a fixed
     // point (#157), and on a repeat pass reduced_cost_of(it.column) would otherwise include
     // the price this very record set last time, pricing the row against itself. On the
     // first pass both are already the placeholder and this changes nothing.
     solution.row_dual[static_cast<std::size_t>(it.index)] = 0.0;
     solution.row_status[static_cast<std::size_t>(it.index)] = BasisStatus::kBasic;
-    solution.col_status[c] = engine_col_status[c];
+    if (made_column_basic[record_index]) {
+      // Undo this record's own earlier decision; the engine's status was nonbasic, or the
+      // record would not have set it.
+      solution.col_status[c] = engine_col_status[c];
+      made_column_basic[record_index] = false;
+    }
     const double x = solution.col_value[c];
     const double lo = original.col_lower[c];
     const double hi = original.col_upper[c];
@@ -1548,6 +1581,24 @@ Solution postsolve(const Result& result, const Model& original, const Solution& 
     const bool needs_price = (!at_lower && !at_upper) ||
                              (at_lower && !at_upper && signed_d < -tol::kDualFeasibility) ||
                              (at_upper && !at_lower && signed_d > tol::kDualFeasibility);
+    // THE STATUS IS GEOMETRY, THE PRICE IS ARITHMETIC (#341). A column sitting strictly
+    // inside its ORIGINAL bounds, held there by this row being active, is basic in any basis
+    // of the original model - the row's logical is the nonbasic entry, at the bound the
+    // activity sits on - whether or not the row needs a nonzero price (a zero price is a
+    // degenerate one, and the verifier's basis check asks only that a nonbasic entry sit on
+    // the bound it names). The price logic below decides the dual; this decides the basis.
+    {
+      const double activity_now = it.coefficient * x;
+      const bool held_at_lower = at_bound(activity_now, it.row_lower);
+      const bool held_at_upper = at_bound(activity_now, it.row_upper);
+      if (!at_lower && !at_upper && (held_at_lower || held_at_upper) &&
+          solution.col_status[c] != BasisStatus::kBasic) {
+        solution.row_status[static_cast<std::size_t>(it.index)] =
+            held_at_lower ? BasisStatus::kAtLower : BasisStatus::kAtUpper;
+        solution.col_status[c] = BasisStatus::kBasic;
+        made_column_basic[record_index] = true;
+      }
+    }
     // Every bail-out below leaves THIS row unpriced, which means d - computed with this
     // row's own contribution held at the zero placeholder - already IS the column's correct
     // final reduced cost UNLESS some OTHER kSingletonRow record for the same column already
@@ -1622,6 +1673,7 @@ Solution postsolve(const Result& result, const Model& original, const Solution& 
       solution.row_status[static_cast<std::size_t>(it.index)] =
           row_at_lower ? BasisStatus::kAtLower : BasisStatus::kAtUpper;
       solution.col_status[c] = BasisStatus::kBasic;
+      made_column_basic[record_index] = true;
     }
     dual_finalized[c] = true;
     // The price was chosen precisely to cancel this column's reduced cost, so set it to
