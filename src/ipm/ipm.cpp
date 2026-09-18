@@ -39,6 +39,7 @@
 #include "core/resource_limits.hpp"
 #include "la/ldl.hpp"
 #include "la/scaling.hpp"
+#include "util/profiler.hpp"
 
 #include "sankhya/solve_control.hpp"
 #include "sankhya/timer.hpp"
@@ -517,8 +518,14 @@ bool InteriorPoint::factorize() {
       row_shift[static_cast<std::size_t>(k - n_)] = theta_[u];
     }
   }
-  if (!normal_equations_lower(model_.matrix, theta_x, row_shift, kDualRegularization,
-                              &normal_lower_, should_stop_)) {
+  Profiler* profiler = logger_.profiler();
+  bool assembled = false;
+  {
+    ProfileScope timed(profiler, "normal equations", ProfileMode::kDetailed);
+    assembled = normal_equations_lower(model_.matrix, theta_x, row_shift, kDualRegularization,
+                                       &normal_lower_, should_stop_);
+  }
+  if (!assembled) {
     assembly_stopped_ = true;
     return false;
   }
@@ -543,7 +550,12 @@ bool InteriorPoint::factorize() {
                     clock_ != nullptr ? clock_->elapsed_seconds() : -1.0);
     Timer ordering_clock;
     ldl_.set_factor_budget(max_factor_nonzeros_);
-    if (!ldl_.analyze(normal_lower_, setup_stop)) {
+    bool analysed = false;
+    {
+      ProfileScope timed(profiler, "ordering", ProfileMode::kDetailed);
+      analysed = ldl_.analyze(normal_lower_, setup_stop);
+    }
+    if (!analysed) {
       // The pattern count passed the cap before the pattern was stored (#246); the exact
       // size is unknown, and the message below says "more than".
       if (ldl_.factor_too_large()) factor_too_large_ = true;
@@ -566,8 +578,13 @@ bool InteriorPoint::factorize() {
       return false;
     }
   }
-  if (!ldl_.factorize(normal_lower_, kDualRegularization,
-                      factorizations_ == 0 ? setup_stop : should_stop_)) {
+  bool factored = false;
+  {
+    ProfileScope timed(profiler, "factorization", ProfileMode::kDetailed);
+    factored = ldl_.factorize(normal_lower_, kDualRegularization,
+                              factorizations_ == 0 ? setup_stop : should_stop_);
+  }
+  if (!factored) {
     if (setup_past_share && !(should_stop_ && should_stop_())) ordering_declined_ = true;
     return false;
   }

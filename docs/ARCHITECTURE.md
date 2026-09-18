@@ -299,3 +299,69 @@ a bound only if a node proved one: an unevaluated root proves nothing.
 resident memory is not portably queryable from this binary, and `docs/PS26119_COVERAGE.md`
 says so rather than the option table carrying a knob that does nothing. The CUDA backend is
 not on `main`, so nothing here claims anything about device memory or kernel termination.
+
+## 9. Nonlinear models: the representation, before any engine
+
+`src/nlp/` (#296) is the model layer a nonlinear objective or constraint needs: an expression
+graph over the model's columns, evaluated without ever returning NaN as a value,
+differentiated exactly, and classified for convexity by written rules. It solves nothing, and
+no LP, MILP, QP or MIQP engine reads it.
+
+- **`NonlinearModel` holds a frozen `Model`** for the columns, bounds, integrality, linear rows
+  and the linear and quadratic objective, and adds an `ExpressionGraph` over the same columns
+  for the objective term and the constraints the existing engines cannot take. There is no
+  second variable model, and an LP never passes through an expression tree.
+- **The graph is an arena of immutable nodes named by index.** A child is always created before
+  its parent, so the graph cannot hold a cycle, a reference cannot dangle, and index order is an
+  evaluation order. Construction is hash-consed: the same operation built twice is one node,
+  commutative operations sort their children, and a shared subexpression is referenced rather
+  than copied. Misuse is sticky, not thrown (nothing in `src/` throws): an unknown node, an
+  out-of-range column or a non-finite constant yields `kNoExpr` and one recorded message, as
+  `SparseMatrix` does for an overflowed count.
+- **Simplification never changes a domain.** `x + 0`, `x * 1`, `-(-x)`, constant folding and
+  sum flattening happen; `0 * log(x)` stays a product, because at x = -1 it is an error, not a
+  zero, and `exp(log(x))` stays a composition for the same reason.
+- **Evaluation separates three failures.** A domain error (log of a non-positive, sqrt of a
+  negative, division by zero, a non-integer power of a negative) is not an overflow, and neither
+  is a malformed expression. `NonlinearModel::evaluate` keeps a domain failure apart from a
+  constraint violation: a point the model does not define is not a point that violates it.
+- **Derivatives are exact.** Gradients by reverse-mode AD; Hessians by forward-over-reverse, one
+  sweep per column the expression contains, returned as a sparse lower triangle. A derivative
+  that does not exist (sqrt at 0) is refused, not returned as infinity. Finite differences
+  exist only as `check_derivatives`, a test facility.
+- **Convexity is conservative.** The composition rules of disciplined convex programming, with
+  each atom's monotonicity read off the interval range of its argument, so x^3 is convex on
+  x >= 0 and 1/x convex on x > 0. Anything the rules cannot establish is unknown, never guessed:
+  `log(exp(x))` is affine in truth and unknown here. The soundness test puts every random
+  expression the rules call convex or concave through the definition at random point pairs.
+
+What is not here: an engine (#226), a file format (nothing reads or writes a nonlinear model
+yet), nonlinear presolve, and spatial branch and bound for the non-convex case.
+
+## 10. Profiling: where a solve's time goes
+
+`--option profile=basic|detailed` (#285) records a tree of named regions with inclusive time,
+exclusive time and call counts, plus counters, and prints it in the log;
+`--option profile_out=<path>` also writes it as JSON. `src/util/profiler.hpp` holds the
+profiler and `ProfileScope`, its RAII timer.
+
+- **basic**: `solve`, then `presolve`, `engine`, `postsolve` and `verification` (the status
+  guard and the certificate check), with `ranging` and `iis` when they run, and the counters
+  every engine already keeps (iterations, nodes, polish iterations, cuts).
+- **detailed**: also what happens inside an engine. The dual simplex's pricing, pivot row,
+  ratio test, FTRAN, update, refactorization, basic values and reduced costs come from the
+  accumulators #210 already keeps and are not timed a second time. The interior point adds
+  normal-equation assembly, ordering and factorization, PDHG its primal and dual steps, and
+  the branch and bound its node LPs, heuristics and branching (strong branching's probes
+  included). Counters add refactorizations, nodes pruned, warm and cold node LPs, and PDHG
+  restarts.
+
+The profiler rides on the `Logger` every engine is already handed, so no engine signature
+changed. With profiling off it is never attached, and a scope costs a null-pointer test; a
+disabled scope does not read the clock. `bench/results/profiler-overhead-3630cba.csv` measures
+off, basic and detailed against `main` at the same commit, and finds no overhead above the
+machine's noise, with identical answers in every mode.
+
+There is no GPU timing and no memory statistic. The CUDA path has no profiler hook yet, and
+peak resident memory is not portably measurable from this binary; neither is reported rather
+than guessed.

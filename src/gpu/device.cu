@@ -34,10 +34,19 @@ bool device_available(std::string* description) {
   if (description) {
     char buf[512];  // prop.name is char[256]; suffix adds ~40 chars
     std::snprintf(buf, sizeof(buf), "%s (compute %d.%d, %.0f MiB VRAM)", prop.name, prop.major,
-                  prop.minor,
-                  static_cast<double>(prop.totalGlobalMem) / (1024.0 * 1024.0));
+                  prop.minor, static_cast<double>(prop.totalGlobalMem) / (1024.0 * 1024.0));
     *description = buf;
   }
+  return true;
+}
+
+bool device_free_memory(std::size_t* free_bytes, std::size_t* total_bytes) {
+  int count = 0;
+  if (cudaGetDeviceCount(&count) != cudaSuccess || count == 0) return false;
+  std::size_t free_val = 0, total_val = 0;
+  if (cudaMemGetInfo(&free_val, &total_val) != cudaSuccess) return false;
+  if (free_bytes) *free_bytes = free_val;
+  if (total_bytes) *total_bytes = total_val;
   return true;
 }
 

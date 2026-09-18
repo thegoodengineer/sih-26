@@ -41,12 +41,17 @@ add_executable(sankhya_tests
   unit/test_pdhg.cpp
   unit/test_banner.cpp
   unit/test_pdhg_cuda_regression.cpp
+  unit/test_gpu_memory.cpp
   unit/test_qp.cpp
   unit/test_convexity_sparse.cpp
   unit/test_branch_and_bound.cpp
   unit/test_node_selection.cpp
   unit/test_solution_pool.cpp
   unit/test_checkpoint.cpp
+  unit/test_profiler.cpp
+  unit/test_expression.cpp
+  unit/test_nonlinear_model.cpp
+  unit/test_convex_nlp.cpp
   unit/test_fractional_integer_bounds.cpp
   unit/test_deterministic.cpp
   unit/test_resource_limits.cpp
