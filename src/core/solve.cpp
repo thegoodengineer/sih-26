@@ -626,7 +626,40 @@ Solution solve_unguarded(const Model& model, const Options& options, SolveContro
           "--gpu requested but this build has no CUDA backend compiled in; running on CPU");
     }
 
-    solution = with_presolve(run_lp_engine, &presolve_proved_it);
+    // A STARTING BASIS (#218) names the caller's rows and columns, so the engine runs on
+    // the model as given: presolve is bypassed and the message says so. The dual simplex
+    // is the default restart (bound and right-hand-side edits keep the old basis dual
+    // feasible); `algorithm=simplex` restarts the primal (cost edits keep it primal
+    // feasible). A basis the engine cannot seed is reported by it and the solve runs cold.
+    const bool warm_requested = control != nullptr && control->has_starting_basis();
+    if (warm_requested && !want_pdhg && !want_ipm) {
+      WarmStart warm;
+      warm.col_status = control->start_col_status;
+      warm.row_status = control->start_row_status;
+      const bool lengths_fit = static_cast<Index>(warm.col_status.size()) == model.num_cols() &&
+                               static_cast<Index>(warm.row_status.size()) == model.num_rows();
+      if (!lengths_fit) {
+        logger.warning(
+            "the starting basis has {} column and {} row statuses for a model with {} "
+            "columns and {} rows; ignored, solving cold",
+            warm.col_status.size(), warm.row_status.size(), model.num_cols(), model.num_rows());
+        solution = with_presolve(run_lp_engine, &presolve_proved_it);
+      } else {
+        logger.info("Warm start from the given basis; presolve bypassed");
+        solution = want_dual ? solve_dual_simplex(model, options, logger, control, &warm)
+                             : solve_primal_simplex(model, options, logger,
+                                                    build_node_scaling(model, options), control,
+                                                    &warm);
+        const std::string note = "warm start from the given basis, presolve bypassed";
+        solution.message = solution.message.empty() ? note : solution.message + "; " + note;
+      }
+    } else {
+      if (warm_requested) {
+        logger.warning("a starting basis was given but {} produces no basis; ignored",
+                       requested);
+      }
+      solution = with_presolve(run_lp_engine, &presolve_proved_it);
+    }
     if (presolve_proved_it) {
       logger.info("Result: {} (proved during presolve)  {:.3f}s", to_string(solution.status),
                   solution.solve_seconds);

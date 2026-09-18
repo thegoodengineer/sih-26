@@ -1881,6 +1881,13 @@ Solution solve_primal_simplex(const Model& model, const Options& options, Logger
                                     nullptr, control);
 }
 
+Solution solve_primal_simplex(const Model& model, const Options& options, Logger& logger,
+                              const NodeScaling& cache, SolveControl* control,
+                              const WarmStart* warm) {
+  return detail::solve_with_scaling(model, options, logger, cache, detail::Engine::kPrimal,
+                                    warm, control);
+}
+
 Solution solve_dual_simplex(const Model& model, const Options& options, Logger& logger,
                             SolveControl* control, const WarmStart* warm) {
   return solve_dual_simplex(model, options, logger, build_node_scaling(model, options), control,

@@ -51,6 +51,13 @@ struct NodeScaling {
                                             Logger& logger, const NodeScaling& cache,
                                             SolveControl* control = nullptr);
 
+struct WarmStart;
+/// As above, started from `warm` (#218): the right restart after a COST change, which keeps
+/// the old basis primal feasible.
+[[nodiscard]] Solution solve_primal_simplex(const Model& model, const Options& options,
+                                            Logger& logger, const NodeScaling& cache,
+                                            SolveControl* control, const WarmStart* warm);
+
 /// A basis to start from, as the statuses a previous Solution reported.
 ///
 /// Statuses, not values: they are what survives a change of bounds, a change of costs, and

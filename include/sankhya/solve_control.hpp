@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cstdint>
 #include <functional>
+#include <vector>
 
 namespace sankhya {
 
@@ -43,8 +44,29 @@ using ProgressCallback = std::function<int(const Progress&)>;
 /// ten thousand nodes, each a Python call - while this header promised every 100 ms. The
 /// window is measured on a steady clock rather than an engine's Timer because every engine
 /// has its own.
+/// Basis status of a column or row; the definition is in model.hpp, and this opaque
+/// declaration is enough for the vectors below (a scoped enum with a fixed underlying type
+/// is a complete type once declared).
+enum class BasisStatus : std::uint8_t;
+
 class SolveControl {
  public:
+  /// A STARTING BASIS (#218): the statuses a previous Solution reported (`col_status`,
+  /// `row_status`), for a re-solve after the model was edited. The simplex engines honour
+  /// it - the dual simplex when bounds or right-hand sides moved (the old basis is still
+  /// dual feasible), the primal simplex (`algorithm=simplex`) when costs moved (still primal
+  /// feasible) - and finish in a handful of pivots where a cold solve takes thousands. It
+  /// must describe a basis of THIS model: one status per column and per row and exactly
+  /// `num_rows()` of them basic, which is what a Solution's statuses are after #341. Presolve
+  /// is bypassed on a warm solve, since the statuses name the caller's rows and columns, and
+  /// the message says so. A basis that does not seed (wrong lengths, wrong count, singular
+  /// beyond repair) is reported and the solve runs cold; other engines ignore it with a note.
+  std::vector<BasisStatus> start_col_status;
+  std::vector<BasisStatus> start_row_status;
+  [[nodiscard]] bool has_starting_basis() const noexcept {
+    return !start_col_status.empty() || !start_row_status.empty();
+  }
+
   /// How often the progress callback is invoked, at most: the first check of a solve
   /// always calls it, and after that one call per interval.
   static constexpr std::chrono::milliseconds kCallbackInterval{100};
