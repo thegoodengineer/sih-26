@@ -115,12 +115,14 @@ TEST(EngineSelection, TheAnswerCarriesTheRuleAndTheReason) {
   EXPECT_EQ(p.engine_rule, "requested");
 }
 
-TEST(EngineSelection, AnInteriorPointThatDeclinesFallsBackToTheDualSimplex) {
+TEST(EngineSelection, AnInteriorPointThatDeclinesAboveTheRowLimitFallsBackToPdhg) {
   // The selector can only choose; it cannot promise the interior point finishes. When the
-  // chosen engine returns a failure that is not a limit, the dual simplex runs from scratch
-  // and the message says so. The factor budget forced to zero makes the interior point
-  // decline immediately on any model that reaches it; presolve is off so the model does,
-  // and two entries per row give the normal equations a factor far beyond a budget of one.
+  // chosen engine returns a failure that is not a limit, another engine runs from scratch
+  // and the message says so: at or above the row limit that engine is PDHG (#356, #357),
+  // the dual simplex having already lost at that size. The factor budget forced to one
+  // makes the interior point decline immediately on any model that reaches it; presolve is
+  // off so the model does, and two entries per row give the normal equations a factor far
+  // beyond a budget of one.
   Model m = shaped_lp(kDualSimplexRowLimit, 200, 2 * kDualSimplexRowLimit);
   Options o = auto_options();
   o.set_bool("presolve", false);
@@ -128,7 +130,47 @@ TEST(EngineSelection, AnInteriorPointThatDeclinesFallsBackToTheDualSimplex) {
   const Solution s = solve(m, o);
   EXPECT_EQ(s.status, SolveStatus::kOptimal) << s.message;
   EXPECT_EQ(s.engine_rule, "size:ipm");
+  EXPECT_NE(s.algorithm.find("pdhg"), std::string::npos) << s.algorithm;
+  EXPECT_NE(s.message.find("fell back to PDHG"), std::string::npos) << s.message;
+}
+
+TEST(EngineSelection, AnInteriorPointThatDeclinesBelowTheRowLimitFallsBackToTheDualSimplex) {
+  // A dense model below the row limit is the interior point's by the density rule; when it
+  // declines, the dual simplex is the engine measured to be right at that size.
+  Model m = shaped_lp(50, 2100, kIpmNonzeroFloor + 1);
+  Options o = auto_options();
+  o.set_bool("presolve", false);
+  o.set_int("ipm_max_factor_nonzeros", 1);
+  const Solution s = solve(m, o);
+  EXPECT_EQ(s.status, SolveStatus::kOptimal) << s.message;
+  EXPECT_EQ(s.engine_rule, "density:ipm");
+  EXPECT_NE(s.algorithm.find("simplex"), std::string::npos) << s.algorithm;
   EXPECT_NE(s.message.find("fell back to the dual simplex"), std::string::npos) << s.message;
+}
+
+TEST(EngineSelection, AnOrderingPastItsShareOfTheTimeLimitIsADeclineNotATimeLimit) {
+  // #357: the ordering of the normal equations gets ipm_setup_share of the time limit.
+  // A share of zero seconds is past the moment the ordering starts, so the interior point
+  // declines at once - status not_solved, not time_limit - and under auto the fallback
+  // engine solves the model on the rest of the budget.
+  Model m = shaped_lp(kDualSimplexRowLimit, 200, 2 * kDualSimplexRowLimit);
+  Options explicit_ipm = auto_options();
+  explicit_ipm.set_bool("presolve", false);
+  explicit_ipm.set_string("algorithm", "ipm");
+  explicit_ipm.set_double("time_limit", 60.0);
+  explicit_ipm.set_double("ipm_setup_share", 0.0);
+  const Solution declined = solve(m, explicit_ipm);
+  EXPECT_EQ(declined.status, SolveStatus::kNotSolved) << declined.message;
+  EXPECT_NE(declined.message.find("ipm_setup_share"), std::string::npos) << declined.message;
+
+  Options automatic = auto_options();
+  automatic.set_bool("presolve", false);
+  automatic.set_double("time_limit", 60.0);
+  automatic.set_double("ipm_setup_share", 0.0);
+  const Solution recovered = solve(m, automatic);
+  EXPECT_EQ(recovered.status, SolveStatus::kOptimal) << recovered.message;
+  EXPECT_NE(recovered.message.find("fell back to PDHG"), std::string::npos)
+      << recovered.message;
 }
 
 }  // namespace

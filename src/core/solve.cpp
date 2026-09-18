@@ -693,14 +693,31 @@ Solution solve_unguarded(const Model& model, const Options& options, SolveContro
         const bool declined = interior.status == SolveStatus::kNumericalError ||
                               interior.status == SolveStatus::kNotSolved;
         if (requested == "auto" && declined) {
-          logger.warning("the interior point declined ({}); falling back to the dual simplex",
-                         interior.message);
-          Solution fallback =
-              solve_dual_simplex(target, with_the_time_that_is_left(options), logger, control);
-          const std::string note = fmt::format(
-              "the interior point declined ({}) and the solve fell back to the dual simplex",
-              interior.message.empty() ? std::string(to_string(interior.status))
-                                       : interior.message);
+          // Which engine takes over follows the same rule table (#356): below the row limit
+          // the dual simplex is the measured default; at or above it the dual simplex is
+          // the engine that already lost at that size, and the first-order method is the
+          // one that reaches the optimum there (scale-e134aeb.csv, 20,000 and 100,000 rows).
+          // Judged on the model as given (chosen.rows), not on the presolved target: the
+          // rule table was applied to the original shape and the fallback follows it.
+          const bool large = chosen.rows >= kDualSimplexRowLimit;
+          const char* engine_name = large ? "PDHG" : "the dual simplex";
+          logger.warning("the interior point declined ({}); falling back to {}",
+                         interior.message, engine_name);
+          Solution fallback;
+          if (large) {
+            Options remaining = with_the_time_that_is_left(options);
+            fallback = pdhg::solve_pdhg(target, remaining, logger, control);
+            polish_with_the_interior_point(&fallback, target, remaining, logger, control,
+                                           timer);
+          } else {
+            fallback = solve_dual_simplex(target, with_the_time_that_is_left(options), logger,
+                                          control);
+          }
+          const std::string note =
+              fmt::format("the interior point declined ({}) and the solve fell back to {}",
+                          interior.message.empty() ? std::string(to_string(interior.status))
+                                                   : interior.message,
+                          engine_name);
           fallback.message = fallback.message.empty() ? note : fallback.message + "; " + note;
           return fallback;
         }

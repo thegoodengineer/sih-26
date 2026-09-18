@@ -513,6 +513,20 @@ const std::vector<OptionSpec>& Options::registry() {
                  -1.0,
                  kNoLimit,
                  {}});
+    s.push_back({"ipm_setup_share",
+                 OptionType::Double,
+                 0.2,
+                 "Share of the time limit the interior point may spend on its set-up - the "
+                 "ordering and the first factorization of the normal equations - before it "
+                 "declines (#357): a set-up that has not finished by then is abandoned with "
+                 "status not_solved, not time_limit, so that under algorithm=auto another "
+                 "engine runs on the rest of the budget. 1 means no separate budget; no "
+                 "effect without a time limit. Measured on the random 20,000-row scale "
+                 "shape, where the first factorization (57 million nonzeros) alone ran out "
+                 "the whole 120 s with 0 iterations.",
+                 0.0,
+                 1.0,
+                 {}});
     s.push_back({"ipm_max_ordering_entries",
                  OptionType::Int,
                  std::int64_t{100000000},

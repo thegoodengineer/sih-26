@@ -132,6 +132,15 @@ class InteriorPoint {
   /// never got to see - run() reads it beside ldl_.stopped_early() to report a time limit
   /// rather than a numerical failure (#232).
   bool assembly_stopped_ = false;
+  /// The set-up's own deadline (#357): ipm_setup_share of the time limit, measured on the
+  /// solve's clock, covering the ordering AND the first factorization. A set-up that has
+  /// not finished by then is abandoned and the solve DECLINES (kNotSolved) rather than
+  /// running the whole budget out with nothing to show, so the dispatcher can hand the
+  /// model to another engine on the time that is left. Infinite when there is no time
+  /// limit or the share is 1.
+  double ordering_deadline_ = std::numeric_limits<double>::infinity();
+  const Timer* run_clock_ = nullptr;
+  bool ordering_declined_ = false;
   void newton_direction();
   [[nodiscard]] double step_length(const std::vector<double>& s, const std::vector<double>& ds,
                                    const std::vector<double>& t,
@@ -513,16 +522,32 @@ bool InteriorPoint::factorize() {
     assembly_stopped_ = true;
     return false;
   }
+  // The set-up - the ordering and the FIRST factorization - answers to two clocks: the
+  // solve's deadline, and its own share of it (#357). On the random 20,000-row scale shape
+  // the ordering finishes in 2 s but predicts a 57-million-nonzero factor, and that first
+  // factorization ran the whole 120 s out with 0 iterations; abandoning it at the share
+  // turns that into a decline another engine can act on. Later factorizations run under
+  // the solve's deadline alone: by then the cost per iteration is known and paid for.
+  bool setup_past_share = false;
+  const SparseLdl::ShouldStop setup_stop = [this, &setup_past_share] {
+    if (should_stop_ && should_stop_()) return true;
+    if (run_clock_ != nullptr && run_clock_->elapsed_seconds() > ordering_deadline_) {
+      setup_past_share = true;
+      return true;
+    }
+    return false;
+  };
   if (!analyzed_) {
     logger_.verbose("interior point: normal equations assembled ({} nonzeros) at {:.2f}s",
                     normal_lower_.num_nonzeros(),
                     clock_ != nullptr ? clock_->elapsed_seconds() : -1.0);
     Timer ordering_clock;
     ldl_.set_factor_budget(max_factor_nonzeros_);
-    if (!ldl_.analyze(normal_lower_, should_stop_)) {
+    if (!ldl_.analyze(normal_lower_, setup_stop)) {
       // The pattern count passed the cap before the pattern was stored (#246); the exact
       // size is unknown, and the message below says "more than".
       if (ldl_.factor_too_large()) factor_too_large_ = true;
+      if (setup_past_share && !(should_stop_ && should_stop_())) ordering_declined_ = true;
       return false;
     }
     logger_.verbose(
@@ -541,7 +566,11 @@ bool InteriorPoint::factorize() {
       return false;
     }
   }
-  if (!ldl_.factorize(normal_lower_, kDualRegularization, should_stop_)) return false;
+  if (!ldl_.factorize(normal_lower_, kDualRegularization,
+                      factorizations_ == 0 ? setup_stop : should_stop_)) {
+    if (setup_past_share && !(should_stop_ && should_stop_())) ordering_declined_ = true;
+    return false;
+  }
   ++factorizations_;
   regularized_pivots_ += ldl_.regularized_pivots();
   return true;
@@ -894,6 +923,15 @@ Solution InteriorPoint::run() {
   const std::int64_t ordering_entries = options_.get_int("ipm_max_ordering_entries");
   ldl_.set_ordering_budget(ordering_entries < 0 ? static_cast<std::size_t>(-1)
                                                 : static_cast<std::size_t>(ordering_entries));
+  run_clock_ = &timer;
+  ordering_declined_ = false;
+  ordering_deadline_ = std::numeric_limits<double>::infinity();
+  {
+    const double share = options_.get_double("ipm_setup_share");
+    if (limits_.has_time_limit() && share < 1.0) {
+      ordering_deadline_ = timer.elapsed_seconds() + share * limits_.time_limit();
+    }
+  }
   build();
   logger_.verbose("interior point: built in {:.2f}s from the start of the solve",
                   timer.elapsed_seconds());
@@ -1003,6 +1041,20 @@ Solution InteriorPoint::run() {
                     : fmt::format("{}", ldl_.factor_nonzeros() + ldl_.dimension()),
                 warm_ != nullptr ? "polish_max_factor_nonzeros" : "ipm_max_factor_nonzeros",
                 max_factor_nonzeros_),
+            iterations, timer.elapsed_seconds());
+      }
+      if (ordering_declined_) {
+        // Declined, not failed and not out of time: the ordering did not finish within
+        // its share, and the rest of the budget is handed back for another engine (#357).
+        return finish(
+            SolveStatus::kNotSolved,
+            fmt::format("the interior point declined: the ordering and first factorization "
+                        "of the normal equations ({} factor nonzeros) did not finish within "
+                        "ipm_setup_share = {:g} of the {:g}s time limit ({:.1f}s), so the "
+                        "factorization is not affordable here",
+                        ldl_.factor_nonzeros() + ldl_.dimension(),
+                        options_.get_double("ipm_setup_share"), limits_.time_limit(),
+                        timer.elapsed_seconds()),
             iterations, timer.elapsed_seconds());
       }
       if (ldl_.ordering_too_large()) {
