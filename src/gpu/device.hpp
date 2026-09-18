@@ -23,4 +23,9 @@ namespace sankhya::gpu {
 /// Either pointer may be null if the caller does not need that value.
 [[nodiscard]] bool device_free_memory(std::size_t* free_bytes, std::size_t* total_bytes);
 
+/// Query the compute capability of the selected CUDA device (device 0).
+/// Returns false when no device is available or the query fails.
+/// Either pointer may be null if the caller does not need that value.
+[[nodiscard]] bool device_compute_capability(int* major, int* minor);
+
 }  // namespace sankhya::gpu

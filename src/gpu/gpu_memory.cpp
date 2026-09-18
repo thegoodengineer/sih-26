@@ -11,6 +11,10 @@
 
 namespace sankhya::gpu {
 
+bool is_supported_compute_capability(int major, int minor) noexcept {
+  return major * 10 + minor >= kMinComputeArch;
+}
+
 std::size_t estimate_pdhg_gpu_memory(Index rows, Index cols, Count nonzeros) {
   const auto m = static_cast<std::size_t>(rows < 0 ? 0 : rows);
   const auto n = static_cast<std::size_t>(cols < 0 ? 0 : cols);
