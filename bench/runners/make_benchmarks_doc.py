@@ -965,6 +965,57 @@ def proved_convention_note(rows: list[dict]) -> str:
             "number above is left as the run measured it.")
 
 
+def auto_scale_section(paths: dict) -> str:
+    """The three generated families solved under the DEFAULT engine selection (#284, #357),
+    one row per size: which engine the rule table chose, what came of it, and how long.
+
+    The tables above hold each engine to the same instance; this one asks the question a
+    user asks, "what happens if I just run it", and the answer is only as good as the rule
+    table. Every row names the engine that actually ran (`algorithm_used`, which is the
+    fallback's when the interior point declined), so a wrong rule shows up as a row that
+    reached nothing, not as a missing row.
+    """
+    present = {shape: path for shape, path in paths.items() if path is not None}
+    if not present:
+        return ("_No `auto-scale-*.csv` in `bench/results/`. Produce them with_ "
+                "`python bench/runners/scale.py --engines auto --structure <shape>`.")
+    out = []
+    commits = set()
+    for shape in ("random", "staircase", "refinery"):
+        path = present.get(shape)
+        if path is None:
+            continue
+        rows = read_csv(path)
+        commits.update(r.get("git_commit", "") for r in rows)
+        out += ["", f"**{shape}** (`bench/results/{path.name}`):", "",
+                "| size | engine that ran | status | relative error | iterations | seconds |",
+                "|---:|---|---|---:|---:|---:|"]
+        for r in rows:
+            size = r.get("rows", "")
+            if shape == "refinery":
+                size = f"{r.get('rows', '')} x {r.get('columns', '')}"
+            try:
+                rel = f"{float(r.get('relative_error') or 'nan'):.1e}"
+            except ValueError:
+                rel = "-"
+            try:
+                secs = f"{float(r.get('wall_seconds') or 0):.1f}"
+            except ValueError:
+                secs = "-"
+            out.append(f"| {size} | `{r.get('algorithm_used') or r.get('engine', '')}` | "
+                       f"{r.get('status', '')} | {rel} | {r.get('iterations', '')} | {secs} |")
+    reached = sum(int(r.get("reached_optimum") or 0)
+                  for path in present.values() for r in read_csv(path))
+    total = sum(len(read_csv(path)) for path in present.values())
+    stamp = ", ".join(sorted(c for c in commits if c))
+    out += ["", f"**{reached} of {total}** solves under `auto` reached the analytic optimum to a "
+                f"relative 1e-06 (commit {stamp}). The engine column is what ran, which after a "
+                f"decline is the fallback: `pdhg-cpu` on a row that the rule table sent to the "
+                f"interior point means the set-up passed `ipm_setup_share` of the limit and the "
+                f"first-order method took the rest (#357)."]
+    return chr(10).join(out)
+
+
 def scale_section(path: Path | None) -> str:
     """How far up the solver goes, against optima that are exact by construction (#198).
 
@@ -1641,6 +1692,11 @@ def main() -> int:
     per_iteration_csv = newest("scale-iterations-*.csv")
     staircase_csv = newest("scale-staircase-*.csv")
     refinery_csv = newest("scale-refinery-*.csv")
+    # The same families under the default engine selection (#284, #357): one CSV per shape,
+    # named auto-scale-<shape>-<commit>.csv so the patterns above never pick them up as a
+    # family's evidence - they measure the SELECTOR, not an engine.
+    auto_scale_csvs = {shape: newest(f"auto-scale-{shape}-*.csv")
+                       for shape in ("random", "staircase", "refinery")}
 
     # Legacy untagged CSVs predate the tier tag; fall back so an old results directory still
     # generates something rather than failing.
@@ -1733,6 +1789,9 @@ most have a few hundred, so none of them speaks to the size PS26119 asks about.
 #### 1f.3 A refinery planning model, by the year
 
 {refinery_scale_section(refinery_csv)}
+#### 1f.4 The same families under `algorithm=auto`
+
+{auto_scale_section(auto_scale_csvs)}
 ---
 
 ## 2. MIPLIB — the mixed-integer side

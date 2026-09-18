@@ -476,6 +476,36 @@ Commit `e134aeb` · machine `Windows-AMD64` · 120.0s per solve · refinery stru
 
 **6 of 9** solves reached the analytic optimum to a relative 1e-06 on this model; the largest solved is 779,640 rows.
 
+#### 1f.4 The same families under `algorithm=auto`
+
+
+**random** (`bench/results/auto-scale-random-64d2e9a.csv`):
+
+| size | engine that ran | status | relative error | iterations | seconds |
+|---:|---|---|---:|---:|---:|
+| 1000 | `simplex-dual+primal` | optimal | 9.4e-15 | 4271 | 0.4 |
+| 5000 | `simplex-dual` | time_limit | 1.0e-04 | 84075 | 120.0 |
+| 20000 | `pdhg-cpu` | time_limit | 8.8e-10 | 136164 | 120.1 |
+| 100000 | `pdhg-cpu` | time_limit | 1.1e-07 | 16460 | 91.3 |
+
+**staircase** (`bench/results/auto-scale-staircase-64d2e9a.csv`):
+
+| size | engine that ran | status | relative error | iterations | seconds |
+|---:|---|---|---:|---:|---:|
+| 1000 | `simplex-dual+primal` | optimal | 1.6e-16 | 5608 | 0.6 |
+| 5000 | `simplex-dual+primal` | optimal | 1.4e-15 | 34071 | 22.1 |
+| 20000 | `ipm` | feasible | 1.4e-08 | 26 | 103.0 |
+| 100000 | `pdhg-cpu` | time_limit | 5.4e-07 | 18952 | 114.7 |
+
+**refinery** (`bench/results/auto-scale-refinery-64d2e9a.csv`):
+
+| size | engine that ran | status | relative error | iterations | seconds |
+|---:|---|---|---:|---:|---:|
+| 1068 x 1656 | `simplex-dual+primal` | optimal | 8.3e-16 | 5853 | 0.5 |
+| 32485 x 50370 | `ipm` | optimal | 6.8e-12 | 45 | 72.0 |
+| 779640 x 1208880 | `pdhg-cpu` | time_limit | 1.0e-08 | 1522 | 107.2 |
+
+**10 of 11** solves under `auto` reached the analytic optimum to a relative 1e-06 (commit 64d2e9a). The engine column is what ran, which after a decline is the fallback: `pdhg-cpu` on a row that the rule table sent to the interior point means the set-up passed `ipm_setup_share` of the limit and the first-order method took the rest (#357).
 ---
 
 ## 2. MIPLIB — the mixed-integer side
