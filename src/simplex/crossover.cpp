@@ -15,6 +15,7 @@
 #include "primal_simplex.hpp"
 #include "sankhya/tolerances.hpp"
 #include "sankhya/types.hpp"
+#include "simplex_core.hpp"
 
 namespace sankhya {
 namespace {
@@ -250,7 +251,12 @@ Solution crossover_to_vertex(const Model& model, Solution interior, const Option
       "evicted for rank",
       guess.interior, model.num_cols() + model.num_rows(), guess.basic, guess.repaired);
   Timer pivot_clock;
-  Solution vertex = solve_dual_simplex(model, pivots, logger, control, &warm);
+  // The push (#343) runs on the model as given, unscaled: the interior point's values are in
+  // the model's units, and the relative pivot floor (#244) is what makes the unscaled loop
+  // safe. It installs the guess, walks every superbasic variable to a bound while keeping
+  // the point feasible, and finishes with the primal loop from the vertex it arrives at.
+  detail::Simplex simplex(model, pivots, logger, control);
+  Solution vertex = simplex.run_push(warm, interior.col_value, interior.row_activity);
   if (vertex.status != SolveStatus::kOptimal) {
     interior.message += fmt::format(
         "; crossover did not reach a vertex ({} after {} pivots, {:.2f}s), the interior "

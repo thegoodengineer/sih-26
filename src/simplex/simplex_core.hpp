@@ -193,6 +193,12 @@ class Simplex {
   /// The dual simplex (#65), from the slack basis or from `warm`; hands over to the primal
   /// loop when the dual cannot finish honestly (artificial bounds active, or a stall).
   Solution run_dual(const WarmStart* warm = nullptr);
+  /// The primal push of a crossover (#343, simplex_push.cpp): install `warm` (the basis
+  /// guessed off an interior point), start every nonbasic variable at the interior point's
+  /// value (`interior_x` over the columns, `interior_activity` over the rows), push each to a
+  /// bound while keeping the basics feasible, then finish with the primal loop.
+  Solution run_push(const WarmStart& warm, const std::vector<double>& interior_x,
+                    const std::vector<double>& interior_activity);
 
   /// Shift every nonbasic cost in the direction that keeps its reduced cost dual feasible,
   /// so the dual ratio test stops tying. Recomputes the reduced costs.

@@ -207,6 +207,7 @@ set(SANKHYA_CORE_SOURCES
   src/simplex/dual_simplex.cpp
   src/simplex/primal_simplex.cpp
   src/simplex/crossover.cpp
+  src/simplex/simplex_push.cpp
   src/simplex/ranging.cpp
   src/util/logging.cpp
   src/util/options.cpp
