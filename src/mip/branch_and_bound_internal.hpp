@@ -413,6 +413,9 @@ class BranchAndBound {
   /// Bring every stored basis to `rows` row statuses: a new row's logical is basic.
   void resize_warm_starts(Index rows);
   [[nodiscard]] bool is_pooled_duplicate(const Cut& cut) const;
+  /// Clique and {0,1/2} candidates (#358) at `relaxation`, appended to `candidates`, each
+  /// family behind its own option.
+  void add_combinatorial_cuts(const Solution& relaxation, std::vector<Cut>* candidates);
   /// Count node solves in which each cut row was slack; free a row slack for too long.
   void age_cut_rows(const Solution& relaxation);
 
@@ -492,6 +495,8 @@ class BranchAndBound {
   Count rins_frequency_ = 0;
   Count rins_nodes_ = 0;
   int pump_rounds_ = 0;
+  Count clique_cuts_generated_ = 0;     ///< #358, before the filter
+  Count zero_half_cuts_generated_ = 0;  ///< #358, before the filter
   std::string checkpoint_path_;
   Count checkpoint_nodes_ = 0;
   Count last_checkpoint_at_ = -1;

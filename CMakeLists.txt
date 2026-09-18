@@ -201,6 +201,7 @@ set(SANKHYA_CORE_SOURCES
   src/simplex/dense_lu.cpp
   src/mip/branch_and_bound.cpp
   src/mip/branch_and_bound_node.cpp
+  src/mip/combinatorial_cuts.cpp
   src/mip/cuts.cpp
   src/mip/mir_cuts.cpp
   src/mip/branch_and_bound_checkpoint.cpp

@@ -35,6 +35,7 @@
 #include <vector>
 
 #include "branch_and_bound_internal.hpp"
+#include "combinatorial_cuts.hpp"
 #include "mir_cuts.hpp"
 
 namespace sankhya::mip {
@@ -116,6 +117,27 @@ void BranchAndBound::resize_warm_starts(Index rows) {
   for (const Index open : open_) extend(nodes_[static_cast<std::size_t>(open)].warm);
 }
 
+void BranchAndBound::add_combinatorial_cuts(const Solution& relaxation,
+                                            std::vector<Cut>* candidates) {
+  CombinatorialCutStats stats;
+  if (options_.get_bool("enable_clique_cuts")) {
+    std::vector<Cut> cliques =
+        generate_clique_cuts(working_, relaxation, global_lower_, global_upper_, &stats);
+    clique_cuts_generated_ += static_cast<Count>(cliques.size());
+    candidates->insert(candidates->end(), cliques.begin(), cliques.end());
+  }
+  if (options_.get_bool("enable_zero_half_cuts")) {
+    std::vector<Cut> halves =
+        generate_zero_half_cuts(working_, relaxation, global_lower_, global_upper_, &stats);
+    zero_half_cuts_generated_ += static_cast<Count>(halves.size());
+    candidates->insert(candidates->end(), halves.begin(), halves.end());
+  }
+  if (stats.conflict_graph_capped) {
+    logger_.verbose("clique cuts: the conflict graph stopped at {} edges (the cap)",
+                    stats.conflict_edges);
+  }
+}
+
 bool BranchAndBound::is_pooled_duplicate(const Cut& cut) const {
   return std::any_of(pool_cuts_.begin(), pool_cuts_.end(),
                      [&cut](const Cut& pooled) { return same_cut(pooled, cut); });
@@ -148,6 +170,10 @@ void BranchAndBound::root_cut_round(Solution* relaxation) {
     std::vector<Cut> mir = generate_mir_cuts(working_, initial_relaxation);
     candidates.insert(candidates.end(), mir.begin(), mir.end());
   }
+  // Clique and {0,1/2}-Chvatal-Gomory cuts (#358): the families built for the pure-integer,
+  // unit-coefficient covering and packing rows MIR cannot separate. Derived under the
+  // GLOBAL bounds, so they hold at every node.
+  add_combinatorial_cuts(initial_relaxation, &candidates);
 
   auto filtered = filter_and_deduplicate_cuts(working_, initial_relaxation, candidates);
   std::vector<Cut> accepted;
@@ -181,6 +207,7 @@ void BranchAndBound::tree_cut_round(Index depth, Solution* relaxation) {
   if (most_fractional(relaxation->col_value) < 0) return;
   std::vector<Cut> candidates =
       generate_mir_cuts(working_, *relaxation, global_lower_, global_upper_);
+  add_combinatorial_cuts(*relaxation, &candidates);
   if (candidates.empty()) return;
   auto filtered = filter_and_deduplicate_cuts(working_, *relaxation, candidates);
   std::vector<Cut> accepted;
