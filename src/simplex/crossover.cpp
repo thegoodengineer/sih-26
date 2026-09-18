@@ -11,6 +11,7 @@
 
 #include <fmt/format.h>
 
+#include "la/lu.hpp"
 #include "primal_simplex.hpp"
 #include "sankhya/tolerances.hpp"
 #include "sankhya/types.hpp"
@@ -107,11 +108,19 @@ CrossoverGuess crossover_guess(const Model& model, const Solution& interior) {
   }
 
   // Pass 2: exactly m basic entries. The interior set is usually larger than m (the point
-  // is not a vertex); the m with the most slack are the guess, and the rest go to their
-  // nearer bound. When it is smaller, row logicals fill the basis in index order, which is
-  // what a slack basis is. A singular guess is the simplex's to repair, not ours to avoid:
-  // it replaces dependent columns with logicals on its first factorization.
-  std::sort(candidates.begin(), candidates.end(), [](const Score& x, const Score& y) {
+  // is not a vertex), so the guess has to choose - and it chooses for RANK first. An
+  // interior row's logical is a unit column, and any set of them is independent; an
+  // interior structural column is not, and a guess made of the m structurals with the most
+  // slack came back singular on every model tried (7 of 27 unpivoted on afiro, 318 of 4,559
+  // on the 5,000-row staircase), which the simplex answers by throwing the guess away and
+  // starting cold. So interior rows go first, then structurals by slack, which is the crash
+  // basis a simplex would build from the same information: a slack basis with the
+  // structurals the point says are away from their bounds. What is still dependent is the
+  // simplex's to repair on its first factorization.
+  std::sort(candidates.begin(), candidates.end(), [n](const Score& x, const Score& y) {
+    const bool x_row = x.entry >= n;
+    const bool y_row = y.entry >= n;
+    if (x_row != y_row) return x_row;
     if (x.slack != y.slack) return x.slack > y.slack;
     return x.entry < y.entry;
   });
@@ -149,6 +158,67 @@ CrossoverGuess crossover_guess(const Model& model, const Solution& interior) {
     guess.row_status[u] = BasisStatus::kBasic;
     ++guess.basic;
   }
+
+  // Pass 3: RANK. The m entries chosen above are chosen for slack, not independence, and
+  // the interior structurals of a real model are dependent often enough that the simplex
+  // refused the guess on every model tried and started cold (its narrow repair trusts a
+  // defect of a few columns, not the hundreds an interior set carries). So the guess is
+  // factorized here, with partial pivoting so that only a genuine defect counts, and each
+  // column no pivot reached is evicted for the logical of a row no pivot covered - the
+  // repair of Maros sec. 9.4 and Suhl & Suhl 1990, applied until the basis factorizes. A
+  // logical is a unit column, so every round strictly raises the rank and the loop ends.
+  std::vector<Index> basic_entries;
+  basic_entries.reserve(static_cast<std::size_t>(m));
+  for (Index j = 0; j < n; ++j) {
+    if (guess.col_status[static_cast<std::size_t>(j)] == BasisStatus::kBasic)
+      basic_entries.push_back(j);
+  }
+  for (Index i = 0; i < m; ++i) {
+    if (guess.row_status[static_cast<std::size_t>(i)] == BasisStatus::kBasic)
+      basic_entries.push_back(n + i);
+  }
+  if (static_cast<Index>(basic_entries.size()) != m) return guess;
+  std::vector<Index> logical_rows(static_cast<std::size_t>(m));
+  std::vector<double> logical_values(static_cast<std::size_t>(m), -1.0);
+  for (Index i = 0; i < m; ++i) logical_rows[static_cast<std::size_t>(i)] = i;
+  std::vector<LuColumn> columns(static_cast<std::size_t>(m));
+  const auto fill_columns = [&]() {
+    for (Index slot = 0; slot < m; ++slot) {
+      const Index k = basic_entries[static_cast<std::size_t>(slot)];
+      LuColumn& target = columns[static_cast<std::size_t>(slot)];
+      if (k < n) {
+        const ColumnView column = model.matrix.column(k);
+        target.rows = column.rows;
+        target.values = column.values;
+        target.size = column.size;
+      } else {
+        const auto row = static_cast<std::size_t>(k - n);
+        target.rows = logical_rows.data() + row;
+        target.values = logical_values.data() + row;
+        target.size = 1;
+      }
+    }
+  };
+  SparseLu lu;
+  for (int round = 0; round < 64; ++round) {
+    fill_columns();
+    if (lu.factorize(columns, m, tol::kPivotTolerance, 1.0)) break;
+    const std::vector<Index> dependent = lu.dependent_positions();
+    const std::vector<Index> uncovered = lu.uncovered_rows();
+    if (dependent.empty() || dependent.size() != uncovered.size()) break;
+    for (std::size_t t = 0; t < dependent.size(); ++t) {
+      const Index slot = dependent[t];
+      const Index logical = n + uncovered[t];
+      if (slot < 0 || slot >= m) continue;
+      if (guess.row_status[static_cast<std::size_t>(uncovered[t])] == BasisStatus::kBasic)
+        continue;
+      const Index evicted = basic_entries[static_cast<std::size_t>(slot)];
+      to_nearer_bound(evicted);
+      basic_entries[static_cast<std::size_t>(slot)] = logical;
+      guess.row_status[static_cast<std::size_t>(uncovered[t])] = BasisStatus::kBasic;
+      ++guess.repaired;
+    }
+  }
   return guess;
 }
 
@@ -175,8 +245,10 @@ Solution crossover_to_vertex(const Model& model, Solution interior, const Option
   WarmStart warm;
   warm.col_status = guess.col_status;
   warm.row_status = guess.row_status;
-  logger.info("Crossover: {} of {} entries interior, basis guess of {} from the interior point",
-              guess.interior, model.num_cols() + model.num_rows(), guess.basic);
+  logger.info(
+      "Crossover: {} of {} entries interior, basis guess of {} from the interior point, {} "
+      "evicted for rank",
+      guess.interior, model.num_cols() + model.num_rows(), guess.basic, guess.repaired);
   Timer pivot_clock;
   Solution vertex = solve_dual_simplex(model, pivots, logger, control, &warm);
   if (vertex.status != SolveStatus::kOptimal) {

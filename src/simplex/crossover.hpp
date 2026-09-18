@@ -39,6 +39,7 @@ struct CrossoverGuess {
   std::vector<BasisStatus> row_status;
   Index basic = 0;     ///< entries marked basic (m for a well-formed model with a point)
   Index interior = 0;  ///< entries the interior point held strictly inside their bounds
+  Index repaired = 0;  ///< structurals evicted for row logicals to make the guess full rank
 };
 
 /// Classify an interior point (`col_value`, `row_activity`, `col_dual` in the model's sense)
