@@ -253,14 +253,14 @@ const std::vector<OptionSpec>& Options::registry() {
          OptionType::Bool,
          false,
          "Enable root-node cutting planes (Gomory mixed-integer, lifted knapsack cover and, "
-         "since #221, mixed-integer rounding). OFF by default pending one more "
-         "measurement, not out of caution: on the 30-instance MIPLIB set at a 60 s limit "
-         "at 0d33665 the round costs no proof and no published match (14 reached, 9 "
-         "proved either way) and takes the node count to 0.912x over the 30 instances "
-         "that end the same way. Before MIR joined (bf3df02) it cost one match, noswot. "
-         "The default is decided together with the cut rounds below the root (#221, "
-         "tree_cut_depth). See bench/results/miplib-cuts-off.csv and "
-         "miplib-cuts-on.csv.",
+         "since #221, mixed-integer rounding; tree_cut_depth adds rounds below the root). "
+         "OFF by default, and that is a measurement, not caution: on the 30-instance "
+         "MIPLIB set at a 60 s limit at 5e78399 the root round proves the same 9 "
+         "instances, takes the node count to 0.896x (0.835x with tree rounds at depth 4), "
+         "and costs one published match at the limit, neos-3611689-kaihu (119 without "
+         "cuts, 120 with them, both unproved at 60 s). A round that saves nodes without "
+         "proving anything more does not earn the default. See "
+         "bench/results/miplib-cuts-{off,on,tree}.csv and docs/BENCHMARKS.md section 2.",
          0.0,
          0.0,
          {}});

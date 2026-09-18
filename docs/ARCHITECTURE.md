@@ -168,9 +168,9 @@ it describes.
   landed in #159 (`src/mip/cuts.cpp`) and single-row MIR cuts in #221
   (`src/mip/mir_cuts.cpp`), appended as rows of the working model before the search
   starts; the answer reports the root bound before and after the round. `enable_root_cuts`
-  is false pending the measurement of the rounds below the root; the A/B at `0d33665`
-  shows the root round costing nothing on the 30-instance set, and `docs/BENCHMARKS.md`
-  section 2 carries the numbers.
+  is false by measurement: the three-way A/B at `5e78399` (off, root round, root plus
+  tree rounds) proves the same 9 of 30, saves nodes, and costs one published match at the
+  time limit; `docs/BENCHMARKS.md` section 2 carries the numbers.
 - **Parallelism** — the column loops in pricing and in the sparse products are
   embarrassingly parallel and deterministic (no cross-thread reductions); the tree search is
   the larger prize and the harder one, because a race on the incumbent can fathom a node

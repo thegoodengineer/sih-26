@@ -786,6 +786,12 @@ def cuts_ab_paragraph() -> str:
     common = [n for n in off if n in on]
     if not common:
         return "**Root cuts, on versus off:** the two CSVs share no instance."
+    stamps = sorted({r.get("git_commit", "") for r in list(off.values()) + list(on.values())})
+    if len(stamps) != 1 or stamps[0].endswith("-dirty") or not stamps[0]:
+        return (f"**Root cuts, on versus off:** the two CSVs are not one measurement: commit "
+                f"stamps {stamps}. A run made on a modified tree or at a different commit "
+                f"cannot be compared, so no number is quoted until both are re-run at one "
+                f"clean commit.")
     same = [n for n in common if off[n]["status"] == on[n]["status"]]
     changed = [n for n in common if off[n]["status"] != on[n]["status"]]
 
@@ -871,13 +877,50 @@ def cuts_ab_paragraph() -> str:
                    f"{ratio:.3f}x. `enable_root_cuts` stays off by default until the cut "
                    f"rounds below the root (#221) are measured on the same set, so that one "
                    f"decision rests on one measurement.")
+    # The third leg (#221): the same run with cut rounds below the root
+    # (`tree_cut_depth=4`), read only when its CSV was produced at the same commit as the
+    # other two, so the three-way comparison is one measurement.
+    tree_path = RESULTS_DIR / "miplib-cuts-tree.csv"
+    tree = {r["instance"]: r for r in read_csv(tree_path)} if tree_path.exists() else {}
+    if tree and any(r.get("git_commit") != commit for r in tree.values()):
+        tree = {}
+    tree_text = ""
+    if tree:
+        tree_common = [n for n in common if n in tree]
+        matched_tree, proved_tree = tally({n: tree[n] for n in tree_common})
+        tree_same = [n for n in tree_common if off[n]["status"] == tree[n]["status"]]
+        tree_nodes_off = sum(nodes(off[n]) for n in tree_same)
+        tree_nodes = sum(nodes(tree[n]) for n in tree_same)
+        tree_ratio = (tree_nodes / tree_nodes_off) if tree_nodes_off else float("nan")
+        tree_moved = [n for n in tree_common
+                      if (int(off[n].get("matched_published") or 0), proved_now(off[n]))
+                      != (int(tree[n].get("matched_published") or 0), proved_now(tree[n]))]
+        tree_moved_text = "; ".join(
+            f"`{n}`: matched {yes_no(bool(int(off[n].get('matched_published') or 0)))} -> "
+            f"{yes_no(bool(int(tree[n].get('matched_published') or 0)))}, proved "
+            f"{yes_no(proved_now(off[n]))} -> {yes_no(proved_now(tree[n]))}"
+            for n in tree_moved) if tree_moved else "none"
+        tree_text = (f" **With cut rounds below the root as well** (`miplib-cuts-tree.csv`, "
+                     f"`tree_cut_depth=4`, same commit): {matched_tree} of {len(tree_common)} "
+                     f"reach the published optimum and {proved_tree} prove it, "
+                     f"{proved_tree - proved_off:+d} proved and {matched_tree - matched_off:+d} "
+                     f"matched against cuts off, node count {tree_ratio:.3f}x over the "
+                     f"{len(tree_same)} instances that end the same way; verdicts that moved: "
+                     f"{tree_moved_text}.")
     # The root-gap column (#221): how much of the integrality gap the root cut round closed
-    # on each instance, blank where the CSV predates the column or the gap was zero.
-    closed_rows = [(n, on[n].get("root_gap_closed") or "", on[n].get("cuts_applied") or "")
+    # on each instance, blank where the CSV predates the column or the gap was zero. With
+    # the tree leg present the table also carries its cut count (root + tree rows).
+    closed_rows = [(n, on[n].get("root_gap_closed") or "", on[n].get("cuts_applied") or "",
+                    (tree.get(n) or {}).get("cuts_applied") or "-")
                    for n in common if (on[n].get("root_gap_closed") or "").strip()]
     if closed_rows:
-        table = ["", "", "| instance | root cuts | root gap closed |", "|---|---:|---:|"]
-        table += [f"| `{n}` | {c} | {float(g):.1%} |" for n, g, c in closed_rows]
+        if tree:
+            table = ["", "", "| instance | root cuts | root gap closed | root + tree cuts |",
+                     "|---|---:|---:|---:|"]
+            table += [f"| `{n}` | {c} | {float(g):.1%} | {t} |" for n, g, c, t in closed_rows]
+        else:
+            table = ["", "", "| instance | root cuts | root gap closed |", "|---|---:|---:|"]
+            table += [f"| `{n}` | {c} | {float(g):.1%} |" for n, g, c, _ in closed_rows]
         table += ["", f"Root gap closed is (bound after cuts - bound before) / (final "
                       f"objective - bound before) on the cuts-on run, for the "
                       f"{len(closed_rows)} of {len(common)} instances whose CSV row carries "
@@ -893,7 +936,7 @@ def cuts_ab_paragraph() -> str:
             f"way either way, the cuts take the total node count to {ratio:.3f}x{spread}. "
             f"The outcome changed on {len(changed)}: {changed_text}. " + convention +
             f"Instances whose matched or proved verdict differs between the two runs: "
-            f"{moved_text}. " + verdict + gap_text)
+            f"{moved_text}. " + verdict + tree_text + gap_text)
 
 
 def proved_convention_note(rows: list[dict]) -> str:
