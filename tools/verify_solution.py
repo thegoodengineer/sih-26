@@ -448,6 +448,49 @@ def verify(model: Model, solution: Solution, primal_tol: float, dual_tol: float,
                  f"worst |multiplier| * slack = {worst:.3e}"
                  + (f" on {where}" if where else ""))
 
+    # ---- The basis (#218) -----------------------------------------------------------------
+    # A simplex answer carries a status per column and per row. When it does, it has to be a
+    # basis: exactly m basic entries, and every nonbasic entry sitting on the bound its
+    # status names. A solve that reports no basis (first-order, interior point without
+    # crossover) has every status unknown and is not judged on this.
+    statuses_known = any(s not in ("unknown", "") for s in solution.col_status.values()) or \
+        any(s not in ("unknown", "") for s in solution.row_status.values())
+    if statuses_known:
+        basic = 0
+        worst_off_bound = 0.0
+        where_off = ""
+        for j, name in enumerate(model.col_names):
+            status = solution.col_status.get(name, "unknown")
+            scale = max(1.0, abs(x[j]))
+            if status == "basic":
+                basic += 1
+            elif status == "at_lower" and math.isfinite(model.col_lower[j]):
+                off = abs(x[j] - model.col_lower[j]) / scale
+                if off > worst_off_bound:
+                    worst_off_bound, where_off = off, name
+            elif status == "at_upper" and math.isfinite(model.col_upper[j]):
+                off = abs(x[j] - model.col_upper[j]) / scale
+                if off > worst_off_bound:
+                    worst_off_bound, where_off = off, name
+        for i, name in enumerate(model.row_names):
+            status = solution.row_status.get(name, "unknown")
+            scale = max(1.0, abs(activity[i]))
+            if status == "basic":
+                basic += 1
+            elif status == "at_lower" and math.isfinite(model.row_lower[i]):
+                off = abs(activity[i] - model.row_lower[i]) / scale
+                if off > worst_off_bound:
+                    worst_off_bound, where_off = off, name
+            elif status == "at_upper" and math.isfinite(model.row_upper[i]):
+                off = abs(activity[i] - model.row_upper[i]) / scale
+                if off > worst_off_bound:
+                    worst_off_bound, where_off = off, name
+        report.check(basic == model.num_rows, "basis",
+                     f"{basic} basic entries for {model.num_rows} rows")
+        report.check(worst_off_bound <= primal_tol, "nonbasic entries on their bounds",
+                     f"worst distance {worst_off_bound:.3e}"
+                     + (f" on {where_off}" if where_off else ""))
+
     # ---- Strong duality -------------------------------------------------------------------
     dual_objective_min_space = 0.0
     for i in range(model.num_rows):

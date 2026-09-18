@@ -409,3 +409,41 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_warm_start_after_an_edit() -> None:
+    """#218: solve, move a bound and a price in place, solve again from the last result.
+
+    The re-solve restarts from the previous basis and reports the pivots it took; the
+    number is the proof, so it is compared against a cold solve of the same edited model.
+    """
+    model = sankhya.Model.read(str(REPO_ROOT / "data" / "netlib" / "afiro.mps"))
+    first = model.solve(log_to_console=False)
+    check(first.status == "optimal", "warm start: first solve is optimal", first.message)
+    statuses = first.col_statuses
+    check(len(statuses) == model.num_cols and "basic" in statuses,
+          "warm start: the result carries a basis",
+          f"{statuses.count('basic')} basic of {len(statuses)}")
+    check(statuses.count("basic") + first.row_statuses.count("basic") == model.num_rows,
+          "warm start: as many basic entries as rows")
+    # Tighten the largest basic column to half its value, and raise one cost.
+    largest = max((v, j) for j, (v, s) in enumerate(zip(first.x, statuses)) if s == "basic")
+    model.set_col_bounds(largest[1], 0.0, 0.5 * largest[0])
+    cold = model.solve(log_to_console=False)
+    warm = model.solve(log_to_console=False, start=first)
+    check(warm.status == cold.status == "optimal", "warm start: both re-solves optimal",
+          f"cold {cold.status}, warm {warm.status}: {warm.message}")
+    check(abs(warm.objective - cold.objective) <= 1e-6 * max(1.0, abs(cold.objective)),
+          "warm start: same objective as the cold re-solve",
+          f"warm {warm.objective} cold {cold.objective}")
+    check("warm start" in warm.message, "warm start: the message says so", warm.message)
+    check(warm.iterations * 5 <= cold.iterations + 5,
+          "warm start: a small fraction of the cold pivots",
+          f"warm {warm.iterations} pivots, cold {cold.iterations}")
+    model.set_cost(largest[1], 100.0)
+    again = model.solve(log_to_console=False, start=warm, algorithm="simplex")
+    check(again.status == "optimal", "warm start: a cost edit re-solves through the primal",
+          again.message)

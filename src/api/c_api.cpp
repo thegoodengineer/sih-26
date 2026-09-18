@@ -249,6 +249,47 @@ sankhya_status sankhya_model_add_row(sankhya_model* model, double lower, double 
   });
 }
 
+sankhya_status sankhya_model_set_col_bounds(sankhya_model* model, int col, double lower,
+                                            double upper) {
+  if (model == nullptr) return fail(SANKHYA_ERROR_ARGUMENT, "model is null");
+  sankhya::Model& m = model->model;
+  if (col < 0 || col >= static_cast<int>(m.col_cost.size())) {
+    return fail(SANKHYA_ERROR_ARGUMENT, "column " + std::to_string(col) +
+                                            " is outside the model, which has " +
+                                            std::to_string(m.col_cost.size()) + " column(s)");
+  }
+  m.col_lower[static_cast<std::size_t>(col)] = lower;
+  m.col_upper[static_cast<std::size_t>(col)] = upper;
+  return ok();
+}
+
+sankhya_status sankhya_model_set_row_bounds(sankhya_model* model, int row, double lower,
+                                            double upper) {
+  if (model == nullptr) return fail(SANKHYA_ERROR_ARGUMENT, "model is null");
+  sankhya::Model& m = model->model;
+  if (row < 0 || row >= static_cast<int>(m.row_lower.size())) {
+    return fail(SANKHYA_ERROR_ARGUMENT, "row " + std::to_string(row) +
+                                            " is outside the model, which has " +
+                                            std::to_string(m.row_lower.size()) + " row(s)");
+  }
+  m.row_lower[static_cast<std::size_t>(row)] = lower;
+  m.row_upper[static_cast<std::size_t>(row)] = upper;
+  return ok();
+}
+
+sankhya_status sankhya_model_set_objective_coefficient(sankhya_model* model, int col,
+                                                       double cost) {
+  if (model == nullptr) return fail(SANKHYA_ERROR_ARGUMENT, "model is null");
+  sankhya::Model& m = model->model;
+  if (col < 0 || col >= static_cast<int>(m.col_cost.size())) {
+    return fail(SANKHYA_ERROR_ARGUMENT, "column " + std::to_string(col) +
+                                            " is outside the model, which has " +
+                                            std::to_string(m.col_cost.size()) + " column(s)");
+  }
+  m.col_cost[static_cast<std::size_t>(col)] = cost;
+  return ok();
+}
+
 sankhya_status sankhya_model_set_coefficient(sankhya_model* model, int row, int col,
                                              double value) {
   if (model == nullptr) return fail(SANKHYA_ERROR_ARGUMENT, "model is null");
@@ -481,6 +522,11 @@ sankhya_status sankhya_options_set_string(sankhya_options* options, const char* 
 
 sankhya_status sankhya_solve(sankhya_model* model, const sankhya_options* options,
                              sankhya_solution** solution) {
+  return sankhya_solve_from(model, options, nullptr, solution);
+}
+
+sankhya_status sankhya_solve_from(sankhya_model* model, const sankhya_options* options,
+                                  const sankhya_solution* start, sankhya_solution** solution) {
   if (model == nullptr || solution == nullptr) {
     return fail(SANKHYA_ERROR_ARGUMENT, "model or solution pointer is null");
   }
@@ -497,6 +543,12 @@ sankhya_status sankhya_solve(sankhya_model* model, const sankhya_options* option
       std::lock_guard<std::mutex> lock(model->control_mutex);
       control->progress_callback = model->progress_callback;
       model->active_control = control;
+    }
+    // The starting basis (#218): the statuses the previous solution reported. solve() checks
+    // the shape against the model and says what it did with them.
+    if (start != nullptr) {
+      control->start_col_status = start->solution.col_status;
+      control->start_row_status = start->solution.row_status;
     }
 
     struct ControlClearer {
@@ -570,6 +622,42 @@ sankhya_status sankhya_solution_col_values(const sankhya_solution* solution, dou
                                            int count) {
   if (solution == nullptr) return fail(SANKHYA_ERROR_ARGUMENT, "solution is null");
   return copy_vector(solution->solution.col_value, values, count, "column values");
+}
+
+namespace {
+sankhya_status copy_statuses(const std::vector<sankhya::BasisStatus>& source, int* destination,
+                             int count, const char* what) {
+  if (destination == nullptr) return fail(SANKHYA_ERROR_ARGUMENT, "destination is null");
+  if (count < 0 || static_cast<std::size_t>(count) != source.size()) {
+    return fail(SANKHYA_ERROR_ARGUMENT, std::string("wrong buffer size for ") + what +
+                                            ": the solution has " +
+                                            std::to_string(source.size()) + " entries, " +
+                                            std::to_string(count) + " were offered");
+  }
+  for (std::size_t i = 0; i < source.size(); ++i) {
+    switch (source[i]) {
+      case sankhya::BasisStatus::kUnknown: destination[i] = SANKHYA_BASIS_UNKNOWN; break;
+      case sankhya::BasisStatus::kBasic: destination[i] = SANKHYA_BASIS_BASIC; break;
+      case sankhya::BasisStatus::kAtLower: destination[i] = SANKHYA_BASIS_AT_LOWER; break;
+      case sankhya::BasisStatus::kAtUpper: destination[i] = SANKHYA_BASIS_AT_UPPER; break;
+      case sankhya::BasisStatus::kNonbasicFree: destination[i] = SANKHYA_BASIS_FREE; break;
+      case sankhya::BasisStatus::kFixed: destination[i] = SANKHYA_BASIS_FIXED; break;
+    }
+  }
+  return ok();
+}
+}  // namespace
+
+sankhya_status sankhya_solution_col_statuses(const sankhya_solution* solution, int* statuses,
+                                             int count) {
+  if (solution == nullptr) return fail(SANKHYA_ERROR_ARGUMENT, "solution is null");
+  return copy_statuses(solution->solution.col_status, statuses, count, "column statuses");
+}
+
+sankhya_status sankhya_solution_row_statuses(const sankhya_solution* solution, int* statuses,
+                                             int count) {
+  if (solution == nullptr) return fail(SANKHYA_ERROR_ARGUMENT, "solution is null");
+  return copy_statuses(solution->solution.row_status, statuses, count, "row statuses");
 }
 
 sankhya_status sankhya_solution_row_activities(const sankhya_solution* solution, double* values,

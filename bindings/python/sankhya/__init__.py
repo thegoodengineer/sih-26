@@ -257,6 +257,27 @@ class Result:
         """Primal column values, in the order the columns were added."""
         return self._vector(_library().sankhya_solution_col_values, self._cols, "column values")
 
+    _BASIS_NAMES = {0: "unknown", 1: "basic", 2: "at_lower", 3: "at_upper", 4: "free",
+                    5: "fixed"}
+
+    def _statuses(self, function, count: int, what: str) -> list[str]:
+        if count == 0:
+            return []
+        buffer = (ctypes.c_int * count)()
+        _check(function(self._handle, buffer, count), f"reading {what}")
+        return [self._BASIS_NAMES.get(v, "unknown") for v in buffer]
+
+    @property
+    def col_statuses(self) -> list[str]:
+        """Basis status per column: basic, at_lower, at_upper, free, fixed, or unknown."""
+        return self._statuses(_library().sankhya_solution_col_statuses, self._cols,
+                              "column statuses")
+
+    @property
+    def row_statuses(self) -> list[str]:
+        return self._statuses(_library().sankhya_solution_row_statuses, self._rows,
+                              "row statuses")
+
     @property
     def row_activities(self) -> list[float]:
         return self._vector(_library().sankhya_solution_row_activities, self._rows,
@@ -387,6 +408,28 @@ class Model:
             self.set_coefficient(index.value, column, value)
         return index.value
 
+    def set_col_bounds(self, column: int, lower: float, upper: float | None = None) -> None:
+        """Replace one column's bounds in place; ``upper=None`` means no upper bound.
+
+        The model keeps its structure, so a previous ``Result`` still describes it and
+        ``solve(start=result)`` restarts from that basis (#218).
+        """
+        _check(_library().sankhya_model_set_col_bounds(
+            self._handle, int(column), float(lower),
+            float(INFINITY) if upper is None else float(upper)), f"setting bounds of column {column}")
+
+    def set_row_bounds(self, row: int, lower: float | None, upper: float | None) -> None:
+        """Replace one row's bounds in place; ``None`` on either side means no bound there."""
+        _check(_library().sankhya_model_set_row_bounds(
+            self._handle, int(row), float(-INFINITY) if lower is None else float(lower),
+            float(INFINITY) if upper is None else float(upper)), f"setting bounds of row {row}")
+
+    def set_cost(self, column: int, cost: float) -> None:
+        """Replace one objective coefficient in place (a price, say)."""
+        _check(_library().sankhya_model_set_objective_coefficient(self._handle, int(column),
+                                                                  float(cost)),
+               f"setting the cost of column {column}")
+
     def set_coefficient(self, row: int, column: int, value: float) -> None:
         """Set one constraint coefficient. Setting it twice REPLACES, never accumulates."""
         _check(_library().sankhya_model_set_coefficient(self._handle, row, column, float(value)),
@@ -430,8 +473,13 @@ class Model:
         """Interrupt an ongoing solve from another thread or signal handler."""
         _check(_library().sankhya_model_interrupt(self._handle), "interrupting model")
 
-    def solve(self, options: Options | None = None, callback=None, **overrides: object) -> Result:
+    def solve(self, options: Options | None = None, callback=None, start: "Result | None" = None,
+              **overrides: object) -> Result:
         """Solve, returning a Result.
+
+        ``start`` is a previous Result of THIS model to restart from (#218): after editing a
+        bound or a cost the simplex resumes from that basis and finishes in a handful of
+        pivots, reported as ``result.iterations``. Presolve is bypassed on a warm solve.
 
         Options may be passed as an Options object, as keyword arguments, or both - keywords
         are applied on top. The return value describes what the SOLVER concluded; a failure
@@ -476,8 +524,9 @@ class Model:
 
         def _run() -> None:
             try:
-                _check(_library().sankhya_solve(
-                    self._handle, options._handle if options else None, ctypes.byref(handle)),
+                _check(_library().sankhya_solve_from(
+                    self._handle, options._handle if options else None,
+                    start._handle if start is not None else None, ctypes.byref(handle)),
                     "solving")
             finally:
                 if callback is not None:

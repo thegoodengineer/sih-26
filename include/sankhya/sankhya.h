@@ -157,6 +157,24 @@ sankhya_status sankhya_model_set_coefficient(sankhya_model* model, int row, int 
 sankhya_status sankhya_model_set_quadratic_coefficient(sankhya_model* model, int row, int col,
                                                        double value);
 
+/* ---- Editing a model between solves (#218) ------------------------------------------- */
+
+/**
+ * Replace one column's bounds, one row's bounds, or one objective coefficient, in place.
+ *
+ * These are what a planner changes between two solves - a crude price, a tank capacity, a
+ * demand - and a model edited this way keeps its structure, so a previous solution's basis
+ * still describes it and sankhya_solve_from() can restart from it. Pass -sankhya_infinity()
+ * or sankhya_infinity() for an absent bound. A column index or row index outside the model
+ * is SANKHYA_ERROR_ARGUMENT.
+ */
+sankhya_status sankhya_model_set_col_bounds(sankhya_model* model, int col, double lower,
+                                            double upper);
+sankhya_status sankhya_model_set_row_bounds(sankhya_model* model, int row, double lower,
+                                            double upper);
+sankhya_status sankhya_model_set_objective_coefficient(sankhya_model* model, int col,
+                                                       double cost);
+
 int sankhya_model_num_cols(const sankhya_model* model);
 int sankhya_model_num_rows(const sankhya_model* model);
 int sankhya_model_num_nonzeros(const sankhya_model* model);
@@ -230,6 +248,23 @@ sankhya_status sankhya_options_set_string(sankhya_options* options, const char* 
 sankhya_status sankhya_solve(sankhya_model* model, const sankhya_options* options,
                              sankhya_solution** solution);
 
+/**
+ * Solve again, starting from the basis a previous solution of THIS model reported (#218).
+ *
+ * The typical use: solve, edit a bound or a cost with the sankhya_model_set_* calls above,
+ * and solve from the previous solution. The simplex engines restart from that basis - the
+ * dual simplex after bound and right-hand-side edits (the default), the primal simplex
+ * (option algorithm=simplex) after cost edits - and finish in a handful of pivots where a
+ * cold solve takes thousands; the pivot count is sankhya_solution_iterations(). Presolve is
+ * bypassed on a warm solve, since the basis names the caller's rows and columns, and the
+ * message says so. A `start` whose basis does not fit the model (columns or rows added or
+ * removed since) is ignored with a warning in the log and the solve runs cold; a `start` from
+ * the interior point or PDHG carries no basis and is likewise ignored. `start` may be NULL,
+ * which is sankhya_solve().
+ */
+sankhya_status sankhya_solve_from(sankhya_model* model, const sankhya_options* options,
+                                  const sankhya_solution* start, sankhya_solution** solution);
+
 void sankhya_solution_free(sankhya_solution* solution);
 
 sankhya_solve_status sankhya_solution_status(const sankhya_solution* solution);
@@ -287,6 +322,27 @@ sankhya_status sankhya_solution_row_duals(const sankhya_solution* solution, doub
 /** Column reduced costs, same contract. */
 sankhya_status sankhya_solution_col_duals(const sankhya_solution* solution, double* values,
                                           int count);
+
+/**
+ * Basis status of a column or row (#218). The simplex engines report one per column and per
+ * row, with exactly as many BASIC entries as the model has rows; first-order and interior-
+ * point solves (without crossover) report UNKNOWN throughout.
+ */
+typedef enum sankhya_basis_status {
+  SANKHYA_BASIS_UNKNOWN = 0,
+  SANKHYA_BASIS_BASIC = 1,
+  SANKHYA_BASIS_AT_LOWER = 2,
+  SANKHYA_BASIS_AT_UPPER = 3,
+  SANKHYA_BASIS_FREE = 4, /**< a free column held at zero */
+  SANKHYA_BASIS_FIXED = 5 /**< lower == upper */
+} sankhya_basis_status;
+
+/** Column basis statuses, same size contract as sankhya_solution_col_values. */
+sankhya_status sankhya_solution_col_statuses(const sankhya_solution* solution, int* statuses,
+                                             int count);
+/** Row basis statuses, same contract. */
+sankhya_status sankhya_solution_row_statuses(const sankhya_solution* solution, int* statuses,
+                                             int count);
 
 /* ---- Whether there is a point, and the certificates behind a verdict ------------------ */
 

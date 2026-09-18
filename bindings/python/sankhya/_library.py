@@ -129,6 +129,15 @@ def _declare(lib: ctypes.CDLL) -> None:
         model_p, ctypes.c_double, ctypes.c_double, ctypes.c_char_p, c_int_p,
     ]
     lib.sankhya_model_add_row.restype = ctypes.c_int
+    lib.sankhya_model_set_col_bounds.argtypes = [model_p, ctypes.c_int, ctypes.c_double,
+                                                 ctypes.c_double]
+    lib.sankhya_model_set_col_bounds.restype = ctypes.c_int
+    lib.sankhya_model_set_row_bounds.argtypes = [model_p, ctypes.c_int, ctypes.c_double,
+                                                 ctypes.c_double]
+    lib.sankhya_model_set_row_bounds.restype = ctypes.c_int
+    lib.sankhya_model_set_objective_coefficient.argtypes = [model_p, ctypes.c_int,
+                                                            ctypes.c_double]
+    lib.sankhya_model_set_objective_coefficient.restype = ctypes.c_int
     lib.sankhya_model_set_coefficient.argtypes = [
         model_p, ctypes.c_int, ctypes.c_int, ctypes.c_double,
     ]
@@ -181,6 +190,15 @@ def _declare(lib: ctypes.CDLL) -> None:
 
     lib.sankhya_solve.argtypes = [model_p, options_p, ctypes.POINTER(ctypes.c_void_p)]
     lib.sankhya_solve.restype = ctypes.c_int
+    lib.sankhya_solve_from.argtypes = [model_p, options_p, solution_p,
+                                       ctypes.POINTER(ctypes.c_void_p)]
+    lib.sankhya_solve_from.restype = ctypes.c_int
+    lib.sankhya_solution_col_statuses.argtypes = [solution_p, ctypes.POINTER(ctypes.c_int),
+                                                  ctypes.c_int]
+    lib.sankhya_solution_col_statuses.restype = ctypes.c_int
+    lib.sankhya_solution_row_statuses.argtypes = [solution_p, ctypes.POINTER(ctypes.c_int),
+                                                  ctypes.c_int]
+    lib.sankhya_solution_row_statuses.restype = ctypes.c_int
     lib.sankhya_solution_free.argtypes = [solution_p]
     lib.sankhya_solution_free.restype = None
     lib.sankhya_solution_status.argtypes = [solution_p]

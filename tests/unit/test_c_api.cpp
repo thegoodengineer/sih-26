@@ -365,3 +365,76 @@ TEST(CApi, AModelCanBeExtendedAndResolvedWithoutBeingFrozenByTheFirstSolve) {
 }
 
 }  // namespace
+
+namespace {
+
+TEST(CApi, EditsABoundAndResolvesFromThePreviousBasis) {
+  // #218 through the C surface: solve, read the basis, tighten a bound in place, solve
+  // again from the previous solution. The restart is the point, and the pivot count is
+  // the proof: the warm re-solve takes fewer pivots than the cold one on the same edited
+  // model, and reaches the same objective.
+  ModelHandle model;
+  ASSERT_NE(model.handle, nullptr);
+  //   maximise 3x + 2y + z  s.t.  x + y + z <= 4,  x + 3y <= 6,  y + 2z <= 5,  0 <= x <= 3
+  int x = -1, y = -1, z = -1;
+  ASSERT_EQ(sankhya_model_add_column(model, 3.0, 0.0, 3.0, 0, "x", &x), SANKHYA_OK);
+  ASSERT_EQ(sankhya_model_add_column(model, 2.0, 0.0, sankhya_infinity(), 0, "y", &y),
+            SANKHYA_OK);
+  ASSERT_EQ(sankhya_model_add_column(model, 1.0, 0.0, sankhya_infinity(), 0, "z", &z),
+            SANKHYA_OK);
+  int r0 = -1, r1 = -1, r2 = -1;
+  ASSERT_EQ(sankhya_model_add_row(model, -sankhya_infinity(), 4.0, "c0", &r0), SANKHYA_OK);
+  ASSERT_EQ(sankhya_model_add_row(model, -sankhya_infinity(), 6.0, "c1", &r1), SANKHYA_OK);
+  ASSERT_EQ(sankhya_model_add_row(model, -sankhya_infinity(), 5.0, "c2", &r2), SANKHYA_OK);
+  for (int c : {x, y, z})
+    ASSERT_EQ(sankhya_model_set_coefficient(model, r0, c, 1.0), SANKHYA_OK);
+  ASSERT_EQ(sankhya_model_set_coefficient(model, r1, x, 1.0), SANKHYA_OK);
+  ASSERT_EQ(sankhya_model_set_coefficient(model, r1, y, 3.0), SANKHYA_OK);
+  ASSERT_EQ(sankhya_model_set_coefficient(model, r2, y, 1.0), SANKHYA_OK);
+  ASSERT_EQ(sankhya_model_set_coefficient(model, r2, z, 2.0), SANKHYA_OK);
+  ASSERT_EQ(sankhya_model_set_maximize(model, 1), SANKHYA_OK);
+
+  sankhya_solution* first = nullptr;
+  ASSERT_EQ(sankhya_solve(model, nullptr, &first), SANKHYA_OK);
+  ASSERT_EQ(sankhya_solution_status(first), SANKHYA_OPTIMAL) << sankhya_solution_message(first);
+  int col_status[3] = {-1, -1, -1};
+  int row_status[3] = {-1, -1, -1};
+  ASSERT_EQ(sankhya_solution_col_statuses(first, col_status, 3), SANKHYA_OK);
+  ASSERT_EQ(sankhya_solution_row_statuses(first, row_status, 3), SANKHYA_OK);
+  int basic = 0;
+  for (int s : col_status) basic += s == SANKHYA_BASIS_BASIC ? 1 : 0;
+  for (int s : row_status) basic += s == SANKHYA_BASIS_BASIC ? 1 : 0;
+  EXPECT_EQ(basic, 3) << "a basis has as many basic entries as rows";
+  EXPECT_EQ(sankhya_solution_col_statuses(first, col_status, 2), SANKHYA_ERROR_ARGUMENT);
+
+  // The edit: x may no longer exceed 1.
+  ASSERT_EQ(sankhya_model_set_col_bounds(model, x, 0.0, 1.0), SANKHYA_OK);
+  sankhya_solution* cold = nullptr;
+  sankhya_solution* warm = nullptr;
+  ASSERT_EQ(sankhya_solve(model, nullptr, &cold), SANKHYA_OK);
+  ASSERT_EQ(sankhya_solve_from(model, nullptr, first, &warm), SANKHYA_OK);
+  ASSERT_EQ(sankhya_solution_status(cold), SANKHYA_OPTIMAL) << sankhya_solution_message(cold);
+  ASSERT_EQ(sankhya_solution_status(warm), SANKHYA_OPTIMAL) << sankhya_solution_message(warm);
+  EXPECT_NEAR(sankhya_solution_objective(warm), sankhya_solution_objective(cold), 1e-9);
+  EXPECT_NE(std::string(sankhya_solution_message(warm)).find("warm start"), std::string::npos)
+      << sankhya_solution_message(warm);
+  EXPECT_LE(sankhya_solution_iterations(warm), sankhya_solution_iterations(cold));
+  double values[3];
+  ASSERT_EQ(sankhya_solution_col_values(warm, values, 3), SANKHYA_OK);
+  EXPECT_LE(values[0], 1.0 + 1e-9);
+
+  // A cost edit and a row edit go through the same surface.
+  ASSERT_EQ(sankhya_model_set_objective_coefficient(model, z, 10.0), SANKHYA_OK);
+  ASSERT_EQ(sankhya_model_set_row_bounds(model, r2, -sankhya_infinity(), 3.0), SANKHYA_OK);
+  sankhya_solution* again = nullptr;
+  ASSERT_EQ(sankhya_solve_from(model, nullptr, warm, &again), SANKHYA_OK);
+  ASSERT_EQ(sankhya_solution_status(again), SANKHYA_OPTIMAL) << sankhya_solution_message(again);
+  EXPECT_EQ(sankhya_model_set_col_bounds(model, 7, 0.0, 1.0), SANKHYA_ERROR_ARGUMENT);
+
+  sankhya_solution_free(again);
+  sankhya_solution_free(warm);
+  sankhya_solution_free(cold);
+  sankhya_solution_free(first);
+}
+
+}  // namespace
