@@ -203,6 +203,31 @@ TEST(InteriorPoint, SolvesTheCommittedNetlibInstancesToTheSimplexAnswer) {
   }
 }
 
+TEST(InteriorPoint, TheShiftedStartDoesNotStallTheEarlyIterations) {
+  // #375. With every slack floored at 1, a logical whose row activity at the midpoint start
+  // sits far outside its row bounds carried the whole violation as a residual against a
+  // slack of 1; the Newton step that closes it drives other slacks negative at once, the
+  // primal step length collapses to 1e-3, and mu climbs for tens of iterations before the
+  // method recovers - or, on stocfor2, does not within the 300-iteration limit. Mehrotra's
+  // starting point shifts every slack by the worst violation and balances slacks against
+  // multipliers. On the committed stocfor1 that is 137 iterations before and 13 after; the
+  // bound below is loose so a change of platform cannot trip it, and tight enough that the
+  // old start would.
+  const std::string path =
+      (std::filesystem::path(__FILE__).parent_path().parent_path().parent_path() /
+       "data/netlib/stocfor1.mps")
+          .string();
+  Model model;
+  const io::ReadResult read = io::read_model(path, &model);
+  ASSERT_TRUE(read.ok) << path << ": " << read.error;
+  Options options = with_algorithm("ipm");
+  options.set_bool("crossover", false);
+  const Solution ipm = solve(model, options);
+  ASSERT_EQ(ipm.status, SolveStatus::kOptimal) << ipm.message;
+  EXPECT_NEAR(ipm.objective, -41131.976219, 1e-3) << ipm.message;
+  EXPECT_LT(ipm.iterations, 40) << "the early iterations stalled: " << ipm.message;
+}
+
 TEST(InteriorPoint, ReportsRatherThanClaimsOnAnInfeasibleModel) {
   // x >= 5 and x <= 1: the method cannot certify infeasibility and must not say optimal.
   const Model model =

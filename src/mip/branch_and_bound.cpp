@@ -90,6 +90,20 @@ Solution BranchAndBound::run() {
   nodes_.push_back(root);
   open_.push_back(0);
 
+  // RESUME (#287): replace the fresh root with the open nodes of a saved search. Everything
+  // is validated before a single node is touched, and a checkpoint that does not belong to
+  // this model, or this build's format, is refused - never loaded on a best-effort basis.
+  checkpoint_path_ = options_.get_string("checkpoint");
+  checkpoint_nodes_ = options_.get_int("checkpoint_nodes");
+  if (const std::string resume = options_.get_string("resume"); !resume.empty()) {
+    if (const std::string refused = restore_checkpoint(resume); !refused.empty()) {
+      solution.status = SolveStatus::kNotSolved;
+      solution.message = "resume refused: " + refused;
+      logger_.warning("{}", solution.message);
+      return solution;
+    }
+  }
+
   double best_open_bound = -std::numeric_limits<double>::infinity();
   bool logged_table = false;
   bool dive = false;
@@ -102,6 +116,12 @@ Solution BranchAndBound::run() {
   Solution best_available_point;
 
   while (!open_.empty()) {
+    // PERIODIC CHECKPOINT (#287), between nodes: no node is entered, so every bound in the
+    // working model is the root's and the open list is the whole of the search.
+    if (checkpoint_nodes_ > 0 && nodes_explored_ > 0 &&
+        nodes_explored_ % checkpoint_nodes_ == 0 && nodes_explored_ != last_checkpoint_at_) {
+      save_checkpoint();
+    }
     // Both counters and the clock are checked here, in the documented order: a tree that is
     // out of time and out of nodes at the same node reports the time limit (#289).
     if (const LimitReason why = limits_.exhausted(timer_.elapsed_seconds(), 0,
@@ -422,6 +442,9 @@ Solution BranchAndBound::run() {
                    reported(best_open_bound), gap, timer_.elapsed_seconds());
     }
   }
+
+  // A search stopped by a limit is exactly the one worth resuming (#287).
+  if (limit_hit && !open_.empty()) save_checkpoint();
 
   // ---- Report ------------------------------------------------------------------------------
   double final_bound = incumbent_internal_;

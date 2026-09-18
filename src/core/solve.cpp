@@ -723,11 +723,23 @@ Solution solve_unguarded(const Model& model, const Options& options, SolveContro
     const bool want_ipm = chosen.algorithm == "ipm";
     const bool want_dual = chosen.algorithm == "dual-simplex";
 
-    // VRAM check (#281): before committing to GPU PDHG, verify the model fits in available
-    // device memory. Falls back to CPU PDHG with a diagnostic when it does not.
-    // The variable lives inside the ifdef so the CPU-only build does not see it as unused.
+    // Architecture and VRAM checks (#281, #282): before committing to GPU PDHG verify that
+    // the device meets the minimum compiled architecture and that the model fits in VRAM.
+    // Both variables live inside the ifdef so the CPU-only build does not see them as unused.
 #ifdef SANKHYA_ENABLE_CUDA
     bool use_gpu_pdhg = chosen.use_gpu || options.get_bool("gpu");
+    if (use_gpu_pdhg && want_pdhg) {
+      int cap_major = 0, cap_minor = 0;
+      if (gpu::device_compute_capability(&cap_major, &cap_minor)) {
+        if (!gpu::is_supported_compute_capability(cap_major, cap_minor)) {
+          logger.warning(
+              "GPU PDHG: device compute {}.{} is below the minimum compiled architecture "
+              "({}.{}); falling back to CPU PDHG",
+              cap_major, cap_minor, gpu::kMinComputeArch / 10, gpu::kMinComputeArch % 10);
+          use_gpu_pdhg = false;
+        }
+      }
+    }
     if (use_gpu_pdhg && want_pdhg) {
       std::size_t free_bytes = 0, total_bytes = 0;
       if (gpu::device_free_memory(&free_bytes, &total_bytes)) {

@@ -253,6 +253,41 @@ const std::vector<OptionSpec>& Options::registry() {
                  1.0,
                  100000.0,
                  {}});
+    s.push_back({"checkpoint",
+                 OptionType::String,
+                 std::string(""),
+                 "Write the branch-and-bound search to this file when a limit stops it, and "
+                 "every checkpoint_nodes nodes if that is set (#287). Written atomically: to "
+                 "<file>.tmp, then moved over <file>, so a failed write leaves the previous "
+                 "checkpoint intact. Empty writes none.",
+                 0.0,
+                 0.0,
+                 {},
+                 /*planned_for=*/std::string(""),
+                 /*case_sensitive=*/true});
+    s.push_back({"checkpoint_nodes",
+                 OptionType::Int,
+                 std::int64_t{0},
+                 "Also write the checkpoint every this many nodes (#287); 0 writes only when a "
+                 "limit stops the search.",
+                 0.0,
+                 kNoLimit,
+                 {}});
+    s.push_back(
+        {"resume",
+         OptionType::String,
+         std::string(""),
+         "Continue the branch-and-bound search saved in this checkpoint (#287). Refused, "
+         "before anything runs, when it was written for a different model (the model "
+         "fingerprint, which presolve settings change too), another format version, "
+         "another integrality tolerance, or its checksum does not match. The saved "
+         "incumbent is re-verified against the model; node_limit counts the nodes "
+         "explored before the checkpoint too.",
+         0.0,
+         0.0,
+         {},
+         /*planned_for=*/std::string(""),
+         /*case_sensitive=*/true});
     s.push_back({"nlp_tolerance",
                  OptionType::Double,
                  1e-6,
