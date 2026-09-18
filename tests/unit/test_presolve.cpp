@@ -559,3 +559,67 @@ TEST(Presolve, FuzzFreeColumnSingletonAndDoubletonEquation) {
 
 }  // namespace
 }  // namespace sankhya
+
+#include <filesystem>
+
+#include "sankhya/io.hpp"
+#include "simplex/primal_simplex.hpp"
+
+namespace sankhya {
+namespace {
+
+TEST(Presolve, PostsolvedStatusesAreABasisOfTheOriginalModel) {
+  // #341: after postsolve the status vectors used to carry more basic entries than rows
+  // (afiro: 29 for 27), because a column eliminated through a row and that row's logical
+  // were both marked basic. A warm start built from such statuses is refused by seed_basis
+  // and the simplex silently runs cold. Now every restored row adds exactly one basic
+  // entry, for both engines, and the statuses seed a warm start that takes almost no pivots
+  // because the basis is already optimal.
+  const char* instances[] = {"afiro",   "sc50a", "sc50b",    "adlittle", "blend",
+                             "share2b", "sc105", "stocfor1", "israel"};
+  for (const char* name : instances) {
+    Model model;
+    const std::string path =
+        (std::filesystem::path(__FILE__).parent_path().parent_path().parent_path() /
+         "data/netlib" / (std::string(name) + ".mps"))
+            .string();
+    const io::ReadResult read = io::read_model(path, &model);
+    ASSERT_TRUE(read.ok) << path << ": " << read.error;
+    for (const char* algorithm : {"dual-simplex", "ipm"}) {
+      Options options = with_presolve(true);
+      options.set_string("algorithm", algorithm);
+      const Solution s = solve(model, options);
+      ASSERT_EQ(s.status, SolveStatus::kOptimal)
+          << name << " " << algorithm << ": " << s.message;
+      ASSERT_EQ(static_cast<Index>(s.col_status.size()), model.num_cols());
+      ASSERT_EQ(static_cast<Index>(s.row_status.size()), model.num_rows());
+      Index basic = 0;
+      for (const BasisStatus st : s.col_status) basic += st == BasisStatus::kBasic ? 1 : 0;
+      for (const BasisStatus st : s.row_status) basic += st == BasisStatus::kBasic ? 1 : 0;
+      EXPECT_EQ(basic, model.num_rows()) << name << " " << algorithm;
+
+      // The statuses seed the dual simplex on the ORIGINAL model and it finishes from there
+      // in a handful of pivots, where a cold start needs many: the warm start was accepted.
+      Options engine;
+      engine.set_bool("log_to_console", false);
+      engine.set_string("algorithm", "dual-simplex");
+      Logger logger(nullptr);
+      WarmStart warm;
+      warm.col_status = s.col_status;
+      warm.row_status = s.row_status;
+      const Solution warmed = solve_dual_simplex(model, engine, logger, nullptr, &warm);
+      const Solution cold = solve_dual_simplex(model, engine, logger, nullptr, nullptr);
+      ASSERT_EQ(warmed.status, SolveStatus::kOptimal)
+          << name << " " << algorithm << ": " << warmed.message;
+      EXPECT_NEAR(warmed.objective, cold.objective,
+                  1e-6 * std::max(1.0, std::fabs(cold.objective)))
+          << name;
+      EXPECT_LT(warmed.iterations * 4, cold.iterations + 4)
+          << name << " " << algorithm << ": warm " << warmed.iterations << " pivots against "
+          << cold.iterations << " cold - the warm start was not accepted";
+    }
+  }
+}
+
+}  // namespace
+}  // namespace sankhya

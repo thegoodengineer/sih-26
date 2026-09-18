@@ -1313,6 +1313,19 @@ Solution postsolve(const Result& result, const Model& original, const Solution& 
   // Replay in REVERSE for the PRIMAL values. A column fixed in pass 3 may sit in a row
   // removed in pass 1, so undoing them in application order would price a row against a
   // point that does not exist yet.
+  // ONE BASIC ENTRY PER RESTORED ROW (#341). A restored row adds one row to the basis the
+  // caller reads, so it must add exactly one basic entry: its own logical when the row was
+  // removed as inactive (redundant, empty, forcing, singleton), or the column solved from it
+  // when a column was eliminated through it (free column singleton, doubleton) - in which
+  // case the row's logical is NONBASIC, at the bound the elimination held the row to. Marking
+  // both basic, which this used to do, handed back 29 basic entries for afiro's 27 rows, and
+  // a warm start built from such statuses is refused by the simplex and silently runs cold.
+  const auto row_logical_at_its_target = [&](const Record& record) {
+    if (record.row_lower == record.row_upper) return BasisStatus::kFixed;
+    const double lower_gap = std::fabs(record.substituted_rhs - record.row_lower);
+    const double upper_gap = std::fabs(record.substituted_rhs - record.row_upper);
+    return lower_gap <= upper_gap ? BasisStatus::kAtLower : BasisStatus::kAtUpper;
+  };
   for (std::size_t idx = result.records.size(); idx-- > 0;) {
     const Record& record = result.records[idx];
     switch (record.kind) {
@@ -1370,9 +1383,11 @@ Solution postsolve(const Result& result, const Model& original, const Solution& 
         const double xj = (record.substituted_rhs - sum) / record.coefficient;
         solution.col_value[static_cast<std::size_t>(record.column)] = xj;
         solution.col_status[static_cast<std::size_t>(record.column)] = BasisStatus::kBasic;
-        // Placeholder; refined below, in the duals pass, exactly like kSingletonRow.
+        // Placeholder; refined below, in the duals pass, exactly like kSingletonRow. The
+        // column is the row's basic entry, so the logical sits at the row's target (#341).
         solution.row_dual[static_cast<std::size_t>(record.index)] = 0.0;
-        solution.row_status[static_cast<std::size_t>(record.index)] = BasisStatus::kBasic;
+        solution.row_status[static_cast<std::size_t>(record.index)] =
+            row_logical_at_its_target(record);
         break;
       }
       case Record::Kind::kDoubletonEquation: {
@@ -1386,7 +1401,8 @@ Solution postsolve(const Result& result, const Model& original, const Solution& 
         solution.col_value[static_cast<std::size_t>(record.column)] = xe;
         solution.col_status[static_cast<std::size_t>(record.column)] = BasisStatus::kBasic;
         solution.row_dual[static_cast<std::size_t>(record.index)] = 0.0;
-        solution.row_status[static_cast<std::size_t>(record.index)] = BasisStatus::kBasic;
+        // An equation: the eliminated column is its basic entry, the logical is fixed (#341).
+        solution.row_status[static_cast<std::size_t>(record.index)] = BasisStatus::kFixed;
         break;
       }
     }
@@ -1504,6 +1520,10 @@ Solution postsolve(const Result& result, const Model& original, const Solution& 
     return false;
   };
 
+  // The status the engine gave each column, before any singleton-row record made it basic
+  // (#341): the passes below run to a fixed point, and a repeat pass must decide from the
+  // engine's status, not from what this record itself set last time.
+  std::vector<BasisStatus> engine_col_status = solution.col_status;
   const auto process_singleton_row = [&](const Record& it) {
     const auto c = static_cast<std::size_t>(it.column);
     // This row's own placeholder is restored first. The dual passes below run to a fixed
@@ -1512,6 +1532,7 @@ Solution postsolve(const Result& result, const Model& original, const Solution& 
     // first pass both are already the placeholder and this changes nothing.
     solution.row_dual[static_cast<std::size_t>(it.index)] = 0.0;
     solution.row_status[static_cast<std::size_t>(it.index)] = BasisStatus::kBasic;
+    solution.col_status[c] = engine_col_status[c];
     const double x = solution.col_value[c];
     const double lo = original.col_lower[c];
     const double hi = original.col_upper[c];
@@ -1593,9 +1614,15 @@ Solution postsolve(const Result& result, const Model& original, const Solution& 
     }
 
     solution.row_dual[static_cast<std::size_t>(it.index)] = candidate;
-    solution.row_status[static_cast<std::size_t>(it.index)] =
-        row_at_lower ? BasisStatus::kAtLower : BasisStatus::kAtUpper;
-    solution.col_status[c] = BasisStatus::kBasic;
+    // One basic entry for this row (#341): the column it constrained becomes basic and the
+    // logical nonbasic at the active bound - unless the engine already had the column basic,
+    // in which case the logical stays basic (the price is then a degenerate one) so the
+    // count of basic entries still rises by exactly one for the restored row.
+    if (solution.col_status[c] != BasisStatus::kBasic) {
+      solution.row_status[static_cast<std::size_t>(it.index)] =
+          row_at_lower ? BasisStatus::kAtLower : BasisStatus::kAtUpper;
+      solution.col_status[c] = BasisStatus::kBasic;
+    }
     dual_finalized[c] = true;
     // The price was chosen precisely to cancel this column's reduced cost, so set it to
     // exactly zero rather than leaving a rounded residue for the verifier to trip over.
@@ -1824,9 +1851,10 @@ Solution postsolve(const Result& result, const Model& original, const Solution& 
         }
 
         solution.row_dual[static_cast<std::size_t>(record.index)] = y;
-        solution.row_status[static_cast<std::size_t>(record.index)] = BasisStatus::kBasic;
+        // The statuses were settled in the values pass (#341): the eliminated column is
+        // basic for this equation and its logical is fixed; the partner keeps the status
+        // the engine gave it. Only the duals are refined here.
         solution.col_dual[pc] = rco_keep - b * (y - y_from_elim);
-        solution.col_status[pc] = BasisStatus::kBasic;
         dual_finalized[pc] = true;
         solution.col_dual[c] = rco_elim - a * y;
         dual_finalized[c] = true;
@@ -1847,15 +1875,17 @@ Solution postsolve(const Result& result, const Model& original, const Solution& 
       if (!needs_price) {
         // Already admissible without this row's help - it really is redundant, exactly like a
         // kRedundantRow, and complementary slackness forbids inventing a price for it anyway.
+        // The status stays what the values pass set (#341): the restored column is this
+        // row's basic entry and the logical sits at the row's target, priced at zero.
         solution.row_dual[static_cast<std::size_t>(record.index)] = 0.0;
-        solution.row_status[static_cast<std::size_t>(record.index)] = BasisStatus::kBasic;
         solution.col_dual[c] = d;
         dual_finalized[c] = true;
         continue;
       }
 
       solution.row_dual[static_cast<std::size_t>(record.index)] = d / record.coefficient;
-      solution.row_status[static_cast<std::size_t>(record.index)] = BasisStatus::kBasic;
+      solution.row_status[static_cast<std::size_t>(record.index)] =
+          row_logical_at_its_target(record);
       solution.col_status[c] = BasisStatus::kBasic;
       // The price was chosen precisely to cancel this column's reduced cost, so set it to
       // exactly zero rather than leaving a rounded residue for the verifier to trip over.

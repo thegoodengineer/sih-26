@@ -30,10 +30,8 @@ Options ipm_options(bool crossover) {
   options.set_bool("log_to_console", false);
   options.set_string("algorithm", "ipm");
   options.set_bool("crossover", crossover);
-  // Presolve off: the vertex checks below count basic entries against m, and postsolve's
-  // status vectors currently carry more than m basic entries (filed as its own issue), which
-  // is a property of postsolve and not of the vertex crossover reaches.
-  options.set_bool("presolve", false);
+  // Presolve stays ON: the vertex checks below count basic entries against m through
+  // postsolve as well, which #341 made exact (every restored row adds one basic entry).
   return options;
 }
 
