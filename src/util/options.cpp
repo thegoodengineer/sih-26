@@ -222,6 +222,23 @@ const std::vector<OptionSpec>& Options::registry() {
                  0.0,
                  0.0,
                  {}});
+    s.push_back({"tree_cut_depth",
+                 OptionType::Int,
+                 std::int64_t{0},
+                 "Deepest tree node at which a cut round runs (#221); 0 keeps cuts at the "
+                 "root only. Only read when enable_root_cuts is set. Tree rounds add MIR "
+                 "cuts built on the global bounds, so every cut is valid for the whole "
+                 "tree and stays as a row; rows slack for 50 node solves are freed.",
+                 0.0,
+                 1000.0,
+                 {}});
+    s.push_back({"tree_cut_rows_per_round",
+                 OptionType::Int,
+                 std::int64_t{20},
+                 "Most cut rows one tree cut round may add (#221).",
+                 1.0,
+                 100000.0,
+                 {}});
     s.push_back({"enable_mir_cuts",
                  OptionType::Bool,
                  true,

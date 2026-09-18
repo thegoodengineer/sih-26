@@ -51,6 +51,12 @@
 namespace sankhya::mip {
 
 Solution BranchAndBound::run() {
+  global_lower_ = working_.col_lower;
+  global_upper_ = working_.col_upper;
+  if (options_.get_bool("enable_root_cuts")) {
+    tree_cut_depth_ = static_cast<Index>(options_.get_int("tree_cut_depth"));
+    tree_cut_rows_per_round_ = static_cast<Index>(options_.get_int("tree_cut_rows_per_round"));
+  }
   Solution solution;
   solution.allocate_for(original_);
   solution.algorithm = "branch-and-bound";
@@ -245,93 +251,14 @@ Solution BranchAndBound::run() {
       root_bound_internal_ = internal_objective(relaxation.col_value);
       root_bound_after_cuts_internal_ = root_bound_internal_;
     }
-    if (node_index == 0 && options_.get_bool("enable_root_cuts")) {
-      const Index original_root_rows = working_.num_rows();
-      Model pre_cut_model = working_;
-      auto pre_cut_scaling = scaling_;
-      Solution initial_relaxation = relaxation;
-
-      std::vector<Cut> candidates;
-      for (Index i = 0; i < original_root_rows; ++i) {
-        auto cover = generate_knapsack_cover_cut(working_, i);
-        if (cover.has_value()) {
-          Cut cut;
-          cut.coeff.resize(static_cast<std::size_t>(working_.num_cols()), 0.0);
-          for (std::size_t k = 0; k < cover->col_index.size(); ++k) {
-            cut.coeff[static_cast<std::size_t>(cover->col_index[k])] = cover->coeff[k];
-          }
-          cut.rhs = cover->rhs;
-          candidates.push_back(std::move(cut));
-        }
-      }
-
-      std::vector<Cut> gmi = generate_gmi_cuts(working_, initial_relaxation);
-      candidates.insert(candidates.end(), gmi.begin(), gmi.end());
-      // MIR cuts from the model's own rows (#221): built from original coefficients rather
-      // than tableau rows, so they carry none of the Gomory cuts' numerical fragility.
-      if (options_.get_bool("enable_mir_cuts")) {
-        std::vector<Cut> mir = generate_mir_cuts(working_, initial_relaxation);
-        candidates.insert(candidates.end(), mir.begin(), mir.end());
-      }
-
-      auto filtered = filter_and_deduplicate_cuts(working_, initial_relaxation, candidates);
-      std::vector<Cut> accepted;
-      for (const auto& fc : filtered) {
-        if (fc.reason == CutFilterReason::kAccepted) accepted.push_back(fc.cut);
-      }
-
-      if (!accepted.empty()) {
-        const Index old_rows = original_root_rows;
-        const Index old_cols = working_.num_cols();
-        const Index new_rows = old_rows + static_cast<Index>(accepted.size());
-
-        SparseMatrix new_matrix(new_rows, old_cols);
-        for (Index j = 0; j < old_cols; ++j) {
-          ColumnView view = working_.matrix.column(j);
-          for (Index k = 0; k < view.size; ++k) {
-            new_matrix.add_entry(view.rows[k], j, view.values[k]);
-          }
-        }
-
-        for (std::size_t i = 0; i < accepted.size(); ++i) {
-          const Cut& cut = accepted[i];
-          const Index row_idx = old_rows + static_cast<Index>(i);
-          for (Index j = 0; j < old_cols; ++j) {
-            if (std::abs(cut.coeff[static_cast<std::size_t>(j)]) > tol::kZeroDrop) {
-              new_matrix.add_entry(row_idx, j, cut.coeff[static_cast<std::size_t>(j)]);
-            }
-          }
-        }
-
-        new_matrix.finalize();
-        working_.matrix = std::move(new_matrix);
-        working_.resize_rows(new_rows);
-
-        for (std::size_t i = 0; i < accepted.size(); ++i) {
-          working_.row_lower[static_cast<std::size_t>(old_rows) + i] = -kInfinity;
-          working_.row_upper[static_cast<std::size_t>(old_rows) + i] = accepted[i].rhs;
-        }
-
-        assert(working_.matrix.num_rows() == working_.num_rows());
-        assert(working_.matrix.num_cols() == old_cols);
-        assert(working_.row_lower.size() == static_cast<std::size_t>(working_.num_rows()));
-        assert(working_.row_upper.size() == static_cast<std::size_t>(working_.num_rows()));
-
-        scaling_ = build_node_scaling(working_, node_options_);
-        Solution final_relaxation = solve_node();
-        if (final_relaxation.status == SolveStatus::kOptimal) {
-          relaxation = final_relaxation;
-          root_cuts_applied_ = static_cast<Count>(accepted.size());
-          root_bound_after_cuts_internal_ = internal_objective(relaxation.col_value);
-        } else {
-          working_ = std::move(pre_cut_model);
-          scaling_ = std::move(pre_cut_scaling);
-          relaxation = std::move(initial_relaxation);
-          logger_.info("Root cuts induced failure: {}; rolled back to initial relaxation",
-                       to_string(final_relaxation.status));
-        }
-      }
+    if (node_index == 0 && options_.get_bool("enable_root_cuts")) root_cut_round(&relaxation);
+    // Cuts below the root (#221): shallow nodes only, on the global bounds, kept for the
+    // whole tree. The node's bound is taken after the round, so a cut that moved it
+    // counts for pruning and for the pseudocosts alike.
+    if (node_index != 0 && node.depth <= tree_cut_depth_ && !quadratic_) {
+      tree_cut_round(node.depth, &relaxation);
     }
+    age_cut_rows(relaxation);
 
     // Node bound in minimise space, excluding the offset (added back on report).
     const double node_bound = internal_objective(relaxation.col_value);
@@ -533,6 +460,10 @@ Solution BranchAndBound::run() {
     solution.dual_bound = reported(final_bound);
   }
   solution.recompute_quality(original_);
+  if (tree_cut_rounds_ > 0) {
+    logger_.info("Tree cuts: {} rounds below the root, {} rows added, {} aged out",
+                 tree_cut_rounds_, tree_cuts_applied_, cut_rows_aged_out_);
+  }
 
   if (pool_.enabled()) {
     for (SolutionPool::Entry& entry :

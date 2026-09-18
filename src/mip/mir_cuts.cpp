@@ -75,9 +75,18 @@ bool mir_inequality(const std::vector<double>& coefficient, const std::vector<bo
 }
 
 std::vector<Cut> generate_mir_cuts(const Model& model, const Solution& solution) {
+  return generate_mir_cuts(model, solution, model.col_lower, model.col_upper);
+}
+
+std::vector<Cut> generate_mir_cuts(const Model& model, const Solution& solution,
+                                   const std::vector<double>& col_lower,
+                                   const std::vector<double>& col_upper) {
   std::vector<Cut> cuts;
   const Index n = model.num_cols();
   if (static_cast<Index>(solution.col_value.size()) != n || n == 0) return cuts;
+  if (static_cast<Index>(col_lower.size()) != n || static_cast<Index>(col_upper.size()) != n) {
+    return cuts;
+  }
   const std::vector<RowEntries> rows = rows_of(model);
   const auto integral = [](double v) {
     return std::fabs(v - std::round(v)) <= tol::kIntegrality;
@@ -109,8 +118,8 @@ std::vector<Cut> generate_mir_cuts(const Model& model, const Solution& solution)
         const Index j = row.columns[k];
         const auto uj = static_cast<std::size_t>(j);
         const double coef = sign * row.values[k];
-        const double lo = model.col_lower[uj];
-        const double hi = model.col_upper[uj];
+        const double lo = col_lower[uj];
+        const double hi = col_upper[uj];
         const double x = solution.col_value[uj];
         const bool integer_col = model.col_type[uj] == VarType::kInteger;
         const bool has_lo = is_finite_bound(lo);
@@ -180,10 +189,10 @@ std::vector<Cut> generate_mir_cuts(const Model& model, const Solution& solution)
           const auto uj = static_cast<std::size_t>(row.columns[k]);
           if (complemented[k]) {
             cut.coeff[uj] -= c;
-            rhs_x -= c * model.col_upper[uj];
+            rhs_x -= c * col_upper[uj];
           } else {
             cut.coeff[uj] += c;
-            rhs_x += c * model.col_lower[uj];
+            rhs_x += c * col_lower[uj];
           }
         }
         cut.rhs = rhs_x;

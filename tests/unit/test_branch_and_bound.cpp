@@ -584,19 +584,27 @@ struct FuzzTally {
   int agreed_infeasible = 0;
   int oracle_abstained = 0;
   int mismatched = 0;
+  /// Cut rows the search reported applying, summed over the sweep: a cuts sweep in which
+  /// this stays zero exercised no cut, whatever the options said.
+  long long cuts_applied = 0;
   std::vector<std::string> failures;
 };
 
-FuzzTally run_milp_fuzz(const Options& options, const char* label) {
+/// `wide` instances (#221) have enough columns for a two- or three-column cut to pass the
+/// density filter (kCutMaxDensity = 0.2) and sparse rows so single-row MIR cuts have that
+/// support; the small shape rejects every cut and so cannot exercise a cut round at all.
+FuzzTally run_milp_fuzz(const Options& options, const char* label, bool wide = false,
+                        int trials = 600) {
   std::mt19937_64 rng(20260906);
   oracle::GeneratorConfig config;
   // Small: the oracle explores the tree in exact arithmetic and copies both bound vectors
   // per node, so it is deliberately slow.
   config.min_rows = 2;
-  config.max_rows = 5;
-  config.min_cols = 2;
-  config.max_cols = 5;
+  config.max_rows = wide ? 4 : 5;
+  config.min_cols = wide ? 16 : 2;
+  config.max_cols = wide ? 20 : 5;
   config.magnitude = 4;
+  if (wide) config.density = 0.15;
 
   FuzzTally tally;
   int& agreed_optimal = tally.agreed_optimal;
@@ -605,7 +613,7 @@ FuzzTally run_milp_fuzz(const Options& options, const char* label) {
   int& mismatched = tally.mismatched;
   std::vector<std::string>& failures = tally.failures;
 
-  for (int trial = 0; trial < 600; ++trial) {
+  for (int trial = 0; trial < trials; ++trial) {
     oracle::GeneratedLp lp = oracle::random_lp(rng, config);
     // Every column integral, and bounded, so the tree is finite.
     lp.integral.assign(static_cast<std::size_t>(lp.num_cols), 1);
@@ -630,6 +638,7 @@ FuzzTally run_milp_fuzz(const Options& options, const char* label) {
           static_cast<double>(lp.upper[static_cast<std::size_t>(j)]);
     }
     const Solution s = solve(model, options);
+    tally.cuts_applied += s.cuts_applied;
 
     const auto disagree = [&](const std::string& why) {
       ++mismatched;
@@ -703,18 +712,20 @@ FuzzTally run_milp_fuzz(const Options& options, const char* label) {
             << "  agreed optimal      " << agreed_optimal << "\n"
             << "  agreed infeasible   " << agreed_infeasible << "\n"
             << "  oracle abstained    " << oracle_abstained << "\n"
-            << "  MISMATCHED          " << mismatched << "\n";
+            << "  MISMATCHED          " << mismatched << "\n"
+            << "  cut rows applied    " << tally.cuts_applied << "\n";
   for (const std::string& failure : failures) {
     std::cout << "\n--- failing instance ---\n" << failure << "\n";
   }
   return tally;
 }
 
-void expect_clean_sweep(const FuzzTally& tally) {
+void expect_clean_sweep(const FuzzTally& tally, int min_compared = 300, int min_optimal = 50) {
   EXPECT_EQ(tally.mismatched, 0);
-  EXPECT_GT(tally.agreed_optimal + tally.agreed_infeasible, 300)
+  EXPECT_GT(tally.agreed_optimal + tally.agreed_infeasible, min_compared)
       << "too few instances were actually compared for this to mean anything";
-  EXPECT_GT(tally.agreed_optimal, 50) << "the generator produced almost no feasible MILPs";
+  EXPECT_GT(tally.agreed_optimal, min_optimal)
+      << "the generator produced almost no feasible MILPs";
 }
 
 TEST(BranchAndBound, FuzzAgainstTheExactMilpOracle) {
@@ -754,6 +765,59 @@ TEST(BranchAndBound, FuzzAgainstTheExactMilpOracleWithRootCuts) {
   Options options = mip_options();
   options.set_bool("enable_root_cuts", true);
   expect_clean_sweep(run_milp_fuzz(options, "root cuts"));
+}
+
+// The same sweep with cut rounds below the root (#221). A tree cut is a row kept for the
+// whole search, so one built on a node's local bounds instead of the global ones would
+// cut off optima in other subtrees; the oracle sees that as a wrong objective.
+TEST(BranchAndBound, FuzzAgainstTheExactMilpOracleWithTreeCuts) {
+  Options options = mip_options();
+  options.set_bool("enable_root_cuts", true);
+  options.set_int("tree_cut_depth", 4);
+  expect_clean_sweep(run_milp_fuzz(options, "tree cuts"));
+  // The small shape above cannot pass a cut through the density filter, so the sweep that
+  // actually exercises the rounds is the wide one; it must have added rows.
+  // Presolve is off for the wide sweep: on rows this sparse it removes most of the model as
+  // singleton rows before any cut round sees it, and the sweep would exercise nothing.
+  Options wide_options = options;
+  wide_options.set_bool("presolve", false);
+  const FuzzTally wide = run_milp_fuzz(wide_options, "tree cuts, wide instances", true, 600);
+  expect_clean_sweep(wide, 200, 100);
+  EXPECT_GT(wide.cuts_applied, 0) << "no cut row was ever applied: the sweep proved nothing";
+}
+
+TEST(TreeCuts, RowsAddedBelowTheRootKeepTheAnswerAndAreCounted) {
+  // Three coupled knapsack rows over sixteen general-integer columns: the root LP is
+  // fractional, the root round does not close the tree, and the shallow nodes have
+  // fractional relaxations of their own to cut. The answer must agree with the plain
+  // search; the cut count must show rows were added below the root.
+  // Rows touch three columns each (density 3/16 < kCutMaxDensity) and chain through a
+  // shared column so the search cannot split them; the other columns carry a cost and
+  // a bound and nothing else.
+  std::vector<std::vector<double>> rows(4, std::vector<double>(16, 0.0));
+  std::vector<double> cost(16), upper(16, 3.0);
+  std::vector<bool> integral(16, true);
+  const double entries[4][3] = {{5, 4, 3}, {3, 7, 2}, {6, 5, 4}, {2, 3, 5}};
+  for (int r = 0; r < 4; ++r) {
+    for (int k = 0; k < 3; ++k) {
+      rows[static_cast<std::size_t>(r)][static_cast<std::size_t>(2 * r + k)] = entries[r][k];
+    }
+  }
+  for (int j = 0; j < 16; ++j) cost[static_cast<std::size_t>(j)] = -(4.0 + (j * 11) % 7);
+  Model model = make_milp(rows, {-kInfinity, -kInfinity, -kInfinity, -kInfinity},
+                          {13.5, 17.5, 20.5, 11.5}, cost, upper, integral);
+  Options plain = mip_options();
+  plain.set_bool("presolve", false);
+  Options cuts = plain;
+  cuts.set_bool("enable_root_cuts", true);
+  cuts.set_int("tree_cut_depth", 4);
+  const Solution a = solve(model, plain);
+  const Solution b = solve(model, cuts);
+  ASSERT_EQ(a.status, SolveStatus::kOptimal);
+  ASSERT_EQ(b.status, SolveStatus::kOptimal);
+  EXPECT_NEAR(a.objective, b.objective, 1e-6 * std::max(1.0, std::fabs(a.objective)));
+  EXPECT_GT(b.cuts_applied, 0);
+  EXPECT_LE(b.root_bound_after_cuts, b.objective + 1e-9);
 }
 
 // =========================================================================================

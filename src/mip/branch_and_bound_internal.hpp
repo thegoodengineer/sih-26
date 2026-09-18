@@ -378,9 +378,25 @@ class BranchAndBound {
     return sense_ * internal + original_.objective_offset;
   }
 
-  /// The root bounds and the root cut count onto the answer (#221).
+  // ---- Cut rounds (branch_and_bound_cuts.cpp, #221) ------------------------------------
+
+  /// The root round: cover, Gomory and MIR candidates, filtered, appended, the root
+  /// re-solved; rolled back if the re-solve fails. Replaces `relaxation` on success.
+  void root_cut_round(Solution* relaxation);
+  /// A round at a node of depth <= tree_cut_depth_: MIR cuts on the global bounds,
+  /// appended for the whole tree, the node re-solved from its own basis.
+  void tree_cut_round(Index depth, Solution* relaxation);
+  /// Append `accepted` as rows of working_ and register them in the pool.
+  void append_cut_rows(const std::vector<Cut>& accepted);
+  /// Bring every stored basis to `rows` row statuses: a new row's logical is basic.
+  void resize_warm_starts(Index rows);
+  [[nodiscard]] bool is_pooled_duplicate(const Cut& cut) const;
+  /// Count node solves in which each cut row was slack; free a row slack for too long.
+  void age_cut_rows(const Solution& relaxation);
+
+  /// The root bounds and the cut counts onto the answer (#221).
   void report_root(Solution* solution) const {
-    solution->cuts_applied = root_cuts_applied_;
+    solution->cuts_applied = root_cuts_applied_ + tree_cuts_applied_;
     if (std::isnan(root_bound_internal_)) return;
     solution->root_bound = reported(root_bound_internal_);
     solution->root_bound_after_cuts = reported(root_bound_after_cuts_internal_);
@@ -465,6 +481,23 @@ class BranchAndBound {
   double root_bound_internal_ = std::numeric_limits<double>::quiet_NaN();
   double root_bound_after_cuts_internal_ = std::numeric_limits<double>::quiet_NaN();
   Count root_cuts_applied_ = 0;
+  /// Cut rows below the root (#221): the option-driven depth cap and per-round row cap,
+  /// the column bounds every tree cut is built on (valid everywhere), the pool of rows
+  /// appended so far starting at working_ row first_cut_row_, and their ageing state.
+  Index tree_cut_depth_ = 0;
+  Index tree_cut_rows_per_round_ = 20;
+  std::vector<double> global_lower_;
+  std::vector<double> global_upper_;
+  Index first_cut_row_ = -1;
+  std::vector<Cut> pool_cuts_;
+  std::vector<Count> cut_row_slack_;
+  std::vector<bool> cut_row_free_;
+  Count tree_cuts_applied_ = 0;
+  Count tree_cut_rounds_ = 0;
+  Count cut_rows_aged_out_ = 0;
+  /// Node solves a cut row may sit slack before it is freed (Achterberg 2007, sec. 8.10
+  /// uses a comparable age).
+  static constexpr Count kCutRowAgeLimit = 50;
   Count nodes_pruned_ = 0;
   Timer timer_;
 };

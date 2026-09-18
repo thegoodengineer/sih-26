@@ -33,6 +33,13 @@ namespace sankhya::mip {
 /// decides which are worth adding.
 [[nodiscard]] std::vector<Cut> generate_mir_cuts(const Model& model, const Solution& solution);
 
+/// The same, with the column bounds to substitute given explicitly (#221): a node of the
+/// tree passes the GLOBAL bounds so the cut is valid everywhere, while the point it is
+/// separated at is the node's own. `model.col_lower/upper` are ignored.
+[[nodiscard]] std::vector<Cut> generate_mir_cuts(const Model& model, const Solution& solution,
+                                                 const std::vector<double>& col_lower,
+                                                 const std::vector<double>& col_upper);
+
 /// The MIR inequality on one already bound-substituted base inequality, exposed for the
 /// textbook test: `coefficient[j]` and `is_integer[j]` describe sum a_j y_j <= rhs over
 /// non-negative y; the continuous part is folded into s. Returns the rounded coefficients
