@@ -23,6 +23,7 @@
 #include "sankhya/qp.hpp"
 #include "sankhya/solve_control.hpp"
 
+#include "checkpoint.hpp"
 #include "cuts.hpp"
 #include "solution_pool.hpp"
 
@@ -257,6 +258,15 @@ class BranchAndBound {
   /// Accept a candidate if it is integral, feasible and better than the incumbent.
   bool offer_incumbent(const std::vector<double>& x);
 
+  // ---- Checkpoint and resume (#287), in branch_and_bound_checkpoint.cpp -----------------
+  /// The search as it stands between nodes.
+  [[nodiscard]] TreeCheckpoint make_checkpoint() const;
+  /// Write it to checkpoint_path_ when one is set; a failed write is a warning.
+  void save_checkpoint();
+  /// Load, validate and rebuild the open nodes and the incumbent. Empty on success, the
+  /// reason it was refused otherwise.
+  [[nodiscard]] std::string restore_checkpoint(const std::string& path);
+
   /// pool_complete (#225): an integral relaxation closes a node for the OPTIMUM, not for the
   /// pool - the node's region can still hold the second-best assignment. Partition the rest
   /// of the region around the relaxation's point, every unfixed integer column at once (see
@@ -462,6 +472,11 @@ class BranchAndBound {
 
   /// Bounds saved by the current enter(), restored by leave().
   std::vector<DomainChange> saved_;
+
+  std::string checkpoint_path_;
+  Count checkpoint_nodes_ = 0;
+  Count last_checkpoint_at_ = -1;
+  Count checkpoints_written_ = 0;
 
   bool have_incumbent_ = false;
   double incumbent_internal_ = std::numeric_limits<double>::infinity();

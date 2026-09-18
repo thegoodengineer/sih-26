@@ -203,7 +203,9 @@ set(SANKHYA_CORE_SOURCES
   src/mip/branch_and_bound_node.cpp
   src/mip/cuts.cpp
   src/mip/mir_cuts.cpp
+  src/mip/branch_and_bound_checkpoint.cpp
   src/mip/branch_and_bound_cuts.cpp
+  src/mip/checkpoint.cpp
   src/mip/solution_pool.cpp
   src/presolve/presolve.cpp
   src/ipm/ipm.cpp
