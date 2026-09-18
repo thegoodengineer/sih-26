@@ -165,8 +165,9 @@ it describes.
   it, since it only reads `col_value` and the bound. Nothing of this exists yet, and
   `docs/PS26119_COVERAGE.md` says so.
 - **Cutting planes** — already present, and off by default. Root GMI and lifted cover cuts
-  landed in #159 (`src/mip/cuts.cpp`), appended as rows of the working model before the
-  search starts. `enable_root_cuts` is false because the A/B measured them costing a proof
+  landed in #159 (`src/mip/cuts.cpp`) and single-row MIR cuts in #221
+  (`src/mip/mir_cuts.cpp`), appended as rows of the working model before the search
+  starts; the answer reports the root bound before and after the round. `enable_root_cuts` is false because the A/B measured them costing a proof
   at the benchmark's time limit, not out of caution; `docs/BENCHMARKS.md` section 2 carries
   the numbers.
 - **Parallelism** — the column loops in pricing and in the sparse products are

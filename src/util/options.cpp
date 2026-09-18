@@ -222,6 +222,15 @@ const std::vector<OptionSpec>& Options::registry() {
                  0.0,
                  0.0,
                  {}});
+    s.push_back({"enable_mir_cuts",
+                 OptionType::Bool,
+                 true,
+                 "Include mixed-integer rounding cuts from the model's own rows in the root "
+                 "cut round (#221). Only read when enable_root_cuts is set; exists so the "
+                 "MIR family can be measured on its own against the Gomory and cover cuts.",
+                 0.0,
+                 0.0,
+                 {}});
     s.push_back(
         {"enable_root_cuts",
          OptionType::Bool,

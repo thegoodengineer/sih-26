@@ -1091,6 +1091,12 @@ Solution postsolve(const Result& result, const Model& original, const Solution& 
   solution.iterations = reduced.iterations;
   solution.polish_iterations = reduced.polish_iterations;
   solution.nodes = reduced.nodes;
+  solution.cuts_applied = reduced.cuts_applied;
+  // The root bounds are objective values of the reduced model, whose objective_offset
+  // carries the constant the removed columns contributed, so they are already in the
+  // original model's units (#221).
+  solution.root_bound = reduced.root_bound;
+  solution.root_bound_after_cuts = reduced.root_bound_after_cuts;
   solution.solve_seconds = reduced.solve_seconds;
 
   // Start from the reduced point, scattered back into original positions.

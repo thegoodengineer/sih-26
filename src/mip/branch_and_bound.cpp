@@ -28,6 +28,7 @@
 #include "sankhya/solve_control.hpp"
 
 #include "cuts.hpp"
+#include "mir_cuts.hpp"
 #include "solution_pool.hpp"
 
 #include <algorithm>
@@ -240,6 +241,10 @@ Solution BranchAndBound::run() {
 
     best_available_point = relaxation;
 
+    if (node_index == 0) {
+      root_bound_internal_ = internal_objective(relaxation.col_value);
+      root_bound_after_cuts_internal_ = root_bound_internal_;
+    }
     if (node_index == 0 && options_.get_bool("enable_root_cuts")) {
       const Index original_root_rows = working_.num_rows();
       Model pre_cut_model = working_;
@@ -262,6 +267,12 @@ Solution BranchAndBound::run() {
 
       std::vector<Cut> gmi = generate_gmi_cuts(working_, initial_relaxation);
       candidates.insert(candidates.end(), gmi.begin(), gmi.end());
+      // MIR cuts from the model's own rows (#221): built from original coefficients rather
+      // than tableau rows, so they carry none of the Gomory cuts' numerical fragility.
+      if (options_.get_bool("enable_mir_cuts")) {
+        std::vector<Cut> mir = generate_mir_cuts(working_, initial_relaxation);
+        candidates.insert(candidates.end(), mir.begin(), mir.end());
+      }
 
       auto filtered = filter_and_deduplicate_cuts(working_, initial_relaxation, candidates);
       std::vector<Cut> accepted;
@@ -310,6 +321,8 @@ Solution BranchAndBound::run() {
         Solution final_relaxation = solve_node();
         if (final_relaxation.status == SolveStatus::kOptimal) {
           relaxation = final_relaxation;
+          root_cuts_applied_ = static_cast<Count>(accepted.size());
+          root_bound_after_cuts_internal_ = internal_objective(relaxation.col_value);
         } else {
           working_ = std::move(pre_cut_model);
           scaling_ = std::move(pre_cut_scaling);
@@ -492,12 +505,14 @@ Solution BranchAndBound::run() {
     solution.relative_gap = kInfinity;
     solution.nodes = nodes_explored_;
     solution.solve_seconds = timer_.elapsed_seconds();
+    report_root(&solution);
     return solution;
   }
 
   solution.col_value = incumbent_x_;
   solution.nodes = nodes_explored_;
   solution.solve_seconds = timer_.elapsed_seconds();
+  report_root(&solution);
 
   if (open_.empty() && !limit_hit && !gap_target_met) {
     // The tree is exhausted: the incumbent is proven optimal and is its own bound.

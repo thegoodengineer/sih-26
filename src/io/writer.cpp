@@ -407,6 +407,8 @@ bool write_stats_json(const std::string& path, const Model& model, const Solutio
       {"residual_after_refinement", json_number(solution.residual_after_refinement)},
       {"nodes", solution.nodes},
       {"cuts_applied", solution.cuts_applied},
+      {"root_bound", json_number(solution.root_bound)},
+      {"root_bound_after_cuts", json_number(solution.root_bound_after_cuts)},
       {"polish_iterations", solution.polish_iterations},
       {"solve_seconds", json_number(solution.solve_seconds)}};
 

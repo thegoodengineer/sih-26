@@ -28,6 +28,7 @@
 // the QPS convention, so a QPLIB/QPS reader maps onto it without a transformation.
 #pragma once
 
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -486,6 +487,12 @@ class Solution {
   Count iterations = 0;  ///< simplex/IPM/PDHG iterations
   Count nodes = 0;       ///< branch-and-cut nodes
   Count cuts_applied = 0;
+  /// The root LP relaxation's objective before and after the root cut round (#221), in
+  /// the model's own sense and units; NaN when no branch-and-cut ran. The share of the
+  /// integrality gap the cuts closed is (after - before) / (objective - before), which the
+  /// MIPLIB runner records per instance so the effect of a cut family is a number.
+  double root_bound = std::numeric_limits<double>::quiet_NaN();
+  double root_bound_after_cuts = std::numeric_limits<double>::quiet_NaN();
   /// Of `iterations`, those spent by the interior-point polish of a PDHG answer (#229);
   /// zero when no polish ran. A benchmark row can then say which phase did what.
   Count polish_iterations = 0;

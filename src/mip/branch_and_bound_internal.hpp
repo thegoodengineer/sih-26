@@ -378,6 +378,14 @@ class BranchAndBound {
     return sense_ * internal + original_.objective_offset;
   }
 
+  /// The root bounds and the root cut count onto the answer (#221).
+  void report_root(Solution* solution) const {
+    solution->cuts_applied = root_cuts_applied_;
+    if (std::isnan(root_bound_internal_)) return;
+    solution->root_bound = reported(root_bound_internal_);
+    solution->root_bound_after_cuts = reported(root_bound_after_cuts_internal_);
+  }
+
   const Model& original_;
   Model working_;
   const Options& options_;
@@ -452,6 +460,11 @@ class BranchAndBound {
   static constexpr double kNoPoolGap = 1e300;
 
   Count nodes_explored_ = 0;
+  /// Root relaxation objective (internal, minimise space) before and after the root cut
+  /// round; NaN until the root LP solved. Reported through Solution::root_bound (#221).
+  double root_bound_internal_ = std::numeric_limits<double>::quiet_NaN();
+  double root_bound_after_cuts_internal_ = std::numeric_limits<double>::quiet_NaN();
+  Count root_cuts_applied_ = 0;
   Count nodes_pruned_ = 0;
   Timer timer_;
 };

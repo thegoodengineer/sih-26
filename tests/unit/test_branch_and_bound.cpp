@@ -108,6 +108,49 @@ TEST(RootCuts, RepeatedSolveOriginalModelIsolatesCuts) {
   EXPECT_EQ(solB.nodes, solD.nodes);
 }
 
+TEST(RootCuts, TheRootBoundBeforeAndAfterCutsIsReported) {
+  // #221: the answer carries the root relaxation's objective before and after the cut
+  // round, so the MIPLIB runner can record how much of the integrality gap the cuts closed.
+  // Minimisation: the bound can only rise with cuts, and never above the optimum. Capacity
+  // 8 leaves the root LP fractional (x = (1, 3/4, 0, 0), bound -15.25 against an optimum
+  // of -14); capacity 9 would make it integral and give the cut round nothing to do. The
+  // twelve extra columns sit outside the row at cost +1, so they stay at zero and only make
+  // the model wide enough for a two-column cut to pass the density filter (kCutMaxDensity);
+  // presolve is off so it does not remove them first.
+  std::vector<double> row{5.0, 4.0, 3.0, 2.0};
+  std::vector<double> cost{-10.0, -7.0, -4.0, -3.0};
+  std::vector<double> upper(4, 1.0);
+  std::vector<bool> integral(4, true);
+  for (int pad = 0; pad < 12; ++pad) {
+    row.push_back(0.0);
+    cost.push_back(1.0);
+    upper.push_back(1.0);
+    integral.push_back(true);
+  }
+  Model model = make_milp({row}, {-kInfinity}, {8.0}, cost, upper, integral);
+  Options opt_off = mip_options();
+  opt_off.set_bool("presolve", false);
+  opt_off.set_bool("enable_root_cuts", false);
+  Options opt_on = opt_off;
+  opt_on.set_bool("enable_root_cuts", true);
+
+  const Solution off = solve(model, opt_off);
+  ASSERT_EQ(off.status, SolveStatus::kOptimal);
+  EXPECT_EQ(off.cuts_applied, 0);
+  ASSERT_TRUE(std::isfinite(off.root_bound));
+  EXPECT_DOUBLE_EQ(off.root_bound, off.root_bound_after_cuts) << "no cuts, no movement";
+  EXPECT_LE(off.root_bound, off.objective + 1e-9);
+
+  const Solution on = solve(model, opt_on);
+  ASSERT_EQ(on.status, SolveStatus::kOptimal);
+  EXPECT_GT(on.cuts_applied, 0);
+  EXPECT_DOUBLE_EQ(on.root_bound, off.root_bound) << "the root LP is the same either way";
+  EXPECT_GE(on.root_bound_after_cuts, on.root_bound - 1e-9);
+  EXPECT_LE(on.root_bound_after_cuts, on.objective + 1e-9);
+  EXPECT_GT(on.root_bound_after_cuts, on.root_bound)
+      << "the cut round should move the bound on this knapsack";
+}
+
 TEST(RootCuts, RollbackPathOnFailure) {
   // Test Group 7: Controlled test seam. The first solve takes exactly 2 simplex iterations.
   // We set iteration_limit=2. The first solve succeeds, cut is generated, second solve hits

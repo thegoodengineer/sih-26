@@ -2324,3 +2324,114 @@ TEST(CutFiltering, DeduplicationScaleAwareNegative) {
   EXPECT_EQ(resF[0].reason, CutFilterReason::kAccepted);
   EXPECT_EQ(resF[1].reason, CutFilterReason::kAccepted);
 }
+
+#include "mip/mir_cuts.hpp"
+
+namespace sankhya {
+namespace {
+
+TEST(MirCuts, TheTextbookInequalityComesOutInClosedForm) {
+  // The two-variable example every MIR derivation starts from: x <= 3.5 + s, x integer,
+  // s >= 0, written as x - s <= 3.5. With f0 = 0.5 the MIR inequality is
+  // x <= 3 + s / (1 - 0.5) = 3 + 2 s, i.e. x - 2 s <= 3. The point (3.5, 0) violates it by
+  // 0.5, and every integer x with s = 0 satisfies it.
+  std::vector<double> coefficient;
+  double rhs = 0.0;
+  ASSERT_TRUE(mip::mir_inequality({1.0, -1.0}, {true, false}, 3.5, 1.0, &coefficient, &rhs));
+  ASSERT_EQ(coefficient.size(), 2u);
+  EXPECT_DOUBLE_EQ(coefficient[0], 1.0);
+  EXPECT_DOUBLE_EQ(coefficient[1], -2.0);
+  EXPECT_DOUBLE_EQ(rhs, 3.0);
+  // A base inequality with an integral right-hand side has no fractional part to round on.
+  EXPECT_FALSE(mip::mir_inequality({1.0, -1.0}, {true, false}, 3.0, 1.0, &coefficient, &rhs));
+  // Two integer variables with a fractional right-hand side: 2 x0 + 3 x1 <= 7.5, divisor 1:
+  // f0 = 0.5, f_j = 0, so both coefficients round DOWN to themselves and rhs to 7.
+  ASSERT_TRUE(mip::mir_inequality({2.0, 3.0}, {true, true}, 7.5, 1.0, &coefficient, &rhs));
+  EXPECT_DOUBLE_EQ(coefficient[0], 2.0);
+  EXPECT_DOUBLE_EQ(coefficient[1], 3.0);
+  EXPECT_DOUBLE_EQ(rhs, 7.0);
+}
+
+TEST(MirCuts, ACutFromAModelRowIsViolatedByTheLpPointAndValidForEveryIntegerPoint) {
+  // 2 x0 + 3 x1 <= 7.5 with x integer in [0, 10]: the LP point (3.75, 0) is cut off by
+  // 2 x0 + 3 x1 <= 7, which every integer point of the row's feasible set satisfies.
+  Model m;
+  m.resize_columns(2);
+  m.resize_rows(1);
+  m.matrix.reset(1, 2);
+  m.matrix.add_entry(0, 0, 2.0);
+  m.matrix.add_entry(0, 1, 3.0);
+  m.matrix.finalize();
+  m.col_type = {VarType::kInteger, VarType::kInteger};
+  m.col_lower = {0.0, 0.0};
+  m.col_upper = {10.0, 10.0};
+  m.row_lower = {-kInfinity};
+  m.row_upper = {7.5};
+  Solution s;
+  s.col_value = {3.75, 0.0};
+  const std::vector<mip::Cut> cuts = mip::generate_mir_cuts(m, s);
+  ASSERT_FALSE(cuts.empty());
+  for (const mip::Cut& cut : cuts) {
+    const double at_lp = cut.coeff[0] * 3.75 + cut.coeff[1] * 0.0;
+    EXPECT_GT(at_lp, cut.rhs + 1e-6) << "the cut must separate the LP point";
+    for (int x0 = 0; x0 <= 10; ++x0) {
+      for (int x1 = 0; x1 <= 10; ++x1) {
+        if (2 * x0 + 3 * x1 > 7.5) continue;
+        EXPECT_LE(cut.coeff[0] * x0 + cut.coeff[1] * x1, cut.rhs + 1e-9)
+            << "integer point (" << x0 << ", " << x1 << ") cut off";
+      }
+    }
+  }
+}
+
+TEST(MirCuts, NeverSeparatesTheExactOptimumOnRandomInstances) {
+  // The same gate the row tightenings and the Gomory cuts pass: on random MILPs whose exact
+  // integer optimum the rational oracle settled, every MIR cut generated at the LP
+  // relaxation's point must be satisfied by that optimum. An invalid cut would remove it.
+  const std::vector<Instance> instances = solvable_instances(60, 20260918);
+  ASSERT_GE(instances.size(), 20u);
+  int with_cuts = 0;
+  int cuts_checked = 0;
+  for (const Instance& instance : instances) {
+    Model model = oracle::to_model(instance.lp);
+    // to_model() marks every column continuous (see the tightening test above); without
+    // the integrality the generator has nothing to round and the gate is vacuous.
+    for (Index j = 0; j < model.num_cols(); ++j) {
+      if (instance.lp.integral[static_cast<std::size_t>(j)] != 0) {
+        model.col_type[static_cast<std::size_t>(j)] = VarType::kInteger;
+      }
+    }
+    ASSERT_TRUE(model.validate().empty());
+    Model relaxation = model;
+    relaxation.col_type.assign(static_cast<std::size_t>(model.num_cols()),
+                               VarType::kContinuous);
+    Options options;
+    options.set_bool("log_to_console", false);
+    options.set_bool("presolve", false);
+    options.set_string("algorithm", "dual-simplex");
+    const Solution lp = solve(relaxation, options);
+    if (lp.status != SolveStatus::kOptimal) continue;
+    const std::vector<mip::Cut> cuts = mip::generate_mir_cuts(model, lp);
+    if (cuts.empty()) continue;
+    ++with_cuts;
+    for (const mip::Cut& cut : cuts) {
+      double lhs_at_lp = 0.0;
+      double lhs_at_optimum = 0.0;
+      for (Index j = 0; j < model.num_cols(); ++j) {
+        const auto u = static_cast<std::size_t>(j);
+        lhs_at_lp += cut.coeff[u] * lp.col_value[u];
+        lhs_at_optimum += cut.coeff[u] * instance.optimum[u].to_double();
+      }
+      EXPECT_GT(lhs_at_lp, cut.rhs) << "a cut that does not separate the LP point";
+      EXPECT_LE(lhs_at_optimum, cut.rhs + 1e-9 * std::max(1.0, std::fabs(cut.rhs)))
+          << "the exact optimum was cut off";
+      ++cuts_checked;
+    }
+  }
+  EXPECT_GE(with_cuts, 5) << "too few instances produced a cut for the gate to mean anything";
+  std::printf("[  INFO    ] MIR: %d cuts on %d of %zu instances, none cut the optimum\n",
+              cuts_checked, with_cuts, instances.size());
+}
+
+}  // namespace
+}  // namespace sankhya

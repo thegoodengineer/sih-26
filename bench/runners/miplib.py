@@ -66,6 +66,10 @@ CSV_COLUMNS = [
     "proved_optimal",
     "independently_verified",
     "nodes",
+    "cuts_applied",
+    "root_bound",
+    "root_bound_after_cuts",
+    "root_gap_closed",
     "wall_seconds",
     "solver_seconds",
     "git_commit",
@@ -73,6 +77,22 @@ CSV_COLUMNS = [
     "timestamp_utc",
     "solver_options",
 ]
+
+
+def root_gap_closed(before, after, objective):
+    """The share of the root integrality gap the root cuts closed (#221).
+
+    (after - before) / (objective - before), measured against the objective the run ended
+    with; None when any of the three is missing or the gap was already zero, so the column
+    is blank rather than a made-up 0 or 1. Clamped to [0, 1] against rounding noise.
+    """
+    values = (before, after, objective)
+    if any(v is None or not math.isfinite(v) for v in values):
+        return None
+    gap = objective - before
+    if abs(gap) <= 1e-9 * max(1.0, abs(objective)):
+        return None
+    return min(1.0, max(0.0, (after - before) / gap))
 
 
 def as_number(value):
@@ -163,6 +183,9 @@ def solve(binary: Path, instance: Path, time_limit: float, verify: bool,
             "nonzeros": model.get("nonzeros", ""),
             "integer_columns": model.get("integer_columns", ""),
             "nodes": effort.get("nodes", ""),
+            "cuts_applied": effort.get("cuts_applied", ""),
+            "root_bound": as_number(effort.get("root_bound")),
+            "root_bound_after_cuts": as_number(effort.get("root_bound_after_cuts")),
             "solver_seconds": effort.get("solve_seconds", ""),
             "wall_seconds": wall,
             "verified": None,
@@ -241,6 +264,8 @@ def main() -> int:
         proved = status == "optimal" and matched
 
         relative = blob.get("relative_gap")
+        closed = root_gap_closed(blob.get("root_bound"), blob.get("root_bound_after_cuts"),
+                                 ours)
         rows.append({
             "instance": name,
             "instance_sha256": entry.get("gz_sha256", ""),
@@ -259,6 +284,11 @@ def main() -> int:
             "proved_optimal": int(proved),
             "independently_verified": "" if blob["verified"] is None else int(blob["verified"]),
             "nodes": blob.get("nodes", ""),
+            "cuts_applied": blob.get("cuts_applied", ""),
+            "root_bound": "" if blob.get("root_bound") is None else repr(blob["root_bound"]),
+            "root_bound_after_cuts": ("" if blob.get("root_bound_after_cuts") is None
+                                      else repr(blob["root_bound_after_cuts"])),
+            "root_gap_closed": "" if closed is None else f"{closed:.4f}",
             "wall_seconds": f"{blob['wall_seconds']:.6f}",
             "solver_seconds": blob.get("solver_seconds", ""),
             "git_commit": commit,

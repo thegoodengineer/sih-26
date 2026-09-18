@@ -849,6 +849,19 @@ def cuts_ab_paragraph() -> str:
         f"{yes_no(proved_now(off[n]))} -> {yes_no(proved_now(on[n]))})"
         for n in moved) if moved else "none"
     spread = (f" (per instance from {min(per):.3f}x to {max(per):.3f}x)" if per else "")
+    # The root-gap column (#221): how much of the integrality gap the root cut round closed
+    # on each instance, blank where the CSV predates the column or the gap was zero.
+    closed_rows = [(n, on[n].get("root_gap_closed") or "", on[n].get("cuts_applied") or "")
+                   for n in common if (on[n].get("root_gap_closed") or "").strip()]
+    if closed_rows:
+        table = ["", "", "| instance | root cuts | root gap closed |", "|---|---:|---:|"]
+        table += [f"| `{n}` | {c} | {float(g):.1%} |" for n, g, c in closed_rows]
+        table += ["", f"Root gap closed is (bound after cuts - bound before) / (final "
+                      f"objective - bound before) on the cuts-on run; {len(closed_rows)} of "
+                      f"{len(common)} instances had a root gap to close."]
+        gap_text = chr(10).join(table)
+    else:
+        gap_text = ""
     return (f"**Root cuts, on versus off** (`bench/results/miplib-cuts-off.csv` and "
             f"`miplib-cuts-on.csv`, both at `{commit}`, {len(common)} "
             f"instances, the same time limit): with cuts on, {matched_on} of {len(on)} reach "
@@ -864,7 +877,7 @@ def cuts_ab_paragraph() -> str:
             f"Cuts make every node LP dearer, because each cut is a row; on this measurement "
             f"they prove {proved_on - proved_off:+d} and match {matched_on - matched_off:+d} "
             f"against a node count of {ratio:.3f}x, which is why `enable_root_cuts` is off by "
-            f"default: a measurement, not caution.")
+            f"default: a measurement, not caution." + gap_text)
 
 
 def proved_convention_note(rows: list[dict]) -> str:
