@@ -253,6 +253,25 @@ const std::vector<OptionSpec>& Options::registry() {
                  1.0,
                  100000.0,
                  {}});
+    s.push_back({"nlp_tolerance",
+                 OptionType::Double,
+                 1e-6,
+                 "The convex NLP engine's KKT tolerance (#226): primal feasibility relative to "
+                 "the bounds, stationarity relative to the gradient, complementarity relative "
+                 "to the multipliers and bounds. `optimal` means all three were MEASURED below "
+                 "it at the returned point.",
+                 1e-12,
+                 1e-2,
+                 {}});
+    s.push_back({"nlp_assume_convex",
+                 OptionType::Bool,
+                 false,
+                 "Run the convex NLP engine on an objective the composition rules cannot prove "
+                 "convex (x log x, cross terms), on the caller's word (#226). The answer's "
+                 "message then says the convexity was asserted, not proved.",
+                 0.0,
+                 0.0,
+                 {}});
     s.push_back({"enable_mir_cuts",
                  OptionType::Bool,
                  true,
