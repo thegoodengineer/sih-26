@@ -299,3 +299,41 @@ a bound only if a node proved one: an unevaluated root proves nothing.
 resident memory is not portably queryable from this binary, and `docs/PS26119_COVERAGE.md`
 says so rather than the option table carrying a knob that does nothing. The CUDA backend is
 not on `main`, so nothing here claims anything about device memory or kernel termination.
+
+## 9. Nonlinear models: the representation, before any engine
+
+`src/nlp/` (#296) is the model layer a nonlinear objective or constraint needs: an expression
+graph over the model's columns, evaluated without ever returning NaN as a value,
+differentiated exactly, and classified for convexity by written rules. It solves nothing, and
+no LP, MILP, QP or MIQP engine reads it.
+
+- **`NonlinearModel` holds a frozen `Model`** for the columns, bounds, integrality, linear rows
+  and the linear and quadratic objective, and adds an `ExpressionGraph` over the same columns
+  for the objective term and the constraints the existing engines cannot take. There is no
+  second variable model, and an LP never passes through an expression tree.
+- **The graph is an arena of immutable nodes named by index.** A child is always created before
+  its parent, so the graph cannot hold a cycle, a reference cannot dangle, and index order is an
+  evaluation order. Construction is hash-consed: the same operation built twice is one node,
+  commutative operations sort their children, and a shared subexpression is referenced rather
+  than copied. Misuse is sticky, not thrown (nothing in `src/` throws): an unknown node, an
+  out-of-range column or a non-finite constant yields `kNoExpr` and one recorded message, as
+  `SparseMatrix` does for an overflowed count.
+- **Simplification never changes a domain.** `x + 0`, `x * 1`, `-(-x)`, constant folding and
+  sum flattening happen; `0 * log(x)` stays a product, because at x = -1 it is an error, not a
+  zero, and `exp(log(x))` stays a composition for the same reason.
+- **Evaluation separates three failures.** A domain error (log of a non-positive, sqrt of a
+  negative, division by zero, a non-integer power of a negative) is not an overflow, and neither
+  is a malformed expression. `NonlinearModel::evaluate` keeps a domain failure apart from a
+  constraint violation: a point the model does not define is not a point that violates it.
+- **Derivatives are exact.** Gradients by reverse-mode AD; Hessians by forward-over-reverse, one
+  sweep per column the expression contains, returned as a sparse lower triangle. A derivative
+  that does not exist (sqrt at 0) is refused, not returned as infinity. Finite differences
+  exist only as `check_derivatives`, a test facility.
+- **Convexity is conservative.** The composition rules of disciplined convex programming, with
+  each atom's monotonicity read off the interval range of its argument, so x^3 is convex on
+  x >= 0 and 1/x convex on x > 0. Anything the rules cannot establish is unknown, never guessed:
+  `log(exp(x))` is affine in truth and unknown here. The soundness test puts every random
+  expression the rules call convex or concave through the definition at random point pairs.
+
+What is not here: an engine (#226), a file format (nothing reads or writes a nonlinear model
+yet), nonlinear presolve, and spatial branch and bound for the non-convex case.

@@ -205,6 +205,10 @@ set(SANKHYA_CORE_SOURCES
   src/mip/mir_cuts.cpp
   src/mip/branch_and_bound_cuts.cpp
   src/mip/solution_pool.cpp
+  src/nlp/convexity.cpp
+  src/nlp/derivatives.cpp
+  src/nlp/expression.cpp
+  src/nlp/nonlinear_model.cpp
   src/presolve/presolve.cpp
   src/ipm/ipm.cpp
   src/pdhg/pdhg.cpp
