@@ -5,6 +5,7 @@
 // translation unit that needs to know whether a device is present before touching it.
 #pragma once
 
+#include <cstddef>
 #include <string>
 
 namespace sankhya::gpu {
@@ -16,5 +17,10 @@ namespace sankhya::gpu {
 /// On failure *description holds the reason (no device, driver error, …).
 /// description may be null.
 [[nodiscard]] bool device_available(std::string* description);
+
+/// Query free and total memory on the selected CUDA device (device 0).
+/// Returns false when no device is available or the query fails.
+/// Either pointer may be null if the caller does not need that value.
+[[nodiscard]] bool device_free_memory(std::size_t* free_bytes, std::size_t* total_bytes);
 
 }  // namespace sankhya::gpu

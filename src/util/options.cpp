@@ -253,6 +253,25 @@ const std::vector<OptionSpec>& Options::registry() {
                  1.0,
                  100000.0,
                  {}});
+    s.push_back({"nlp_tolerance",
+                 OptionType::Double,
+                 1e-6,
+                 "The convex NLP engine's KKT tolerance (#226): primal feasibility relative to "
+                 "the bounds, stationarity relative to the gradient, complementarity relative "
+                 "to the multipliers and bounds. `optimal` means all three were MEASURED below "
+                 "it at the returned point.",
+                 1e-12,
+                 1e-2,
+                 {}});
+    s.push_back({"nlp_assume_convex",
+                 OptionType::Bool,
+                 false,
+                 "Run the convex NLP engine on an objective the composition rules cannot prove "
+                 "convex (x log x, cross terms), on the caller's word (#226). The answer's "
+                 "message then says the convexity was asserted, not proved.",
+                 0.0,
+                 0.0,
+                 {}});
     s.push_back(
         {"enable_clique_cuts",
          OptionType::Bool,
@@ -617,6 +636,28 @@ const std::vector<OptionSpec>& Options::registry() {
                  0.0,
                  {},
                  "Phase 9"});
+    s.push_back({"profile",
+                 OptionType::String,
+                 std::string("off"),
+                 "Where the solve's time goes (#285): off, basic (the phases - presolve, the "
+                 "engine, postsolve, verification - and the headline counters) or detailed "
+                 "(also the sub-phases inside an engine: the simplex's pricing, ratio test and "
+                 "factorizations, the interior point's ordering and factorization, the "
+                 "branch and bound's node LPs and branching). The table is written to the log; "
+                 "off costs a null-pointer test per scope.",
+                 0.0,
+                 0.0,
+                 {"off", "basic", "detailed"}});
+    s.push_back(
+        {"profile_out",
+         OptionType::String,
+         std::string(""),
+         "Also write the profile as JSON to this file; empty writes the log table only.",
+         0.0,
+         0.0,
+         {},
+         /*planned_for=*/std::string(""),
+         /*case_sensitive=*/true});
     s.push_back({"progress_out",
                  OptionType::String,
                  std::string(""),

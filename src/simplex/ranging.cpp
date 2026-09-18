@@ -27,6 +27,7 @@
 #include "sankhya/options.hpp"
 #include "sankhya/tolerances.hpp"
 #include "sankhya/types.hpp"
+#include "util/profiler.hpp"
 
 #include "../la/lu.hpp"
 
@@ -66,6 +67,7 @@ void compute_ranging(const Model& model, const Options& options, Logger& logger,
         "not; use the simplex)");
     return;
   }
+  ProfileScope timed(logger.profiler(), "ranging");  // #285, after the reasons not to run
 
   const Index n = model.num_cols();
   const Index m = model.num_rows();

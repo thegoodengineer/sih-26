@@ -206,9 +206,15 @@ set(SANKHYA_CORE_SOURCES
   src/mip/mir_cuts.cpp
   src/mip/branch_and_bound_cuts.cpp
   src/mip/solution_pool.cpp
+  src/nlp/convex_nlp.cpp
+  src/nlp/convexity.cpp
+  src/nlp/derivatives.cpp
+  src/nlp/expression.cpp
+  src/nlp/nonlinear_model.cpp
   src/presolve/presolve.cpp
   src/ipm/ipm.cpp
   src/pdhg/pdhg.cpp
+  src/gpu/gpu_memory.cpp
   src/simplex/dual_simplex.cpp
   src/simplex/primal_simplex.cpp
   src/simplex/crossover.cpp
@@ -216,6 +222,7 @@ set(SANKHYA_CORE_SOURCES
   src/simplex/ranging.cpp
   src/util/logging.cpp
   src/util/options.cpp
+  src/util/profiler.cpp
   src/util/version.cpp)
 
 add_library(sankhya_objects OBJECT ${SANKHYA_CORE_SOURCES})
