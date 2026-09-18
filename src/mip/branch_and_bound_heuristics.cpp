@@ -110,6 +110,11 @@ void BranchAndBound::run_node_heuristics(Index node_index, const Solution& relax
         sub.set_int("node_limit", std::min<Count>(rins_nodes_, budget - s.work));
         sub.set_bool("pool_complete", false);
         sub.set_int("pool_size", 1);
+        // The search's checkpoint is the search's (#287): a sub-MIP stopped at its node cap
+        // would otherwise write its own tree over the file, and after a resume every sub-MIP
+        // would try to load the search's file and be refused as a different model.
+        sub.set_string("checkpoint", "");
+        sub.set_string("resume", "");
         if (limits_.has_time_limit()) {
           sub.set_double(
               "time_limit",
