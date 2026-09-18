@@ -16,6 +16,7 @@
 #include <limits>
 #include <string>
 #include <string_view>
+#include <utility>
 
 #include <fmt/format.h>
 
@@ -34,6 +35,7 @@
 #include "sankhya/solve_control.hpp"
 #include "sankhya/timer.hpp"
 #include "sankhya/version.hpp"
+#include "simplex/crossover.hpp"
 #include "simplex/ranging.hpp"
 #include "util/threads.hpp"
 
@@ -590,9 +592,18 @@ Solution solve_unguarded(const Model& model, const Options& options, SolveContro
         polish_with_the_interior_point(&first, target, options, logger, control, timer);
         return first;
       }
-      return want_ipm    ? ipm::solve_ipm(target, options, logger, control)
-             : want_dual ? solve_dual_simplex(target, options, logger, control)
-                         : solve_primal_simplex(target, options, logger, control);
+      if (want_ipm) {
+        Solution interior = ipm::solve_ipm(target, options, logger, control);
+        // From the interior point's answer to a vertex (#219), when asked: the basis the
+        // rest of the pipeline wants, at the cost of a few pivots from an optimal point.
+        if (options.get_bool("crossover")) {
+          return crossover_to_vertex(target, std::move(interior), options, logger, control,
+                                     timer);
+        }
+        return interior;
+      }
+      return want_dual ? solve_dual_simplex(target, options, logger, control)
+                       : solve_primal_simplex(target, options, logger, control);
     };
     if (requested != "auto" && requested != "simplex" && !want_pdhg && !want_dual &&
         !want_ipm) {

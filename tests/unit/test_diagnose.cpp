@@ -212,7 +212,9 @@ TEST(Diagnose, AModelWithNoRowsOrEntriesProducesNumbersRatherThanNaN) {
   EXPECT_FALSE(std::isnan(d.density_percent));
   // And both renderings survive it.
   EXPECT_FALSE(format_text(d).empty());
-  EXPECT_NO_THROW(nlohmann::json::parse(format_json(d)));
+  // The parse result is what the check is about; GCC 16 makes ignoring it an error.
+  EXPECT_NO_THROW([[maybe_unused]] const nlohmann::json parsed =
+                      nlohmann::json::parse(format_json(d)));
 }
 
 TEST(Diagnose, TheJsonCarriesTheSameNumbersAsTheText) {

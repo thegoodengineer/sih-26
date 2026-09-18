@@ -64,15 +64,23 @@ TEST(InteriorPoint, SolvesATextbookLpToTheSimplexAnswer) {
       {4.0, 12.0, 18.0}, {3.0, 5.0}, {0.0, 0.0}, {kInfinity, kInfinity}, ObjSense::kMaximize);
   const Solution ipm = solve(model, with_algorithm("ipm"));
   ASSERT_EQ(ipm.status, SolveStatus::kOptimal) << ipm.message;
-  EXPECT_EQ(ipm.algorithm, "ipm");
+  // Crossover (#219) is on by default, so the answer is the interior point's pushed to a
+  // vertex and the engine name says both; the interior point alone is `ipm`.
+  EXPECT_EQ(ipm.algorithm, "ipm+crossover");
   EXPECT_NEAR(ipm.objective, 36.0, 1e-6);
   EXPECT_NEAR(ipm.col_value[0], 2.0, 1e-5);
   EXPECT_NEAR(ipm.col_value[1], 6.0, 1e-5);
   EXPECT_LE(ipm.primal_infeasibility, tol::kPrimalFeasibility);
   EXPECT_LE(ipm.dual_infeasibility_scaled, tol::kDualFeasibility) << ipm.message;
-  // No basis is produced, by design and by the header's statement. The status vectors
-  // still exist - the dispatcher allocates them and postsolve annotates the columns it
-  // removed - so what is asserted is the engine's name, not an empty vector.
+  // With crossover off the interior point produces no basis, by design and by the header's
+  // statement. The status vectors still exist - the dispatcher allocates them and postsolve
+  // annotates the columns it removed - so what is asserted is the engine's name.
+  Options alone = with_algorithm("ipm");
+  alone.set_bool("crossover", false);
+  const Solution bare = solve(model, alone);
+  ASSERT_EQ(bare.status, SolveStatus::kOptimal) << bare.message;
+  EXPECT_EQ(bare.algorithm, "ipm");
+  EXPECT_NEAR(bare.objective, 36.0, 1e-6);
 }
 
 TEST(InteriorPoint, HandlesRangedRowsBoxedAndFreeColumns) {

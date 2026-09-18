@@ -33,6 +33,7 @@ add_executable(sankhya_tests
   unit/test_sparse_lu.cpp
   unit/test_ldl.cpp
   unit/test_ipm.cpp
+  unit/test_crossover.cpp
   unit/test_writer.cpp
   unit/test_iis.cpp
   unit/test_pdhg.cpp

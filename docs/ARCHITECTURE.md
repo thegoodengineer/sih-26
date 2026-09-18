@@ -150,10 +150,12 @@ it describes.
 ## 5. Where the next engines plug in
 
 - **Interior-point method** (#56) — built: `src/ipm/` is one branch of the LP dispatcher
-  over the sparse LDLᵀ in `src/la/ldl.cpp` (#70). It produces a `Solution` without a basis,
-  which the status guard and the verifier handle as they do for PDHG. It does not serve
-  branch and bound: that would need a crossover to a basis, and the dual simplex stays the
-  node engine.
+  over the sparse LDLᵀ in `src/la/ldl.cpp` (#70). On its own it produces a `Solution` without
+  a basis, which the status guard and the verifier handle as they do for PDHG; by default
+  (`crossover=true`, #219) `src/simplex/crossover.cpp` then pushes that answer to a vertex
+  with the dual simplex warm-started from a basis guessed off the interior point, so the
+  reported solution carries a basis. The dual simplex stays the node engine for branch and
+  bound.
 - **MIQP** — already present: the branch-and-bound node relaxation is a QP when the model
   has a Hessian, and the node bound is quadratic (`src/mip/branch_and_bound.cpp`).
 - **NLP / MINLP** — the frozen interface is the constraint: a `Model` today is linear

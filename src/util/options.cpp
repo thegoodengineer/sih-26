@@ -321,6 +321,19 @@ const std::vector<OptionSpec>& Options::registry() {
          0.05,
          1.0,
          {}});
+    s.push_back({"crossover",
+                 OptionType::Bool,
+                 true,
+                 "After an interior-point solve (algorithm=ipm) reaches optimal, push the "
+                 "answer to a vertex with the dual simplex warm-started from a basis guessed "
+                 "off the interior point (#219): the result then carries a basis for warm "
+                 "starts and sensitivity ranging and every nonbasic variable sits on a bound. "
+                 "The pivots get what the time limit has left; if they do not reach an optimum "
+                 "the interior point's answer stands. false keeps the interior point's answer "
+                 "as it is, for a caller who wants only the objective on a very large model.",
+                 0.0,
+                 0.0,
+                 {}});
     s.push_back({"dual_feasibility_tolerance",
                  OptionType::Double,
                  tol::kDualFeasibility,
