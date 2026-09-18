@@ -26,6 +26,7 @@
 #include "checkpoint.hpp"
 #include "conflict.hpp"
 #include "cuts.hpp"
+#include "heuristics.hpp"
 #include "solution_pool.hpp"
 
 #include <algorithm>
@@ -260,6 +261,17 @@ class BranchAndBound {
   /// Accept a candidate if it is integral, feasible and better than the incumbent.
   bool offer_incumbent(const std::vector<double>& x);
 
+  // ---- Primal heuristics (#290), in branch_and_bound_heuristics.cpp ---------------------
+  void init_heuristics();
+  /// Offer a heuristic's candidate and count it against that heuristic.
+  bool offer_from(std::size_t slot, const std::vector<double>& x);
+  /// Rounding (every node), lock rounding (every node), repair (root) and RINS (scheduled).
+  void run_node_heuristics(Index node_index, const Solution& relaxation);
+  /// The root dive, counted.
+  void run_root_dive(const std::vector<double>& x);
+  /// The feasibility pump at the root, only when nothing else found an incumbent.
+  void run_root_pump(const Solution& relaxation);
+  void report_heuristics();
   // ---- Checkpoint and resume (#287), in branch_and_bound_checkpoint.cpp -----------------
   /// The search as it stands between nodes.
   [[nodiscard]] TreeCheckpoint make_checkpoint() const;
@@ -415,6 +427,9 @@ class BranchAndBound {
   /// Bring every stored basis to `rows` row statuses: a new row's logical is basic.
   void resize_warm_starts(Index rows);
   [[nodiscard]] bool is_pooled_duplicate(const Cut& cut) const;
+  /// Clique and {0,1/2} candidates (#358) at `relaxation`, appended to `candidates`, each
+  /// family behind its own option.
+  void add_combinatorial_cuts(const Solution& relaxation, std::vector<Cut>* candidates);
   /// Count node solves in which each cut row was slack; free a row slack for too long.
   void age_cut_rows(const Solution& relaxation);
 
@@ -487,6 +502,15 @@ class BranchAndBound {
   /// Bounds saved by the current enter(), restored by leave().
   std::vector<DomainChange> saved_;
 
+  // Primal heuristics (#290).
+  std::vector<HeuristicStats> heuristic_stats_;
+  Locks locks_;
+  bool heuristics_on_ = true;
+  Count rins_frequency_ = 0;
+  Count rins_nodes_ = 0;
+  int pump_rounds_ = 0;
+  Count clique_cuts_generated_ = 0;     ///< #358, before the filter
+  Count zero_half_cuts_generated_ = 0;  ///< #358, before the filter
   std::string checkpoint_path_;
   Count checkpoint_nodes_ = 0;
   Count last_checkpoint_at_ = -1;

@@ -253,6 +253,41 @@ const std::vector<OptionSpec>& Options::registry() {
                  1.0,
                  100000.0,
                  {}});
+    s.push_back({"mip_heuristics",
+                 OptionType::Bool,
+                 false,
+                 "Run the primal heuristics #290 added: lock rounding at every node, a "
+                 "repair search at the root, the feasibility pump at the root when nothing "
+                 "else found an incumbent, and RINS on mip_rins_frequency. Rounding and the "
+                 "root dive run either way. Every candidate is checked against the original "
+                 "model before it can become the incumbent. OFF until the MIPLIB A/B on main, "
+                 "alone on the machine, says what it buys; a default is a measurement here.",
+                 0.0,
+                 0.0,
+                 {}});
+    s.push_back({"mip_rins_frequency",
+                 OptionType::Int,
+                 std::int64_t{100},
+                 "Run RINS every this many nodes once there is an incumbent (#290); 0 turns it "
+                 "off. Its sub-MIP nodes are capped in total at the larger of mip_rins_nodes "
+                 "and a tenth of the main search's nodes.",
+                 0.0,
+                 kNoLimit,
+                 {}});
+    s.push_back({"mip_rins_nodes",
+                 OptionType::Int,
+                 std::int64_t{200},
+                 "Node limit of one RINS sub-MIP, and the floor of their total budget (#290).",
+                 1.0,
+                 kNoLimit,
+                 {}});
+    s.push_back({"mip_pump_rounds",
+                 OptionType::Int,
+                 std::int64_t{20},
+                 "Rounds of the feasibility pump at the root (#290); 0 turns it off.",
+                 0.0,
+                 kNoLimit,
+                 {}});
     s.push_back({"checkpoint",
                  OptionType::String,
                  std::string(""),
@@ -304,6 +339,25 @@ const std::vector<OptionSpec>& Options::registry() {
                  "Run the convex NLP engine on an objective the composition rules cannot prove "
                  "convex (x log x, cross terms), on the caller's word (#226). The answer's "
                  "message then says the convexity was asserted, not proved.",
+                 0.0,
+                 0.0,
+                 {}});
+    s.push_back(
+        {"enable_clique_cuts",
+         OptionType::Bool,
+         true,
+         "Include clique cuts from the conflict graph of the binaries in the cut rounds "
+         "(#358). Only read when enable_root_cuts is set; exists so the family can be "
+         "measured on its own.",
+         0.0,
+         0.0,
+         {}});
+    s.push_back({"enable_zero_half_cuts",
+                 OptionType::Bool,
+                 true,
+                 "Include {0,1/2}-Chvatal-Gomory cuts from pure-integer rows in the cut rounds "
+                 "(#358). Only read when enable_root_cuts is set; exists so the family can be "
+                 "measured on its own.",
                  0.0,
                  0.0,
                  {}});

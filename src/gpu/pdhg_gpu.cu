@@ -12,7 +12,7 @@
 //
 // CPU/GPU split:
 //   GPU  SpMVs (cuSPARSE), primal/dual coordinate updates, running-sum accumulation,
-//        movement and interaction reductions (CUB).
+//        movement and interaction reductions (CUB BlockReduce + atomicAdd, #280).
 //   CPU  Preconditioning (one-off), convergence evaluation (every 40 iterations),
 //        restart logic and scalar step-size arithmetic.
 //
@@ -23,7 +23,7 @@
 
 #include <cuda_runtime.h>
 #include <cusparse.h>
-#include <cub/device/device_reduce.cuh>
+#include <cub/block/block_reduce.cuh>
 
 #include <algorithm>
 #include <cmath>
@@ -78,70 +78,76 @@ static const double kZero = 0.0;
 
 // ---- CUDA kernels -------------------------------------------------------
 
-// [CP11] Algorithm 1, primal half-step:
+// [CP11] Algorithm 1, primal half-step, fused with [PDLP] §3.1 movement_x reduction (#280).
+// Combining the update with the reduction eliminates one kernel launch and one global-memory
+// round-trip (write dx to d_tmpn, read it back for CUB DeviceReduce) per iteration.
 //   x_next = proj_[col_lo, col_hi](x - tau*(cost + at_y))
-//   extrapolated = 2*x_next - x    (the [CP11] extrapolation / over-relaxation)
+//   extrapolated = 2*x_next - x    ([CP11] over-relaxation)
 //   dx = x_next - x
-__global__ void k_primal_update(const double* __restrict__ x, const double* __restrict__ at_y,
-                                const double* __restrict__ cost,
-                                const double* __restrict__ col_lo,
-                                const double* __restrict__ col_hi, double* __restrict__ x_next,
-                                double* __restrict__ extrapolated, double* __restrict__ dx,
-                                double tau, int n) {
+//   d_mv_x += sum_j 0.5 * omega * dx[j]^2   (via CUB BlockReduce + atomicAdd)
+__global__ void k_primal_fused(const double* __restrict__ x, const double* __restrict__ at_y,
+                               const double* __restrict__ cost, const double* __restrict__ col_lo,
+                               const double* __restrict__ col_hi, double* __restrict__ x_next,
+                               double* __restrict__ extrapolated, double* __restrict__ dx,
+                               double* d_mv_x, double tau, double omega, int n) {
+  using BlockReduce = cub::BlockReduce<double, kBlockSize>;
+  __shared__ typename BlockReduce::TempStorage temp;
   const int j = blockIdx.x * blockDim.x + threadIdx.x;
-  if (j >= n) return;
-  double xnj = x[j] - tau * (cost[j] + at_y[j]);
-  // project onto [col_lo[j], col_hi[j]]; infinite sides (IEEE) are treated as absent
-  if (!isinf(col_lo[j]) && xnj < col_lo[j]) xnj = col_lo[j];
-  if (!isinf(col_hi[j]) && xnj > col_hi[j]) xnj = col_hi[j];
-  x_next[j] = xnj;
-  extrapolated[j] = 2.0 * xnj - x[j];
-  dx[j] = xnj - x[j];
+  double mv_thread = 0.0;
+  if (j < n) {
+    double xnj = x[j] - tau * (cost[j] + at_y[j]);
+    // project onto [col_lo[j], col_hi[j]]; infinite sides (IEEE) are treated as absent
+    if (!isinf(col_lo[j]) && xnj < col_lo[j]) xnj = col_lo[j];
+    if (!isinf(col_hi[j]) && xnj > col_hi[j]) xnj = col_hi[j];
+    x_next[j] = xnj;
+    const double dxj = xnj - x[j];
+    extrapolated[j] = 2.0 * xnj - x[j];
+    dx[j] = dxj;
+    mv_thread = 0.5 * omega * dxj * dxj;
+  }
+  const double bsum = BlockReduce(temp).Sum(mv_thread);
+  if (threadIdx.x == 0) atomicAdd(d_mv_x, bsum);
 }
 
-// [CP11] Algorithm 1, dual half-step:
+// [CP11] Algorithm 1, dual half-step, fused with [PDLP] §3.1 movement_y reduction (#280).
 //   v = y + sigma * a_x
 //   y_next = v - sigma * proj_[row_lo, row_hi](v / sigma)   (Moreau identity)
 //   dy = y_next - y
-__global__ void k_dual_update(const double* __restrict__ y, const double* __restrict__ a_x,
-                              const double* __restrict__ row_lo,
-                              const double* __restrict__ row_hi, double* __restrict__ y_next,
-                              double* __restrict__ dy, double sigma, int m) {
+//   d_mv_y += sum_i 0.5 * dy[i]^2 / omega   (via CUB BlockReduce + atomicAdd)
+__global__ void k_dual_fused(const double* __restrict__ y, const double* __restrict__ a_x,
+                             const double* __restrict__ row_lo, const double* __restrict__ row_hi,
+                             double* __restrict__ y_next, double* __restrict__ dy, double* d_mv_y,
+                             double sigma, double omega, int m) {
+  using BlockReduce = cub::BlockReduce<double, kBlockSize>;
+  __shared__ typename BlockReduce::TempStorage temp;
   const int i = blockIdx.x * blockDim.x + threadIdx.x;
-  if (i >= m) return;
-  const double v = y[i] + sigma * a_x[i];
-  double pv = v / sigma;
-  if (!isinf(row_lo[i]) && pv < row_lo[i]) pv = row_lo[i];
-  if (!isinf(row_hi[i]) && pv > row_hi[i]) pv = row_hi[i];
-  const double yni = v - sigma * pv;
-  y_next[i] = yni;
-  dy[i] = yni - y[i];
+  double mv_thread = 0.0;
+  if (i < m) {
+    const double v = y[i] + sigma * a_x[i];
+    double pv = v / sigma;
+    if (!isinf(row_lo[i]) && pv < row_lo[i]) pv = row_lo[i];
+    if (!isinf(row_hi[i]) && pv > row_hi[i]) pv = row_hi[i];
+    const double yni = v - sigma * pv;
+    y_next[i] = yni;
+    const double dyi = yni - y[i];
+    dy[i] = dyi;
+    mv_thread = 0.5 * dyi * dyi / omega;
+  }
+  const double bsum = BlockReduce(temp).Sum(mv_thread);
+  if (threadIdx.x == 0) atomicAdd(d_mv_y, bsum);
 }
 
-// [PDLP] §3.1: movement_x[j] = 0.5 * omega * dx[j]^2
-__global__ void k_movement_x(const double* __restrict__ dx, double* __restrict__ out,
-                             double omega, int n) {
-  const int j = blockIdx.x * blockDim.x + threadIdx.x;
-  if (j >= n) return;
-  const double d = dx[j];
-  out[j] = 0.5 * omega * d * d;
-}
-
-// [PDLP] §3.1: movement_y[i] = 0.5 * dy[i]^2 / omega
-__global__ void k_movement_y(const double* __restrict__ dy, double* __restrict__ out,
-                             double omega, int m) {
+// [PDLP] §3.1 interaction: d_interaction += sum_i dy[i] * adx[i]
+// Replaces the previous k_pointwise_mul + CUB DeviceReduce pair (#280).
+__global__ void k_interaction_fused(const double* __restrict__ dy,
+                                    const double* __restrict__ adx, double* d_interaction,
+                                    int m) {
+  using BlockReduce = cub::BlockReduce<double, kBlockSize>;
+  __shared__ typename BlockReduce::TempStorage temp;
   const int i = blockIdx.x * blockDim.x + threadIdx.x;
-  if (i >= m) return;
-  const double d = dy[i];
-  out[i] = 0.5 * d * d / omega;
-}
-
-// Pointwise product for the interaction dot-product: interaction = sum_i dy[i] * adx[i]
-__global__ void k_pointwise_mul(const double* __restrict__ a, const double* __restrict__ b,
-                                double* __restrict__ out, int count) {
-  const int i = blockIdx.x * blockDim.x + threadIdx.x;
-  if (i >= count) return;
-  out[i] = a[i] * b[i];
+  const double val = (i < m) ? dy[i] * adx[i] : 0.0;
+  const double bsum = BlockReduce(temp).Sum(val);
+  if (threadIdx.x == 0) atomicAdd(d_interaction, bsum);
 }
 
 // Accumulate into running sums (for the average iterate)
@@ -188,41 +194,21 @@ static bool dh_copy(const double* dev, double* host, std::size_t count) {
   return cudaMemcpy(host, dev, count * sizeof(double), cudaMemcpyDeviceToHost) == cudaSuccess;
 }
 
-// ---- CUB sum reduction --------------------------------------------------
-// Reduces `count` elements of `d_in` into `d_out` (single device double).
-// `d_temp` / `temp_bytes` are reused across calls; reallocated if too small.
-static bool cub_sum(double* d_in, int count, double* d_out, void*& d_temp,
-                    std::size_t& temp_bytes) {
-  if (count == 0) {
-    return cudaMemset(d_out, 0, sizeof(double)) == cudaSuccess;
-  }
-  std::size_t need = 0;
-  if (cub::DeviceReduce::Sum(nullptr, need, d_in, d_out, count) != cudaSuccess) return false;
-  if (need > temp_bytes) {
-    cudaFree(d_temp);
-    d_temp = nullptr;
-    if (need > 0 && cudaMalloc(&d_temp, need) != cudaSuccess) return false;
-    temp_bytes = need;
-  }
-  return cub::DeviceReduce::Sum(d_temp, need, d_in, d_out, count) == cudaSuccess;
-}
-
 // ---- RAII wrapper for all GPU resources ---------------------------------
 
 struct GpuState {
-  // Iterates and scratch (scaled space)
+  // Iterates (scaled space)
   double *d_x{}, *d_xn{}, *d_ext{}, *d_dx{}, *d_aty{}, *d_xsum{};
   double *d_y{}, *d_yn{}, *d_dy{}, *d_ax{}, *d_adx{}, *d_ysum{};
-  double *d_tmpn{}, *d_tmpm{};  // n-element and m-element reduction scratch
-  double* d_scalar{};           // single-element result for reductions
+  // Per-iteration scalar accumulators: [0]=movement_x, [1]=movement_y, [2]=interaction.
+  // Zeroed by cudaMemset at the top of each iteration; updated via atomicAdd inside the
+  // fused primal/dual kernels; downloaded in one transfer to avoid per-scalar sync stalls.
+  double* d_scalars{};
   // Problem constants (device)
   double *d_cost{}, *d_clo{}, *d_chi{}, *d_rlo{}, *d_rhi{};
   // CSR matrix (device)
   int *d_rowptr{}, *d_colidx{};
   double* d_vals{};
-  // CUB temp
-  void* d_cub{};
-  std::size_t cub_bytes{};
   // cuSPARSE SpMV buffer (single buffer, sized to max of NT and T)
   void* d_spmv{};
   std::size_t spmv_bytes{};
@@ -251,9 +237,7 @@ struct GpuState {
     cudaFree(d_ax);
     cudaFree(d_adx);
     cudaFree(d_ysum);
-    cudaFree(d_tmpn);
-    cudaFree(d_tmpm);
-    cudaFree(d_scalar);
+    cudaFree(d_scalars);
     cudaFree(d_cost);
     cudaFree(d_clo);
     cudaFree(d_chi);
@@ -262,14 +246,12 @@ struct GpuState {
     cudaFree(d_rowptr);
     cudaFree(d_colidx);
     cudaFree(d_vals);
-    cudaFree(d_cub);
     cudaFree(d_spmv);
   }
 
   [[nodiscard]] bool alloc_ok() const {
-    // Every pointer that should be non-null: check the ones we always need
     return d_x && d_xn && d_ext && d_dx && d_aty && d_xsum && d_y && d_yn && d_dy && d_ax &&
-           d_adx && d_ysum && d_tmpn && d_tmpm && d_scalar && d_cost && d_clo && d_chi;
+           d_adx && d_ysum && d_scalars && d_cost && d_clo && d_chi;
   }
 };
 
@@ -533,9 +515,7 @@ Solution solve_pdhg_gpu(const Model& model, const Options& options, Logger& logg
   g.d_ax = dev_zeros(m);
   g.d_adx = dev_zeros(m);
   g.d_ysum = dev_zeros(m);
-  g.d_tmpn = dev_zeros(n);
-  g.d_tmpm = dev_zeros(m);
-  g.d_scalar = dev_zeros(1);
+  g.d_scalars = dev_zeros(3);  // [0]=mv_x, [1]=mv_y, [2]=interaction
   g.d_cost = dev_zeros(n);
   g.d_clo = dev_zeros(n);
   g.d_chi = dev_zeros(n);
@@ -610,8 +590,8 @@ Solution solve_pdhg_gpu(const Model& model, const Options& options, Logger& logg
   // Create dense vector descriptors; dimension is pinned at construction, data updated later.
   // vn: n-element (input to NT SpMV, output of T SpMV)
   // vm: m-element (output of NT SpMV, input to T SpMV)
-  void* vn_init = (g.d_x ? g.d_x : g.d_scalar);  // non-null placeholder
-  void* vm_init = (g.d_y ? g.d_y : g.d_scalar);
+  void* vn_init = (g.d_x ? g.d_x : g.d_scalars);  // non-null placeholder
+  void* vm_init = (g.d_y ? g.d_y : g.d_scalars);
   if (cusparseCreateDnVec(&g.vn, static_cast<int64_t>(ni), vn_init, CUDA_R_64F) !=
       CUSPARSE_STATUS_SUCCESS)
     return cs_failed();
@@ -639,20 +619,6 @@ Solution solve_pdhg_gpu(const Model& model, const Options& options, Logger& logg
     g.spmv_bytes = std::max(bytes_nt, bytes_t);
     if (g.spmv_bytes > 0) {
       if (cudaMalloc(&g.d_spmv, g.spmv_bytes) != cudaSuccess) return cs_failed();
-    }
-  }
-
-  // Pre-compute CUB temp buffer size
-  {
-    std::size_t need_n = 0, need_m = 0;
-    if (n > 0) cub::DeviceReduce::Sum(nullptr, need_n, g.d_tmpn, g.d_scalar, ni);
-    if (m > 0) cub::DeviceReduce::Sum(nullptr, need_m, g.d_tmpm, g.d_scalar, mi);
-    g.cub_bytes = std::max(need_n, need_m);
-    if (g.cub_bytes > 0) {
-      if (cudaMalloc(&g.d_cub, g.cub_bytes) != cudaSuccess) {
-        logger.warning("GPU PDHG: CUB allocation failed; falling back to CPU solver");
-        return pdhg::solve_pdhg(model, options, logger, control);
-      }
     }
   }
 
@@ -720,16 +686,22 @@ Solution solve_pdhg_gpu(const Model& model, const Options& options, Logger& logg
     const double tau = eta / omega;
     const double sigma = eta * omega;
 
+    // Zero per-iteration scalar accumulators before the fused kernels write into them.
+    if (cudaMemset(g.d_scalars, 0, 3 * sizeof(double)) != cudaSuccess) {
+      gpu_error = true;
+      break;
+    }
+
     // 1. A^T y  [cuPDLP §3, transpose SpMV]
     if (!spmv_t(g, g.d_y, g.d_aty)) {
       gpu_error = true;
       break;
     }
 
-    // 2. Primal update  [CP11 Alg.1]
+    // 2. Primal update + movement_x reduction  [CP11 Alg.1, PDLP §3.1]
     if (ni > 0)
-      k_primal_update<<<bn, kBlockSize>>>(g.d_x, g.d_aty, g.d_cost, g.d_clo, g.d_chi, g.d_xn,
-                                          g.d_ext, g.d_dx, tau, ni);
+      k_primal_fused<<<bn, kBlockSize>>>(g.d_x, g.d_aty, g.d_cost, g.d_clo, g.d_chi, g.d_xn,
+                                         g.d_ext, g.d_dx, g.d_scalars + 0, tau, omega, ni);
     if (!launch_ok()) {
       gpu_error = true;
       break;
@@ -741,10 +713,10 @@ Solution solve_pdhg_gpu(const Model& model, const Options& options, Logger& logg
       break;
     }
 
-    // 4. Dual update  [CP11 Alg.1]
+    // 4. Dual update + movement_y reduction  [CP11 Alg.1, PDLP §3.1]
     if (mi > 0)
-      k_dual_update<<<bm, kBlockSize>>>(g.d_y, g.d_ax, g.d_rlo, g.d_rhi, g.d_yn, g.d_dy, sigma,
-                                        mi);
+      k_dual_fused<<<bm, kBlockSize>>>(g.d_y, g.d_ax, g.d_rlo, g.d_rhi, g.d_yn, g.d_dy,
+                                       g.d_scalars + 1, sigma, omega, mi);
     if (!launch_ok()) {
       gpu_error = true;
       break;
@@ -756,44 +728,24 @@ Solution solve_pdhg_gpu(const Model& model, const Options& options, Logger& logg
       break;
     }
 
-    // 6. Movement  [PDLP §3.1]
-    double movement = 0.0;
-    {
-      double mv_x = 0.0, mv_y = 0.0;
-      if (ni > 0) {
-        k_movement_x<<<bn, kBlockSize>>>(g.d_dx, g.d_tmpn, omega, ni);
-        if (!launch_ok() || !cub_sum(g.d_tmpn, ni, g.d_scalar, g.d_cub, g.cub_bytes) ||
-            !dh_copy(g.d_scalar, &mv_x, 1)) {
-          gpu_error = true;
-          break;
-        }
-      }
-      if (mi > 0) {
-        k_movement_y<<<bm, kBlockSize>>>(g.d_dy, g.d_tmpm, omega, mi);
-        if (!launch_ok() || !cub_sum(g.d_tmpm, mi, g.d_scalar, g.d_cub, g.cub_bytes) ||
-            !dh_copy(g.d_scalar, &mv_y, 1)) {
-          gpu_error = true;
-          break;
-        }
-      }
-      movement = mv_x + mv_y;
-    }
-
-    // 7. Interaction = |dy' * adx|  [PDLP §3.1]
-    double interaction = 0.0;
-    if (mi > 0 && !gpu_error) {
-      k_pointwise_mul<<<bm, kBlockSize>>>(g.d_dy, g.d_adx, g.d_tmpm, mi);
-      double raw = 0.0;
-      if (!launch_ok() || !cub_sum(g.d_tmpm, mi, g.d_scalar, g.d_cub, g.cub_bytes) ||
-          !dh_copy(g.d_scalar, &raw, 1)) {
+    // 6. Interaction + download all three scalars in one transfer  [PDLP §3.1]
+    // movement_x (d_scalars[0]) and movement_y (d_scalars[1]) were accumulated by steps 2/4.
+    if (mi > 0) {
+      k_interaction_fused<<<bm, kBlockSize>>>(g.d_dy, g.d_adx, g.d_scalars + 2, mi);
+      if (!launch_ok()) {
         gpu_error = true;
         break;
       }
-      interaction = std::fabs(raw);
     }
-    if (gpu_error) break;
+    double h_scalars[3] = {};
+    if (!dh_copy(g.d_scalars, h_scalars, 3)) {
+      gpu_error = true;
+      break;
+    }
+    const double movement = h_scalars[0] + h_scalars[1];
+    const double interaction = std::fabs(h_scalars[2]);
 
-    // 8. Adaptive step size  [PDLP §3.1]
+    // 7. Adaptive step size  [PDLP §3.1]
     const bool no_info = (interaction <= 0.0);
     const double limit =
         no_info ? std::numeric_limits<double>::infinity() : movement / interaction;
@@ -820,7 +772,7 @@ Solution solve_pdhg_gpu(const Model& model, const Options& options, Logger& logg
     const double eta_ceil = 1.0e3 / std::max(spectral_norm, 1e-12);
     if (!no_info) eta = std::clamp(proposed, 1e-12, eta_ceil);
 
-    // 9. Convergence and restart check (CPU, every kEvaluationInterval accepted steps)
+    // 8. Convergence and restart check (CPU, every kEvaluationInterval accepted steps)
     if (iteration == 0) continue;
     if (iteration % kEvaluationInterval != 0 && !no_info) continue;
 

@@ -110,6 +110,44 @@ TEST(Checkpoint, AResumedSearchReachesTheUninterruptedOptimum) {
          "proof";
 }
 
+TEST(Checkpoint, RinsSubSearchesLeaveTheSearchsCheckpointAlone) {
+  // RINS (#290) solves a sub-MIP with a copy of the search's options, and that copy carried
+  // `checkpoint` and `resume` too. A sub-MIP stopped at its node cap then wrote ITS tree to
+  // the search's file - a checkpoint of a different model, which a resume refuses - and after
+  // a resume every sub-MIP tried to load the search's file and was refused. Here the search
+  // runs to optimality, which writes no checkpoint at all, with RINS forced at every node and
+  // capped at two nodes: the file must still be empty at the end.
+  for (int seed = 0; seed < 6; ++seed) {
+    const Model model = knapsack(16, seed);
+    testing::TempFile file("", ".chk");
+    Options options = base_options();
+    options.set_bool("presolve", false);
+    options.set_bool("mip_heuristics", true);
+    options.set_int("mip_rins_frequency", 1);
+    options.set_int("mip_rins_nodes", 2);
+    options.set_string("checkpoint", file.path());
+    const Solution solved = solve(model, options);
+    ASSERT_EQ(solved.status, SolveStatus::kOptimal)
+        << "seed " << seed << ": " << solved.message;
+    EXPECT_TRUE(read_all(file.path()).empty())
+        << "seed " << seed
+        << ": a search that closed wrote a checkpoint, so something else did";
+
+    // And a resume with RINS on reaches the same optimum.
+    Options stop_early = options;
+    stop_early.set_int("mip_rins_frequency", 0);
+    stop_early.set_int("node_limit", std::max<Count>(2, solved.nodes / 10));
+    if (solve(model, stop_early).status == SolveStatus::kOptimal) continue;
+    Options resume = options;
+    resume.set_string("checkpoint", "");
+    resume.set_string("resume", file.path());
+    const Solution resumed = solve(model, resume);
+    ASSERT_EQ(resumed.status, SolveStatus::kOptimal)
+        << "seed " << seed << ": " << resumed.message;
+    EXPECT_NEAR(resumed.objective, solved.objective, 1e-9) << "seed " << seed;
+  }
+}
+
 TEST(Checkpoint, PeriodicCheckpointsAreWrittenOnTheNodeSchedule) {
   const Model model = knapsack(16, 1);
   testing::TempFile file("", ".chk");
