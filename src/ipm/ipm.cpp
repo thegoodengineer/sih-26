@@ -89,7 +89,12 @@ constexpr double kIpmGap = 1e-8;
 /// project's tolerances like every other optimal claim. Wright, *Primal-Dual Interior-Point
 /// Methods* (1997), chapter 11.
 constexpr double kBarrierExhaustedSlack = 10.0;  ///< within this factor of each tolerance
-constexpr Count kBarrierExhaustedPivots = 64;    ///< at least this many pivots regularized...
+/// How much the dual regularization grows when a Newton direction is not finite (#209), and
+/// how many times it may grow: 1e-10 -> 1e-6 -> 1e-2 is as far as a diagonal shift can go
+/// before the direction stops being a Newton direction at all.
+constexpr double kRegularizationRaise = 1e4;
+constexpr Count kMaxRegularizationRaises = 2;
+constexpr Count kBarrierExhaustedPivots = 64;  ///< at least this many pivots regularized...
 constexpr double kBarrierExhaustedFraction = 0.01;  ///< ...or this fraction of the rows
 
 constexpr double kPrimalRegularization = 1e-8;
@@ -121,6 +126,7 @@ class InteriorPoint {
   void build();
   void apply_warm_start();
   void residuals();
+  [[nodiscard]] bool direction_is_finite() const;
   [[nodiscard]] bool factorize();
 
   /// The deadline handed down to the linear algebra, so a time limit is not defeated by one
@@ -212,6 +218,13 @@ class InteriorPoint {
   std::vector<double> r_mu_l_, r_mu_u_;
   Count factorizations_ = 0;
   Count regularized_pivots_ = 0;
+  /// The dual regularization the factorization runs with (#209). It starts at
+  /// kDualRegularization and is raised when a Newton direction comes back non-finite near
+  /// the end, where the barrier has left the normal equations rank deficient at working
+  /// precision: a stronger diagonal makes the factor well defined again at the cost of a
+  /// slightly inexact direction, which the next iteration's residuals absorb.
+  double dual_regularization_ = kDualRegularization;
+  Count regularization_raises_ = 0;
 
   // THE BEST ITERATE IS KEPT. Near the optimum the normal equations lose conditioning and
   // an iteration can drift; when the loop then stalls or hits a limit, the point returned
@@ -504,6 +517,14 @@ void InteriorPoint::apply_warm_start() {
   }
 }
 
+bool InteriorPoint::direction_is_finite() const {
+  const auto finite = [](const std::vector<double>& v) {
+    return std::all_of(v.begin(), v.end(), [](double x) { return std::isfinite(x); });
+  };
+  return finite(dx_) && finite(dy_) && finite(dsl_) && finite(dzl_) && finite(dsu_) &&
+         finite(dzu_);
+}
+
 void InteriorPoint::residuals() {
   // r_b = -(Abar x); r_c = c - Abar^T y - z_l + z_u; r_l = x - l - s_l; r_u = u - x - s_u.
   constraint_times(x_, &r_b_);
@@ -567,7 +588,7 @@ bool InteriorPoint::factorize() {
   bool assembled = false;
   {
     ProfileScope timed(profiler, "normal equations", ProfileMode::kDetailed);
-    assembled = normal_equations_lower(model_.matrix, theta_x, row_shift, kDualRegularization,
+    assembled = normal_equations_lower(model_.matrix, theta_x, row_shift, dual_regularization_,
                                        &normal_lower_, should_stop_);
   }
   if (!assembled) {
@@ -626,7 +647,7 @@ bool InteriorPoint::factorize() {
   bool factored = false;
   {
     ProfileScope timed(profiler, "factorization", ProfileMode::kDetailed);
-    factored = ldl_.factorize(normal_lower_, kDualRegularization,
+    factored = ldl_.factorize(normal_lower_, dual_regularization_,
                               factorizations_ == 0 ? setup_stop : should_stop_);
   }
   if (!factored) {
@@ -897,11 +918,11 @@ bool InteriorPoint::purify_duals() {
       row_shift[static_cast<std::size_t>(k - n_)] = 1.0;
     }
   }
-  if (!normal_equations_lower(model_.matrix, theta_x, row_shift, kDualRegularization,
+  if (!normal_equations_lower(model_.matrix, theta_x, row_shift, dual_regularization_,
                               &normal_lower_, should_stop_)) {
     return false;
   }
-  if (!ldl_.factorize(normal_lower_, kDualRegularization, should_stop_)) return false;
+  if (!ldl_.factorize(normal_lower_, dual_regularization_, should_stop_)) return false;
   ++factorizations_;
 
   std::vector<double> dy = rhs;
@@ -1183,34 +1204,86 @@ Solution InteriorPoint::run() {
       }
     }
 
-    // PREDICTOR: the affine-scaling direction (mu-terms = -s z).
-    for (Index k = 0; k < total_; ++k) {
-      const auto u = static_cast<std::size_t>(k);
-      r_mu_l_[u] = has_lower_[u] ? -sl_[u] * zl_[u] : 0.0;
-      r_mu_u_[u] = has_upper_[u] ? -su_[u] * zu_[u] : 0.0;
-    }
-    newton_direction();
-    const double alpha_p_aff = step_length(sl_, dsl_, su_, dsu_);
-    const double alpha_d_aff = step_length(zl_, dzl_, zu_, dzu_);
-    double mu_aff = 0.0;
-    for (Index k = 0; k < total_; ++k) {
-      const auto u = static_cast<std::size_t>(k);
-      if (has_lower_[u])
-        mu_aff += (sl_[u] + alpha_p_aff * dsl_[u]) * (zl_[u] + alpha_d_aff * dzl_[u]);
-      if (has_upper_[u])
-        mu_aff += (su_[u] + alpha_p_aff * dsu_[u]) * (zu_[u] + alpha_d_aff * dzu_[u]);
-    }
-    mu_aff = bound_count_ > 0 ? mu_aff / static_cast<double>(bound_count_) : 0.0;
-    const double ratio = mu_ > 0.0 ? mu_aff / mu_ : 0.0;
-    const double sigma = std::min(1.0, ratio * ratio * ratio);
+    // PREDICTOR then CORRECTOR, as one step: the corrector's right-hand side carries the
+    // predictor's products ds dz, so a predictor that is not finite poisons the corrector
+    // whatever the factorization behind it, and a recovery has to redo both (#209).
+    const auto predictor_corrector = [&]() {
+      // PREDICTOR: the affine-scaling direction (mu-terms = -s z).
+      for (Index k = 0; k < total_; ++k) {
+        const auto u = static_cast<std::size_t>(k);
+        r_mu_l_[u] = has_lower_[u] ? -sl_[u] * zl_[u] : 0.0;
+        r_mu_u_[u] = has_upper_[u] ? -su_[u] * zu_[u] : 0.0;
+      }
+      newton_direction();
+      if (!direction_is_finite()) return false;
+      const double alpha_p_aff = step_length(sl_, dsl_, su_, dsu_);
+      const double alpha_d_aff = step_length(zl_, dzl_, zu_, dzu_);
+      double mu_aff = 0.0;
+      for (Index k = 0; k < total_; ++k) {
+        const auto u = static_cast<std::size_t>(k);
+        if (has_lower_[u])
+          mu_aff += (sl_[u] + alpha_p_aff * dsl_[u]) * (zl_[u] + alpha_d_aff * dzl_[u]);
+        if (has_upper_[u])
+          mu_aff += (su_[u] + alpha_p_aff * dsu_[u]) * (zu_[u] + alpha_d_aff * dzu_[u]);
+      }
+      mu_aff = bound_count_ > 0 ? mu_aff / static_cast<double>(bound_count_) : 0.0;
+      const double ratio = mu_ > 0.0 ? mu_aff / mu_ : 0.0;
+      const double sigma = std::min(1.0, ratio * ratio * ratio);
 
-    // CORRECTOR: centering plus the second-order term from the predictor.
-    for (Index k = 0; k < total_; ++k) {
-      const auto u = static_cast<std::size_t>(k);
-      if (has_lower_[u]) r_mu_l_[u] = sigma * mu_ - sl_[u] * zl_[u] - dsl_[u] * dzl_[u];
-      if (has_upper_[u]) r_mu_u_[u] = sigma * mu_ - su_[u] * zu_[u] - dsu_[u] * dzu_[u];
+      // CORRECTOR: centering plus the second-order term from the predictor.
+      for (Index k = 0; k < total_; ++k) {
+        const auto u = static_cast<std::size_t>(k);
+        if (has_lower_[u]) r_mu_l_[u] = sigma * mu_ - sl_[u] * zl_[u] - dsl_[u] * dzl_[u];
+        if (has_upper_[u]) r_mu_u_[u] = sigma * mu_ - su_[u] * zu_[u] - dsu_[u] * dzu_[u];
+      }
+      newton_direction();
+      return direction_is_finite();
+    };
+    bool step_is_finite = predictor_corrector();
+    // A NON-FINITE DIRECTION IS CAUGHT BEFORE IT IS TAKEN (#209). On the 5,000-row
+    // staircase model the iterate at a relative gap of 2e-8 is finite and measured, and the
+    // factorization behind the NEXT step has pivots just above the regularization floor
+    // whose reciprocals overflow the solve: the direction is NaN without a single pivot
+    // having been regularized, so the spike test above cannot see it. Rather than take the
+    // step (and then throw the iterate away at the top of the next loop), the
+    // regularization is raised by 1e4, the normal equations are refactorized and the
+    // predictor and corrector recomputed. A stronger diagonal makes the factor well defined
+    // at the price of a slightly inexact Newton step, and the residuals the next iteration
+    // measures absorb that; up to kMaxRegularizationRaises raises, after which the current
+    // iterate is the answer, judged as the barrier-exhausted stop judges one.
+    if (!step_is_finite) {
+      while (!step_is_finite && regularization_raises_ < kMaxRegularizationRaises) {
+        dual_regularization_ *= kRegularizationRaise;
+        ++regularization_raises_;
+        logger_.verbose(
+            "interior point: non-finite direction at iteration {}; "
+            "regularization raised to {:.1e} and the step recomputed",
+            iterations, dual_regularization_);
+        if (!factorize()) break;
+        step_is_finite = predictor_corrector();
+      }
+      if (!step_is_finite) {
+        const bool nearly_converged =
+            primal_infeasibility_ <= kBarrierExhaustedSlack * kIpmTolerance &&
+            dual_infeasibility_ <= kBarrierExhaustedSlack * kIpmTolerance &&
+            relative_gap <= kBarrierExhaustedSlack * kIpmGap &&
+            max_product_ <= kBarrierExhaustedSlack * kIpmComplementarity;
+        restore_best();
+        residuals();
+        const bool usable = std::isfinite(objective_) && primal_infeasibility_ <= 1e-6 &&
+                            dual_infeasibility_ <= 1e-6;
+        return finish(
+            nearly_converged ? SolveStatus::kOptimal
+                             : (usable ? SolveStatus::kFeasible : SolveStatus::kNumericalError),
+            fmt::format("the Newton direction was not finite at iteration {} after {} "
+                        "regularization raise(s); {}",
+                        iterations, regularization_raises_,
+                        nearly_converged ? "the iterate before it is within a decade of "
+                                           "every tolerance and is reported as converged"
+                                         : "the best iterate is reported as it stands"),
+            iterations, timer.elapsed_seconds());
+      }
     }
-    newton_direction();
     const double alpha_p = std::min(1.0, kStepToBoundary * step_length(sl_, dsl_, su_, dsu_));
     const double alpha_d = std::min(1.0, kStepToBoundary * step_length(zl_, dzl_, zu_, dzu_));
 

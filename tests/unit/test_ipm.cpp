@@ -228,6 +228,27 @@ TEST(InteriorPoint, TheShiftedStartDoesNotStallTheEarlyIterations) {
   EXPECT_LT(ipm.iterations, 40) << "the early iterations stalled: " << ipm.message;
 }
 
+TEST(InteriorPoint, ANonFiniteNewtonDirectionIsRecoveredByRaisingTheRegularization) {
+  // On sierra (and degen3, and the 5,000-row staircase of #209) the factorization behind a
+  // late step has pivots just above the regularization floor whose reciprocals overflow the
+  // solve: the predictor direction is NaN, the corrector inherits it, and before #209 the
+  // solve ended in numerical_error with the iterate thrown away. The recovery raises the
+  // dual regularization by 1e4, refactorizes and recomputes predictor and corrector; sierra
+  // then converges and crossover finishes it. The dual simplex's answer is the reference.
+  Model model;
+  const std::string path =
+      (std::filesystem::path(__FILE__).parent_path().parent_path().parent_path() /
+       "data/netlib/sierra.mps")
+          .string();
+  const io::ReadResult read = io::read_model(path, &model);
+  ASSERT_TRUE(read.ok) << path << ": " << read.error;
+  const Solution ipm = solve(model, with_algorithm("ipm"));
+  const Solution simplex = solve(model, with_algorithm("dual-simplex"));
+  ASSERT_EQ(simplex.status, SolveStatus::kOptimal) << simplex.message;
+  ASSERT_EQ(ipm.status, SolveStatus::kOptimal) << ipm.message;
+  EXPECT_NEAR(ipm.objective, simplex.objective, 1e-6 * std::fabs(simplex.objective));
+}
+
 TEST(InteriorPoint, ReportsRatherThanClaimsOnAnInfeasibleModel) {
   // x >= 5 and x <= 1: the method cannot certify infeasibility and must not say optimal.
   const Model model =
