@@ -2384,6 +2384,123 @@ TEST(MirCuts, ACutFromAModelRowIsViolatedByTheLpPointAndValidForEveryIntegerPoin
   }
 }
 
+TEST(MirCuts, AggregationFindsTheCutASingleRowCannot) {
+  // x integer in [0, 10], s continuous in [0, 10]:  R1: x - s <= 1.5,  R2: s - 0.3 x <= 0.
+  // Maximising x, the LP sits at x = 15/7, s = 9/14, with s strictly inside its bounds. R1
+  // alone gives the textbook cut x <= 1 + 2 s, which at that point reads 2.29 >= 2.14: not
+  // violated. Adding R2 (multiplier 1) eliminates s: 0.7 x <= 1.5, and the MIR inequality
+  // with divisor 0.7 is x <= 2, violated by 1/7 and valid for every integer x with 0.7 x
+  // <= 1.5. The generator must find it, and must report that it came from an aggregate.
+  Model m;
+  m.resize_columns(2);
+  m.resize_rows(2);
+  m.matrix.reset(2, 2);
+  m.matrix.add_entry(0, 0, 1.0);
+  m.matrix.add_entry(0, 1, -1.0);
+  m.matrix.add_entry(1, 0, -0.3);
+  m.matrix.add_entry(1, 1, 1.0);
+  m.matrix.finalize();
+  m.col_type = {VarType::kInteger, VarType::kContinuous};
+  m.col_lower = {0.0, 0.0};
+  m.col_upper = {10.0, 10.0};
+  m.row_lower = {-kInfinity, -kInfinity};
+  m.row_upper = {1.5, 0.0};
+  Solution s;
+  s.col_value = {15.0 / 7.0, 9.0 / 14.0};
+  mip::MirStats stats;
+  const std::vector<mip::Cut> cuts =
+      mip::generate_mir_cuts(m, s, m.col_lower, m.col_upper, &stats);
+  ASSERT_FALSE(cuts.empty());
+  EXPECT_GE(stats.aggregated_cuts, 1) << "the cut needs R2; a single row cannot separate";
+  bool found = false;
+  for (const mip::Cut& cut : cuts) {
+    const double at_lp = cut.coeff[0] * s.col_value[0] + cut.coeff[1] * s.col_value[1];
+    EXPECT_GT(at_lp, cut.rhs + 1e-9) << "every returned cut separates the LP point";
+    // Validity against every integer x with a feasible s: 0.7 x <= 1.5 means x <= 2.
+    for (int x = 0; x <= 2; ++x) {
+      const double s_max = std::min(10.0, 0.3 * x);
+      for (double sv = std::max(0.0, x - 1.5); sv <= s_max + 1e-12; sv += 0.05) {
+        EXPECT_LE(cut.coeff[0] * x + cut.coeff[1] * sv, cut.rhs + 1e-9)
+            << "(" << x << ", " << sv << ") cut off";
+      }
+    }
+    if (std::fabs(cut.coeff[1]) < 1e-12 && std::fabs(cut.coeff[0] - 1.0) < 1e-12 &&
+        std::fabs(cut.rhs - 2.0) < 1e-12) {
+      found = true;
+    }
+  }
+  EXPECT_TRUE(found) << "x <= 2 is the aggregate's MIR cut";
+}
+
+TEST(MirCuts, AggregatedCutsNeverSeparateTheExactOptimumOnMixedInstances) {
+  // The oracle gate for the aggregation: instances with continuous columns, which is what
+  // gives the aggregation something to eliminate. Every cut, aggregated or not, must be
+  // satisfied by the exact mixed-integer optimum.
+  std::mt19937_64 rng(20260919);
+  oracle::GeneratorConfig config;
+  config.min_rows = 2;
+  config.max_rows = 5;
+  config.min_cols = 3;
+  config.max_cols = 6;
+  config.magnitude = 4;
+  int instances = 0;
+  int with_cuts = 0;
+  int aggregated = 0;
+  int cuts_checked = 0;
+  for (int attempt = 0; attempt < 400 && instances < 80; ++attempt) {
+    oracle::GeneratedLp lp = oracle::random_lp(rng, config);
+    lp.integral.assign(static_cast<std::size_t>(lp.num_cols), 0);
+    for (Index j = 0; j < lp.num_cols; ++j) {
+      const auto u = static_cast<std::size_t>(j);
+      lp.integral[u] = (j % 2 == 0) ? 1 : 0;
+      if (lp.upper[u] == oracle::kNoUpperBound) lp.upper[u] = 6;
+    }
+    const oracle::OracleResult exact = oracle::solve_exact_milp(lp, 20000);
+    if (exact.status != oracle::OracleStatus::kOptimal) continue;
+    ++instances;
+    Model model = oracle::to_model(lp);
+    for (Index j = 0; j < model.num_cols(); ++j) {
+      const auto u = static_cast<std::size_t>(j);
+      if (lp.integral[u] != 0) model.col_type[u] = VarType::kInteger;
+    }
+    Model relaxation = model;
+    relaxation.col_type.assign(static_cast<std::size_t>(model.num_cols()),
+                               VarType::kContinuous);
+    Options options;
+    options.set_bool("log_to_console", false);
+    options.set_bool("presolve", false);
+    options.set_string("algorithm", "dual-simplex");
+    const Solution relaxed = solve(relaxation, options);
+    if (relaxed.status != SolveStatus::kOptimal) continue;
+    mip::MirStats stats;
+    const std::vector<mip::Cut> cuts =
+        mip::generate_mir_cuts(model, relaxed, model.col_lower, model.col_upper, &stats);
+    if (cuts.empty()) continue;
+    ++with_cuts;
+    aggregated += stats.aggregated_cuts;
+    for (const mip::Cut& cut : cuts) {
+      double lhs_at_lp = 0.0;
+      double lhs_at_optimum = 0.0;
+      for (Index j = 0; j < model.num_cols(); ++j) {
+        const auto u = static_cast<std::size_t>(j);
+        lhs_at_lp += cut.coeff[u] * relaxed.col_value[u];
+        lhs_at_optimum += cut.coeff[u] * exact.x[u].to_double();
+      }
+      EXPECT_GT(lhs_at_lp, cut.rhs) << "a cut that does not separate the LP point";
+      EXPECT_LE(lhs_at_optimum, cut.rhs + 1e-9 * std::max(1.0, std::fabs(cut.rhs)))
+          << "the exact optimum was cut off";
+      ++cuts_checked;
+    }
+  }
+  EXPECT_GE(instances, 40) << "too few settled mixed instances";
+  EXPECT_GE(with_cuts, 5) << "too few instances produced a cut for the gate to mean anything";
+  EXPECT_GE(aggregated, 1) << "no cut came from an aggregate: the gate did not exercise it";
+  std::printf(
+      "[  INFO    ] MIR mixed: %d cuts (%d from aggregates) on %d of %d instances, none "
+      "cut the optimum\n",
+      cuts_checked, aggregated, with_cuts, instances);
+}
+
 TEST(MirCuts, NeverSeparatesTheExactOptimumOnRandomInstances) {
   // The same gate the row tightenings and the Gomory cuts pass: on random MILPs whose exact
   // integer optimum the rational oracle settled, every MIR cut generated at the LP

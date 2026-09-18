@@ -17,8 +17,10 @@
 // Dividing the base inequality by a divisor delta before rounding gives a family; the
 // divisor is tried at 1 and at the coefficients of the fractional integer variables, and
 // the most violated member is returned, in the model's original variables and in the
-// `Cut` convention (sum coeff_j x_j <= rhs). Single model rows only in this version; row
-// aggregation to eliminate continuous variables is the next step the issue names.
+// `Cut` convention (sum coeff_j x_j <= rhs). A row whose continuous variables sit inside
+// their bounds at the LP point is AGGREGATED with other rows to eliminate them, one at a
+// time up to a depth of six, and the inequality is tried on every intermediate aggregate
+// (Marchand & Wolsey 2001, sec. 3); the most violated cut over all depths is kept.
 #pragma once
 
 #include <vector>
@@ -39,6 +41,19 @@ namespace sankhya::mip {
 [[nodiscard]] std::vector<Cut> generate_mir_cuts(const Model& model, const Solution& solution,
                                                  const std::vector<double>& col_lower,
                                                  const std::vector<double>& col_upper);
+
+/// What one call found, for the tests and the log: how many cuts, how many of them came
+/// from an aggregate rather than a single row, and the deepest aggregation that won.
+struct MirStats {
+  int cuts = 0;
+  int aggregated_cuts = 0;
+  int deepest = 0;
+};
+
+[[nodiscard]] std::vector<Cut> generate_mir_cuts(const Model& model, const Solution& solution,
+                                                 const std::vector<double>& col_lower,
+                                                 const std::vector<double>& col_upper,
+                                                 MirStats* stats);
 
 /// The MIR inequality on one already bound-substituted base inequality, exposed for the
 /// textbook test: `coefficient[j]` and `is_integer[j]` describe sum a_j y_j <= rhs over
