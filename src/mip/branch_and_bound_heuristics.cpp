@@ -115,6 +115,10 @@ void BranchAndBound::run_node_heuristics(Index node_index, const Solution& relax
         // would try to load the search's file and be refused as a different model.
         sub.set_string("checkpoint", "");
         sub.set_string("resume", "");
+        // The same for the two other file-valued options (#368, #223): a sub-MIP's profile
+        // and progress stream would otherwise be written over the search's.
+        sub.set_string("profile_out", "");
+        sub.set_string("progress_out", "");
         if (limits_.has_time_limit()) {
           sub.set_double(
               "time_limit",
