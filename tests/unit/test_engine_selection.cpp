@@ -173,5 +173,24 @@ TEST(EngineSelection, AnOrderingPastItsShareOfTheTimeLimitIsADeclineNotATimeLimi
       << recovered.message;
 }
 
+TEST(EngineSelection, LargeModelWithGpuAvailableGoesToCudaPdhg) {
+  // Pass a stubbed device string so the test runs without a real GPU.
+  const EngineSelection s =
+      select_engine(shaped_lp(kPdhgRowFloor, 100, 200), auto_options(), false,
+                    /*gpu_available=*/true, "Test GPU (compute 8.9)");
+  EXPECT_EQ(s.algorithm, "pdhg");
+  EXPECT_EQ(s.rule, "size:pdhg-gpu");
+  EXPECT_TRUE(s.use_gpu);
+  EXPECT_NE(s.reason.find("Test GPU"), std::string::npos) << s.reason;
+}
+
+TEST(EngineSelection, LargeModelWithoutGpuStaysOnCpuPdhg) {
+  const EngineSelection s =
+      select_engine(shaped_lp(kPdhgRowFloor, 100, 200), auto_options(), false);
+  EXPECT_EQ(s.algorithm, "pdhg");
+  EXPECT_EQ(s.rule, "size:pdhg");
+  EXPECT_FALSE(s.use_gpu);
+}
+
 }  // namespace
 }  // namespace sankhya

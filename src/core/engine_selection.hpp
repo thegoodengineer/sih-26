@@ -26,6 +26,7 @@ struct EngineSelection {
   Index columns = 0;
   Count nonzeros = 0;
   bool warm_start = false;
+  bool use_gpu = false;  ///< true when the selection is GPU PDHG (size:pdhg-gpu)
 };
 
 /// Thresholds, each tied to a row of `docs/BENCHMARKS.md`:
@@ -54,7 +55,13 @@ inline constexpr Index kPdhgRowFloor = 100000;
 /// Decide the LP engine for `model` under `options`. An explicit `algorithm` other than
 /// "auto" is honoured as given (rule "requested"); a starting basis forces a simplex
 /// (rule "warm-start"), because only a simplex can use one.
+///
+/// `gpu_available` and `gpu_device` carry the result of a device probe at the call site.
+/// When `gpu_available` is true and the model is at or above `kPdhgRowFloor`, the selection
+/// sets `use_gpu` and uses rule "size:pdhg-gpu" with the device named in `reason`.
+/// Passing the probe result in rather than probing here lets tests stub it without a GPU.
 [[nodiscard]] EngineSelection select_engine(const Model& model, const Options& options,
-                                            bool warm_start);
+                                            bool warm_start, bool gpu_available = false,
+                                            std::string gpu_device = {});
 
 }  // namespace sankhya

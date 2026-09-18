@@ -8,7 +8,8 @@
 
 namespace sankhya {
 
-EngineSelection select_engine(const Model& model, const Options& options, bool warm_start) {
+EngineSelection select_engine(const Model& model, const Options& options, bool warm_start,
+                              bool gpu_available, std::string gpu_device) {
   EngineSelection s;
   s.rows = model.num_rows();
   s.columns = model.num_cols();
@@ -35,12 +36,21 @@ EngineSelection select_engine(const Model& model, const Options& options, bool w
   }
   if (s.rows >= kPdhgRowFloor) {
     s.algorithm = "pdhg";
-    s.rule = "size:pdhg";
-    s.reason = fmt::format(
-        "{}: at {} rows and above the direct factorization is out of reach at the time "
-        "limit and the first-order method reaches the optimum (scale-e134aeb.csv, "
-        "scale-refinery-e134aeb.csv, docs/BENCHMARKS.md 1f)",
-        shape, kPdhgRowFloor);
+    if (gpu_available && !gpu_device.empty()) {
+      s.use_gpu = true;
+      s.rule = "size:pdhg-gpu";
+      s.reason = fmt::format(
+          "{}: at {} rows and above the direct factorization is out of reach; GPU PDHG "
+          "selected (device: {}; crossover point will be measured in #19)",
+          shape, kPdhgRowFloor, gpu_device);
+    } else {
+      s.rule = "size:pdhg";
+      s.reason = fmt::format(
+          "{}: at {} rows and above the direct factorization is out of reach at the time "
+          "limit and the first-order method reaches the optimum (scale-e134aeb.csv, "
+          "scale-refinery-e134aeb.csv, docs/BENCHMARKS.md 1f)",
+          shape, kPdhgRowFloor);
+    }
     return s;
   }
   if (s.rows >= kDualSimplexRowLimit) {

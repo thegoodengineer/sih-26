@@ -83,6 +83,13 @@ jobs:
         if: matrix.name == 'Release'
         run: PYTHONPATH=bindings/python python3 bindings/python/test_bindings.py
 
+      - name: Benchmark result selection is deterministic (#255)
+        # bench/runners/latest_result.py decides which CSV each tier of docs/BENCHMARKS.md
+        # cites; this pins the git-history-then-recorded-timestamp order against mtime, which
+        # a fresh clone scrambles.
+        if: matrix.name == 'Release'
+        run: python3 bench/runners/test_latest_result.py
+
       # Every other check in this job is a unit test. Without this step the command line
       # itself - argument handling, file loading, the writers, the exit codes - is covered
       # by nothing and could break completely while CI stayed green. This runs the pipeline

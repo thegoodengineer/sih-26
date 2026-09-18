@@ -706,7 +706,16 @@ Solution solve_unguarded(const Model& model, const Options& options, SolveContro
     // The paragraph above is the measurement behind the default rule; the other rules
     // name theirs in the reason.
     const bool warm_given = control != nullptr && control->has_starting_basis();
-    const EngineSelection chosen = select_engine(model, options, warm_given);
+    // Probe the device once, before engine selection, so the selector can name it in the
+    // reason and set use_gpu. Only done for auto-selection to avoid the CUDA runtime init
+    // cost when the caller named an algorithm explicitly.
+    bool gpu_avail = false;
+    std::string gpu_desc;
+#ifdef SANKHYA_ENABLE_CUDA
+    if (requested == "auto") gpu_avail = gpu::device_available(&gpu_desc);
+#endif
+    const EngineSelection chosen =
+        select_engine(model, options, warm_given, gpu_avail, gpu_desc);
     if (requested == "auto")
       logger.info("Engine selection: {} - {}", chosen.algorithm, chosen.reason);
     const bool want_pdhg = chosen.algorithm == "pdhg";
@@ -729,8 +738,9 @@ Solution solve_unguarded(const Model& model, const Options& options, SolveContro
           first_pass.set_double("time_limit", time_limit * kPdhgShareOfTheTimeLimit);
         }
 #ifdef SANKHYA_ENABLE_CUDA
-        if (options.get_bool("gpu")) {
-          // GPU path: solve_pdhg_gpu probes the device and falls back to CPU when absent
+        if (chosen.use_gpu || options.get_bool("gpu")) {
+          // GPU path: auto-routed by size:pdhg-gpu, or explicit --gpu flag.
+          // solve_pdhg_gpu probes the device itself and falls back to CPU when absent.
           Solution first = gpu::solve_pdhg_gpu(target, first_pass, logger, control);
           polish_with_the_interior_point(&first, target, options, logger, control, timer);
           return first;
