@@ -532,6 +532,48 @@ Instances are the smallest MIPLIB 2017 instances tagged easy that carry a **prov
 
 **Not proved optimal**, named rather than dropped: `b-ball`, `ej`, `enlight8`, `enlight_hard`, `gen-ip016`, `gen-ip054`, `k16x240b`, `markshare1`, `markshare_4_0`, `markshare_5_0`, `neos-3072252-nete`, `neos-3611689-kaihu`, `neos-5140963-mincio`, `neos5`, `noswot`, `opt1217`, `pk1`, `ran12x21`, `ran13x13`, `rlp1`, `timtab1`.
 
+#### The same set at 600 s
+
+Source CSV: `bench/results/miplib-600s-cca77e0.csv` (600 s per instance), beside `bench/results/miplib-b3f1660.csv` (60 s)  
+Commit `54e561b`
+
+At 600 s: **15 of 30** reach the published optimum, **9 of 30** prove it.
+
+| instance | 60 s: status · matched · proved | 600 s: status · matched · proved · gap | verdict |
+|---|---|---|---|
+| `b-ball` | feasible · yes · no | feasible · yes · no · 2.1e-01 | needs a bound (#221) |
+| `ej` | feasible · no · no | feasible · no · no · 1.0e+00 | needs an incumbent (#290) |
+| `enlight8` | time_limit · no · no | time_limit · no · no · 1.8e-01 | needs an incumbent (#290) |
+| `enlight_hard` | time_limit · no · no | time_limit · no · no · 0.0e+00 | needs an incumbent (#290) |
+| `f2gap40400` | optimal · yes · yes | optimal · yes · yes · 4.9e-07 | proved |
+| `flugpl` | optimal · yes · yes | optimal · yes · yes · 1.9e-05 | proved |
+| `gen-ip016` | feasible · no · no | feasible · no · no · 5.6e-03 | needs an incumbent (#290) |
+| `gen-ip054` | feasible · no · no | feasible · no · no · 8.7e-03 | needs an incumbent (#290) |
+| `gr4x6` | optimal · yes · yes | optimal · yes · yes · 0.0e+00 | proved |
+| `gt2` | optimal · yes · yes | optimal · yes · yes · 0.0e+00 | proved |
+| `k16x240b` | feasible · no · no | feasible · no · no · 3.7e-01 | needs an incumbent (#290) |
+| `markshare1` | feasible · no · no | feasible · no · no · 1.0e+00 | needs an incumbent (#290) |
+| `markshare_4_0` | feasible · no · no | feasible · no · no · 1.0e+00 | needs an incumbent (#290) |
+| `markshare_5_0` | feasible · no · no | feasible · no · no · 1.0e+00 | needs an incumbent (#290) |
+| `neos-1425699` | optimal · yes · yes | optimal · yes · yes · 0.0e+00 | proved |
+| `neos-3072252-nete` | feasible · no · no | feasible · no · no · 1.1e-01 | needs an incumbent (#290) |
+| `neos-3611689-kaihu` | feasible · yes · no | feasible · yes · no · 8.9e-03 | needs a bound (#221) |
+| `neos-5140963-mincio` | feasible · no · no | feasible · no · no · 1.8e-01 | needs an incumbent (#290) |
+| `neos-5192052-neckar` | optimal · yes · yes | optimal · yes · yes · 0.0e+00 | proved |
+| `neos5` | feasible · no · no | feasible · yes · no · 5.0e-02 | needs a bound (#221) |
+| `noswot` | feasible · yes · no | feasible · yes · no · 4.9e-02 | needs a bound (#221) |
+| `opt1217` | feasible · yes · no | feasible · yes · no · 2.5e-01 | needs a bound (#221) |
+| `p0201` | optimal · yes · yes | optimal · yes · yes · 0.0e+00 | proved |
+| `pk1` | feasible · no · no | feasible · no · no · 5.3e-01 | needs an incumbent (#290) |
+| `ran12x21` | feasible · no · no | feasible · no · no · 4.5e-02 | needs an incumbent (#290) |
+| `ran13x13` | feasible · no · no | feasible · no · no · 3.8e-02 | needs an incumbent (#290) |
+| `rlp1` | feasible · yes · no | feasible · yes · no · 6.7e-02 | needs a bound (#221) |
+| `supportcase14` | optimal · yes · yes | optimal · yes · yes · 0.0e+00 | proved |
+| `supportcase16` | optimal · yes · yes | optimal · yes · yes · 0.0e+00 | proved |
+| `timtab1` | feasible · no · no | feasible · no · no · 6.8e-01 | needs an incumbent (#290) |
+
+**Needed time** (proved at 600 s, not at 60 s): none. **Needs a bound** (optimum reached at both limits, proved at neither): `b-ball`, `neos-3611689-kaihu`, `neos5`, `noswot`, `opt1217`, `rlp1`. **Needs an incumbent** (wrong answer even at 600 s): `ej`, `enlight8`, `enlight_hard`, `gen-ip016`, `gen-ip054`, `k16x240b`, `markshare1`, `markshare_4_0`, `markshare_5_0`, `neos-3072252-nete`, `neos-5140963-mincio`, `pk1`, `ran12x21`, `ran13x13`, `timtab1`.
+
 ---
 
 ## 3. Correctness beyond the objective value

@@ -110,7 +110,10 @@ for the scale families, #279.
 MIPLIB 2017 is benchmarked too: **14 of 30** easy instances reach the published optimum,
 **9 of 30** also prove it (`bench/results/miplib-b3f1660.csv`, 60 s, on `main` after presolve
 started running on MILPs (#301) - `neos-3611689-kaihu` is the one that moved, 120 to the
-published 119, still unproved; it was 13 and 9 at `bf3df02`, and 6 proved at
+published 119, still unproved; at 600 s the same set reaches 15 and still proves 9
+(`bench/results/miplib-600s-cca77e0.csv`): no instance needed only time, six have the
+optimum in hand and cannot close the bound, and fifteen never find it, which is #221 and
+#290 respectively. It was 13 and 9 at `bf3df02`, and 6 proved at
 `2b4eb6b`, before #188 let a search that meets its gap target say `optimal` - three of the
 nine are that renamed status, not a better search) - branch and bound has reliability
 branching and warm-started node LPs, and root cutting planes that are off by default: on the
