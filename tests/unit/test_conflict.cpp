@@ -428,5 +428,36 @@ TEST(Conflict, ANodeLimitLeavesAValidBound) {
   EXPECT_GT(limited, 3);
 }
 
+TEST(Conflict, AResumedSearchWithConflictsOnReachesTheEnumeratedOptimum) {
+  // The checkpoint (#287) saves the open nodes, not the conflicts, so a resumed search learns
+  // afresh from nodes whose ancestry it rebuilt. The optimum must not notice.
+  std::mt19937 rng(287);
+  int resumed = 0;
+  for (int trial = 0; trial < 80; ++trial) {
+    const Model model = random_integer_program(rng, trial % 2 == 0);
+    const std::vector<std::vector<double>> points = feasible_points(model);
+    if (points.empty()) continue;
+    const bool maximize = model.sense == ObjSense::kMaximize;
+    double best = objective_of(model, points.front());
+    for (const std::vector<double>& x : points) {
+      best = maximize ? std::max(best, objective_of(model, x))
+                      : std::min(best, objective_of(model, x));
+    }
+    testing::TempFile file("", ".chk");
+    Options first = searching(true, "");
+    first.set_string("checkpoint", file.path());
+    first.set_int("node_limit", 3);
+    if (solve(model, first).status == SolveStatus::kOptimal) continue;
+    Options second = searching(true, "");
+    second.set_string("resume", file.path());
+    const Solution solved = solve(model, second);
+    ASSERT_EQ(solved.status, SolveStatus::kOptimal)
+        << "trial " << trial << ": " << solved.message;
+    EXPECT_NEAR(solved.objective, best, 1e-7) << "trial " << trial;
+    ++resumed;
+  }
+  EXPECT_GT(resumed, 5);
+}
+
 }  // namespace
 }  // namespace sankhya

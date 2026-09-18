@@ -50,4 +50,14 @@ bool device_free_memory(std::size_t* free_bytes, std::size_t* total_bytes) {
   return true;
 }
 
+bool device_compute_capability(int* major, int* minor) {
+  int count = 0;
+  if (cudaGetDeviceCount(&count) != cudaSuccess || count == 0) return false;
+  cudaDeviceProp prop{};
+  if (cudaGetDeviceProperties(&prop, 0) != cudaSuccess) return false;
+  if (major) *major = prop.major;
+  if (minor) *minor = prop.minor;
+  return true;
+}
+
 }  // namespace sankhya::gpu

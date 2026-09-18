@@ -370,12 +370,13 @@ than guessed.
 
 `conflict_analysis` (#292, `src/mip/conflict.hpp`, `src/mip/branch_and_bound_conflicts.cpp`)
 learns, from each node proved infeasible, which of its branching decisions were to blame, and
-uses that in every later node's propagation. It is OFF by default, by measurement: on the
-30-instance MIPLIB set at 60 s, on and off reach and prove the same 14 and 9
-(`bench/results/miplib-292-{on,off}-778d1fc.csv`); it saves nodes on three of the proved
-instances (supportcase16 91 against 127, supportcase14 102 against 124, flugpl 437 against
-469) and costs throughput where infeasible nodes are cheap and many (enlight8 explores 23,040
-nodes against 49,918).
+uses that in every later node's propagation. It is OFF by default. The one A/B run so far
+(the 30-instance MIPLIB set at 60 s, from a working tree before the commit, so an observation
+and not a citable benchmark) reached and proved the same 14 and 9 with it on and off, saved
+nodes on three of the proved instances (supportcase16 91 against 127, supportcase14 102
+against 124, flugpl 437 against 469) and cost throughput where infeasible nodes are cheap and
+many (enlight8 explored 23,040 nodes against 49,918). A clean A/B on `main` decides whether it
+turns on.
 
 - **What is learned.** A set of bound literals `x_j <= v` / `x_j >= v` on integer columns,
   taken from the node's branching decisions, that the rows and the GLOBAL column bounds cannot

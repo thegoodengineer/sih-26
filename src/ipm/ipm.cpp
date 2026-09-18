@@ -338,16 +338,61 @@ void InteriorPoint::build() {
   // that size at once: on stocfor1 (scaled) mu went 1 -> 3e6 in four iterations and the
   // run never recovered. The primal slacks are floored at 1 so the first iterate is
   // comfortably interior; r_l and r_u absorb whatever that costs in consistency.
+  //
+  // THE SLACKS ARE SHIFTED TOGETHER, NOT FLOORED ONE BY ONE (#375). Flooring each slack at 1
+  // left the residual of a badly placed variable - a logical whose row activity at the
+  // midpoint start sits 1e4 outside its row bounds - as r_u = -1e4 against a slack of 1, and
+  // the Newton direction that closes it drives other slacks negative at once: on stocfor2
+  // the primal step was 1e-3 for thirty iterations while mu climbed from 2 to 5e8, and the
+  // solve reached the iteration limit. Mehrotra's starting point (Mehrotra, SIAM J. Optim.
+  // 2 (1992), sec. 7; Wright, Primal-Dual Interior-Point Methods, sec. 11.3) shifts EVERY
+  // slack by the same amount, 1.5 times the worst violation, so the step that repairs the
+  // worst one is affordable everywhere, and then balances slacks against multipliers so
+  // the complementarity products start comparable. The residuals r_l, r_u carry the
+  // uniform shift instead of one variable's whole violation.
+  double worst_slack = 0.0;
+  for (Index k = 0; k < total_; ++k) {
+    const auto u = static_cast<std::size_t>(k);
+    if (fixed_[u]) continue;
+    if (has_lower_[u]) worst_slack = std::min(worst_slack, x_[u] - lower_[u]);
+    if (has_upper_[u]) worst_slack = std::min(worst_slack, upper_[u] - x_[u]);
+  }
+  const double slack_shift = std::max(1.0, -1.5 * worst_slack);
+  double product_sum = 0.0;
+  double slack_sum = 0.0;
+  double dual_sum = 0.0;
   for (Index k = 0; k < total_; ++k) {
     const auto u = static_cast<std::size_t>(k);
     if (fixed_[u]) continue;
     if (has_lower_[u]) {
-      sl_[u] = std::max(x_[u] - lower_[u], 1.0);
+      sl_[u] = x_[u] - lower_[u] + slack_shift;
       zl_[u] = std::max(cost_[u], 1.0);
+      product_sum += sl_[u] * zl_[u];
+      slack_sum += sl_[u];
+      dual_sum += zl_[u];
     }
     if (has_upper_[u]) {
-      su_[u] = std::max(upper_[u] - x_[u], 1.0);
+      su_[u] = upper_[u] - x_[u] + slack_shift;
       zu_[u] = std::max(-cost_[u], 1.0);
+      product_sum += su_[u] * zu_[u];
+      slack_sum += su_[u];
+      dual_sum += zu_[u];
+    }
+  }
+  if (product_sum > 0.0) {
+    const double slack_balance = 0.5 * product_sum / dual_sum;
+    const double dual_balance = 0.5 * product_sum / slack_sum;
+    for (Index k = 0; k < total_; ++k) {
+      const auto u = static_cast<std::size_t>(k);
+      if (fixed_[u]) continue;
+      if (has_lower_[u]) {
+        sl_[u] += slack_balance;
+        zl_[u] += dual_balance;
+      }
+      if (has_upper_[u]) {
+        su_[u] += slack_balance;
+        zu_[u] += dual_balance;
+      }
     }
   }
   y_.assign(static_cast<std::size_t>(m_), 0.0);
