@@ -215,6 +215,7 @@ set(SANKHYA_CORE_SOURCES
   src/simplex/ranging.cpp
   src/util/logging.cpp
   src/util/options.cpp
+  src/util/profiler.cpp
   src/util/version.cpp)
 
 add_library(sankhya_objects OBJECT ${SANKHYA_CORE_SOURCES})

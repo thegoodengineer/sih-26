@@ -299,3 +299,31 @@ a bound only if a node proved one: an unevaluated root proves nothing.
 resident memory is not portably queryable from this binary, and `docs/PS26119_COVERAGE.md`
 says so rather than the option table carrying a knob that does nothing. The CUDA backend is
 not on `main`, so nothing here claims anything about device memory or kernel termination.
+
+## 9. Profiling: where a solve's time goes
+
+`--option profile=basic|detailed` (#285) records a tree of named regions with inclusive time,
+exclusive time and call counts, plus counters, and prints it in the log;
+`--option profile_out=<path>` also writes it as JSON. `src/util/profiler.hpp` holds the
+profiler and `ProfileScope`, its RAII timer.
+
+- **basic**: `solve`, then `presolve`, `engine`, `postsolve` and `verification` (the status
+  guard and the certificate check), with `ranging` and `iis` when they run, and the counters
+  every engine already keeps (iterations, nodes, polish iterations, cuts).
+- **detailed**: also what happens inside an engine. The dual simplex's pricing, pivot row,
+  ratio test, FTRAN, update, refactorization, basic values and reduced costs come from the
+  accumulators #210 already keeps and are not timed a second time. The interior point adds
+  normal-equation assembly, ordering and factorization, PDHG its primal and dual steps, and
+  the branch and bound its node LPs, heuristics and branching (strong branching's probes
+  included). Counters add refactorizations, nodes pruned, warm and cold node LPs, and PDHG
+  restarts.
+
+The profiler rides on the `Logger` every engine is already handed, so no engine signature
+changed. With profiling off it is never attached, and a scope costs a null-pointer test; a
+disabled scope does not read the clock. `bench/results/profiler-overhead-3630cba.csv` measures
+off, basic and detailed against `main` at the same commit, and finds no overhead above the
+machine's noise, with identical answers in every mode.
+
+There is no GPU timing and no memory statistic. The CUDA path has no profiler hook yet, and
+peak resident memory is not portably measurable from this binary; neither is reported rather
+than guessed.

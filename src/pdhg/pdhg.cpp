@@ -52,6 +52,7 @@
 #include "sankhya/tolerances.hpp"
 
 #include "../la/scaling.hpp"
+#include "../util/profiler.hpp"
 
 namespace sankhya::pdhg {
 namespace {
@@ -416,21 +417,27 @@ Solution solve_pdhg(const Model& model, const Options& options, Logger& logger,
     const double sigma = eta * omega;
 
     // Primal: x' = proj_X( x - tau (c + A'y) )
-    for (Index j = 0; j < cols; ++j) at_y[static_cast<std::size_t>(j)] = 0.0;
-    if (rows > 0) scaling.matrix.transpose_multiply(y.data(), at_y.data());
-    for (Index j = 0; j < cols; ++j) {
-      const auto u = static_cast<std::size_t>(j);
-      const double gradient = scaling.cost[u] + at_y[u];
-      x_next[u] = project(x[u] - tau * gradient, scaling.col_lower[u], scaling.col_upper[u]);
-      extrapolated[u] = 2.0 * x_next[u] - x[u];  // the [CP11] extrapolation
+    {
+      ProfileScope timed(logger.profiler(), "primal step", ProfileMode::kDetailed);
+      for (Index j = 0; j < cols; ++j) at_y[static_cast<std::size_t>(j)] = 0.0;
+      if (rows > 0) scaling.matrix.transpose_multiply(y.data(), at_y.data());
+      for (Index j = 0; j < cols; ++j) {
+        const auto u = static_cast<std::size_t>(j);
+        const double gradient = scaling.cost[u] + at_y[u];
+        x_next[u] = project(x[u] - tau * gradient, scaling.col_lower[u], scaling.col_upper[u]);
+        extrapolated[u] = 2.0 * x_next[u] - x[u];  // the [CP11] extrapolation
+      }
     }
 
     // Dual: y' = prox_{sigma sigma_C}( y + sigma A xbar ) = v - sigma proj_C(v / sigma)
-    if (rows > 0) scaling.matrix.multiply(extrapolated.data(), a_x.data());
-    for (Index i = 0; i < rows; ++i) {
-      const auto u = static_cast<std::size_t>(i);
-      const double v = y[u] + sigma * a_x[u];
-      y_next[u] = v - sigma * project(v / sigma, scaling.row_lower[u], scaling.row_upper[u]);
+    {
+      ProfileScope timed(logger.profiler(), "dual step", ProfileMode::kDetailed);
+      if (rows > 0) scaling.matrix.multiply(extrapolated.data(), a_x.data());
+      for (Index i = 0; i < rows; ++i) {
+        const auto u = static_cast<std::size_t>(i);
+        const double v = y[u] + sigma * a_x[u];
+        y_next[u] = v - sigma * project(v / sigma, scaling.row_lower[u], scaling.row_upper[u]);
+      }
     }
 
     // ---- Adaptive step size, [PDLP] section 3.1 ------------------------------------------
@@ -663,6 +670,7 @@ Solution solve_pdhg(const Model& model, const Options& options, Logger& logger,
         restart_kkt = kkt;
         last_restart = iteration;
         ++restarts;
+        if (logger.profiler() != nullptr) logger.profiler()->count("pdhg restarts");
         logger.verbose("restart {} at iteration {}: KKT {:.3e}, primal weight {:.3e}", restarts,
                        iteration, kkt, omega);
       }

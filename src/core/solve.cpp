@@ -44,6 +44,7 @@
 #include "sankhya/version.hpp"
 #include "simplex/crossover.hpp"
 #include "simplex/ranging.hpp"
+#include "util/profiler.hpp"
 #include "util/threads.hpp"
 
 #include "../simplex/primal_simplex.hpp"
@@ -183,6 +184,7 @@ void record_why_it_stopped(Solution* solution) {
 /// so. An unproven certificate published as a proof would be worse than the empty field this
 /// project already uses to mean "no proof was produced" (#191).
 void keep_only_a_proved_certificate(Solution* solution, const Model& model, Logger& logger) {
+  ProfileScope timed(logger.profiler(), "verification");  // #285
   std::string why;
   if (solution->status == SolveStatus::kInfeasible && !solution->farkas_dual.empty()) {
     if (farkas_proves_infeasible(model, solution->farkas_dual, &why)) {
@@ -307,6 +309,7 @@ constexpr double kPdhgShareOfTheTimeLimit = 0.7;
 
 void reconcile_status_with_measurement(Solution* solution, const Options& options,
                                        Logger& logger, bool check_dual) {
+  ProfileScope timed(logger.profiler(), "verification");  // #285
   if (!claims_a_point(*solution)) return;
 
   const double primal_tolerance = options.get_double("primal_feasibility_tolerance");
@@ -460,6 +463,35 @@ constexpr double kNoWallClockLimit = std::numeric_limits<double>::max();
 namespace {
 Solution solve_unguarded(const Model& model, const Options& options, SolveControl* control,
                          Logger& logger, const Timer& timer);
+
+/// The profile of a finished solve: the table into the log, and the JSON to profile_out when
+/// one is named (#285). A profile that cannot be written is a warning - the solve it
+/// describes has already succeeded or failed on its own terms, and must not change status
+/// because a diagnostic file could not be opened.
+void report_profile(Profiler& profiler, const Options& options, const Solution& solution,
+                    Logger& logger) {
+  // The counters every engine already keeps on the Solution, so the report carries them
+  // without each engine having to call into the profiler for its headline numbers.
+  profiler.count("iterations", solution.iterations);
+  if (solution.nodes > 0) profiler.count("nodes", solution.nodes);
+  if (solution.polish_iterations > 0)
+    profiler.count("polish iterations", solution.polish_iterations);
+  if (solution.cuts_applied > 0) profiler.count("cuts applied", solution.cuts_applied);
+  logger.info("{}", profiler.format_text());
+  const std::string path = options.get_string("profile_out");
+  if (path.empty()) return;
+  std::FILE* out = std::fopen(path.c_str(), "wb");
+  if (out == nullptr) {
+    logger.warning("profile_out: cannot open {} for writing; the profile is in the log only",
+                   path);
+    return;
+  }
+  const std::string text = profiler.format_json();
+  const bool written = std::fwrite(text.data(), 1, text.size(), out) == text.size();
+  if (std::fclose(out) != 0 || !written) {
+    logger.warning("profile_out: writing {} failed; the profile is in the log only", path);
+  }
+}
 }  // namespace
 
 Solution solve(const Model& model, const Options& requested_options, SolveControl* control) {
@@ -498,12 +530,30 @@ Solution solve(const Model& model, const Options& requested_options, SolveContro
           "result non-reproducible");
     }
   }
+  // The profiler lives here, for the whole solve, and rides on the logger every engine is
+  // already handed (#285). Off - the default - it is never attached, and every scope in the
+  // engines reduces to a null-pointer test.
+  ProfileMode profile_mode = ProfileMode::kOff;
+  (void)parse_profile_mode(options.get_string("profile"), &profile_mode);
+  Profiler profiler(profile_mode);
+  if (profile_mode != ProfileMode::kOff) logger.set_profiler(&profiler);
+
   // The whole dispatch runs under the out-of-memory guard (#246): an engine that exhausts
   // the machine comes back as a status with the engine named, not as an aborted process.
   const std::string engine = options.get_string("algorithm");
-  return run_engine_guarded(
-      [&] { return solve_unguarded(model, options, control, logger, timer); },
-      engine == "auto" ? std::string_view("solver") : std::string_view(engine), timer, logger);
+  Solution solved;
+  {
+    ProfileScope whole(logger.profiler(), "solve");
+    solved = run_engine_guarded(
+        [&] { return solve_unguarded(model, options, control, logger, timer); },
+        engine == "auto" ? std::string_view("solver") : std::string_view(engine), timer,
+        logger);
+  }
+  if (profile_mode != ProfileMode::kOff) {
+    report_profile(profiler, options, solved, logger);
+    logger.set_profiler(nullptr);
+  }
+  return solved;
 }
 
 namespace {
@@ -579,10 +629,14 @@ Solution solve_unguarded(const Model& model, const Options& options, SolveContro
       }
       // ran stays false, and the reason is the option rather than a decision made here, so
       // skipped_because is left empty (#286).
+      ProfileScope timed(logger.profiler(), "engine");
       return engine(model);
     }
 
-    const presolve::Result reduced = presolve::presolve(model, options, logger);
+    const presolve::Result reduced = [&] {
+      ProfileScope timed(logger.profiler(), "presolve");
+      return presolve::presolve(model, options, logger);
+    }();
     if (reduced.proved_infeasible) {
       Solution proof;
       proof.allocate_for(model);
@@ -626,7 +680,11 @@ Solution solve_unguarded(const Model& model, const Options& options, SolveContro
       }
     }
 
-    Solution inner = engine(reduced.model);
+    Solution inner = [&] {
+      ProfileScope timed(logger.profiler(), "engine");
+      return engine(reduced.model);
+    }();
+    ProfileScope timed(logger.profiler(), "postsolve");
     return presolve::postsolve(reduced, model, inner);
   };
   bool presolve_proved_it = false;

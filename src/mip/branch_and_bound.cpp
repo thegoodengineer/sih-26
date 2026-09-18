@@ -41,6 +41,7 @@
 #include <fmt/format.h>
 
 #include "../core/stop_controller.hpp"
+#include "../util/profiler.hpp"
 #include "sankhya/timer.hpp"
 #include "sankhya/tolerances.hpp"
 
@@ -225,7 +226,10 @@ Solution BranchAndBound::run() {
       continue;
     }
 
-    Solution relaxation = solve_node();
+    Solution relaxation = [&] {
+      ProfileScope timed(logger_.profiler(), "node LP", ProfileMode::kDetailed);
+      return solve_node();
+    }();
 
     if (relaxation.status == SolveStatus::kInfeasible) {
       leave();
@@ -311,7 +315,10 @@ Solution BranchAndBound::run() {
       continue;
     }
 
-    try_rounding(relaxation.col_value);
+    {
+      ProfileScope timed(logger_.profiler(), "heuristics", ProfileMode::kDetailed);
+      try_rounding(relaxation.col_value);
+    }
 
     if (most_fractional(relaxation.col_value) < 0) {
       // Integral relaxation: this node's optimum is a MILP solution.
@@ -332,15 +339,20 @@ Solution BranchAndBound::run() {
     // lives on the same saved_ stack propagate() already pushed onto for this node, so the
     // leave() below - already here for the branching case - undoes diving's fixes too.
     if (node_index == 0) {
+      ProfileScope timed(logger_.profiler(), "heuristics", ProfileMode::kDetailed);
       dive_from_root(relaxation.col_value);
       current_warm_ = children_warm;
     }
 
     // The branching decision, with the node's bounds still entered: strong branching
     // solves the two children in place and restores the bounds it moved.
-    const Index branch_column = reliability_branching_
-                                    ? select_branching_column(relaxation.col_value, node_bound)
+    const Index branch_column = [&] {
+      // Strong branching's probe LPs are inside this, which is the point: it is the cost of
+      // the branching decision.
+      ProfileScope timed(logger_.profiler(), "branching", ProfileMode::kDetailed);
+      return reliability_branching_ ? select_branching_column(relaxation.col_value, node_bound)
                                     : most_fractional(relaxation.col_value);
+    }();
     if (branch_column < 0) {
       // Cannot happen after the integrality test above, but a rule that returns nothing
       // must not be answered with a branch on column -1.
@@ -520,6 +532,11 @@ Solution BranchAndBound::run() {
                to_string(solution.status), solution.objective, solution.dual_bound,
                solution.nodes, solution.solve_seconds);
   logger_.info("Nodes pruned {}, tree {} node(s) at exit", nodes_pruned_, open_.size());
+  if (Profiler* profiler = logger_.profiler(); profiler != nullptr) {
+    profiler->count("nodes pruned", static_cast<std::int64_t>(nodes_pruned_));
+    profiler->count("warm-started node LPs", static_cast<std::int64_t>(warm_node_solves_));
+    profiler->count("cold node LPs", static_cast<std::int64_t>(cold_node_solves_));
+  }
   logger_.info(
       "Node selection {}: {} node(s) taken deepest-first, {} by the policy, deepest node at "
       "depth {}",
