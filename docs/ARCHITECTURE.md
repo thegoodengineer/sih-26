@@ -167,9 +167,10 @@ it describes.
 - **Cutting planes** — already present, and off by default. Root GMI and lifted cover cuts
   landed in #159 (`src/mip/cuts.cpp`) and single-row MIR cuts in #221
   (`src/mip/mir_cuts.cpp`), appended as rows of the working model before the search
-  starts; the answer reports the root bound before and after the round. `enable_root_cuts` is false because the A/B measured them costing a proof
-  at the benchmark's time limit, not out of caution; `docs/BENCHMARKS.md` section 2 carries
-  the numbers.
+  starts; the answer reports the root bound before and after the round. `enable_root_cuts`
+  is false pending the measurement of the rounds below the root; the A/B at `0d33665`
+  shows the root round costing nothing on the 30-instance set, and `docs/BENCHMARKS.md`
+  section 2 carries the numbers.
 - **Parallelism** — the column loops in pricing and in the sparse products are
   embarrassingly parallel and deterministic (no cross-thread reductions); the tree search is
   the larger prize and the harder one, because a race on the incumbent can fathom a node

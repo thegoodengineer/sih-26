@@ -235,17 +235,15 @@ const std::vector<OptionSpec>& Options::registry() {
         {"enable_root_cuts",
          OptionType::Bool,
          false,
-         "Enable root-node cutting planes (Gomory mixed-integer and lifted knapsack cover). "
-         "OFF by default, and that is a measurement, not caution: on the 30-instance "
-         "MIPLIB set at a 60 s limit the cuts cut the node count to 0.887x over the "
-         "28 instances that end the same way - as much as 0.26x on individual ones - "
-         "and still cost one proof. That proof is enlight8, which proves its optimum in "
-         "73,556 nodes and 53.5 s without them and hits the 60 s limit at 51,627 nodes with "
-         "them, because a cut row makes every node LP dearer. A second apparent loss was "
-         "not one: f2gap40400 exhausts its tree in 509 nodes without cuts and meets the "
-         "1e-4 gap target in 321 with them, which the pre-#188 convention called feasible "
-         "rather than optimal - that is the cuts working. See "
-         "bench/results/miplib-cuts-off.csv and miplib-cuts-on.csv.",
+         "Enable root-node cutting planes (Gomory mixed-integer, lifted knapsack cover and, "
+         "since #221, mixed-integer rounding). OFF by default pending one more "
+         "measurement, not out of caution: on the 30-instance MIPLIB set at a 60 s limit "
+         "at 0d33665 the round costs no proof and no published match (14 reached, 9 "
+         "proved either way) and takes the node count to 0.912x over the 30 instances "
+         "that end the same way. Before MIR joined (bf3df02) it cost one match, noswot. "
+         "The default is decided together with the cut rounds below the root (#221, "
+         "tree_cut_depth). See bench/results/miplib-cuts-off.csv and "
+         "miplib-cuts-on.csv.",
          0.0,
          0.0,
          {}});

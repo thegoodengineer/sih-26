@@ -849,6 +849,28 @@ def cuts_ab_paragraph() -> str:
         f"{yes_no(proved_now(off[n]))} -> {yes_no(proved_now(on[n]))})"
         for n in moved) if moved else "none"
     spread = (f" (per instance from {min(per):.3f}x to {max(per):.3f}x)" if per else "")
+    raw_off = sum(int(r.get("proved_optimal") or 0) for r in off.values())
+    raw_on = sum(int(r.get("proved_optimal") or 0) for r in on.values())
+    if (raw_off, raw_on) == (proved_off, proved_on):
+        convention = ("Both runs were recorded under #188, where a search meeting its gap "
+                      "target is optimal, so the counts are the CSVs' own. ")
+    else:
+        convention = (f"Both counts above are recomputed under #188, where a search meeting "
+                      f"its gap target is optimal; the CSVs predate that and their own "
+                      f"`proved_optimal` column would read {raw_off} and {raw_on}. ")
+    if proved_on < proved_off or matched_on < matched_off:
+        verdict = (f"Cuts make every node LP dearer, because each cut is a row; on this "
+                   f"measurement they prove {proved_on - proved_off:+d} and match "
+                   f"{matched_on - matched_off:+d} against a node count of {ratio:.3f}x, "
+                   f"which is why `enable_root_cuts` is off by default: a measurement, not "
+                   f"caution.")
+    else:
+        verdict = (f"Cuts make every node LP dearer, because each cut is a row; on this "
+                   f"measurement they cost no proof and no match ({proved_on - proved_off:+d} "
+                   f"proved, {matched_on - matched_off:+d} matched) against a node count of "
+                   f"{ratio:.3f}x. `enable_root_cuts` stays off by default until the cut "
+                   f"rounds below the root (#221) are measured on the same set, so that one "
+                   f"decision rests on one measurement.")
     # The root-gap column (#221): how much of the integrality gap the root cut round closed
     # on each instance, blank where the CSV predates the column or the gap was zero.
     closed_rows = [(n, on[n].get("root_gap_closed") or "", on[n].get("cuts_applied") or "")
@@ -857,8 +879,9 @@ def cuts_ab_paragraph() -> str:
         table = ["", "", "| instance | root cuts | root gap closed |", "|---|---:|---:|"]
         table += [f"| `{n}` | {c} | {float(g):.1%} |" for n, g, c in closed_rows]
         table += ["", f"Root gap closed is (bound after cuts - bound before) / (final "
-                      f"objective - bound before) on the cuts-on run; {len(closed_rows)} of "
-                      f"{len(common)} instances had a root gap to close."]
+                      f"objective - bound before) on the cuts-on run, for the "
+                      f"{len(closed_rows)} of {len(common)} instances whose CSV row carries "
+                      f"the column and whose root gap was not already zero."]
         gap_text = chr(10).join(table)
     else:
         gap_text = ""
@@ -868,16 +891,9 @@ def cuts_ab_paragraph() -> str:
             f"the published optimum and {proved_on} prove it, against {matched_off} and "
             f"{proved_off} with them off. Over the {len(same)} instances that end the same "
             f"way either way, the cuts take the total node count to {ratio:.3f}x{spread}. "
-            f"The outcome changed on {len(changed)}: {changed_text}. Both counts above are "
-            f"recomputed under #188, where a search meeting its gap target is optimal; the "
-            f"CSVs predate that and their own `proved_optimal` column would read "
-            f"{sum(int(r.get('proved_optimal') or 0) for r in off.values())} and "
-            f"{sum(int(r.get('proved_optimal') or 0) for r in on.values())}. Instances "
-            f"whose matched or proved verdict differs between the two runs: {moved_text}. "
-            f"Cuts make every node LP dearer, because each cut is a row; on this measurement "
-            f"they prove {proved_on - proved_off:+d} and match {matched_on - matched_off:+d} "
-            f"against a node count of {ratio:.3f}x, which is why `enable_root_cuts` is off by "
-            f"default: a measurement, not caution." + gap_text)
+            f"The outcome changed on {len(changed)}: {changed_text}. " + convention +
+            f"Instances whose matched or proved verdict differs between the two runs: "
+            f"{moved_text}. " + verdict + gap_text)
 
 
 def proved_convention_note(rows: list[dict]) -> str:

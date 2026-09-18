@@ -491,7 +491,42 @@ Commit `b3f1660` · machine `Windows-AMD64`
 Every row above was counted under the #188 convention: a search that meets the requested gap target reports `optimal`, because the incumbent is within the tolerance that was asked for. Only a node or time limit leaves a row unproved.
 Those are different claims and are kept apart deliberately. Branch and bound here finds good incumbents far more often than it finishes the proof: reliability branching (#69) and warm-started dual node LPs (#65) do the searching, and the root cutting planes that exist (#159: Gomory mixed-integer and lifted knapsack cover) are off by default, for the reason measured below. Collapsing the two columns would hide exactly the thing cuts are meant to improve.
 
-**Root cuts, on versus off** (`bench/results/miplib-cuts-off.csv` and `miplib-cuts-on.csv`, both at `bf3df02`, 30 instances, the same time limit): with cuts on, 12 of 30 reach the published optimum and 9 prove it, against 13 and 9 with them off. Over the 30 instances that end the same way either way, the cuts take the total node count to 0.918x (per instance from 0.082x to 1.539x). The outcome changed on 0: none. Both counts above are recomputed under #188, where a search meeting its gap target is optimal; the CSVs predate that and their own `proved_optimal` column would read 9 and 9. Instances whose matched or proved verdict differs between the two runs: `noswot`: objective -41.0 without cuts and -39.0 with them (matched yes -> no, proved no -> no). Cuts make every node LP dearer, because each cut is a row; on this measurement they prove +0 and match -1 against a node count of 0.918x, which is why `enable_root_cuts` is off by default: a measurement, not caution.
+**Root cuts, on versus off** (`bench/results/miplib-cuts-off.csv` and `miplib-cuts-on.csv`, both at `0d33665`, 30 instances, the same time limit): with cuts on, 14 of 30 reach the published optimum and 9 prove it, against 14 and 9 with them off. Over the 30 instances that end the same way either way, the cuts take the total node count to 0.912x (per instance from 0.002x to 1.546x). The outcome changed on 0: none. Both runs were recorded under #188, where a search meeting its gap target is optimal, so the counts are the CSVs' own. Instances whose matched or proved verdict differs between the two runs: none. Cuts make every node LP dearer, because each cut is a row; on this measurement they cost no proof and no match (+0 proved, +0 matched) against a node count of 0.912x. `enable_root_cuts` stays off by default until the cut rounds below the root (#221) are measured on the same set, so that one decision rests on one measurement.
+
+| instance | root cuts | root gap closed |
+|---|---:|---:|
+| `b-ball` | 13 | 26.7% |
+| `ej` | 0 | 0.0% |
+| `enlight8` | 6 | 2.6% |
+| `enlight_hard` | 95 | 5.4% |
+| `f2gap40400` | 40 | 100.0% |
+| `flugpl` | 1 | 2.0% |
+| `gen-ip016` | 0 | 0.0% |
+| `gen-ip054` | 1 | 0.9% |
+| `gr4x6` | 0 | 0.0% |
+| `gt2` | 11 | 91.9% |
+| `k16x240b` | 11 | 6.7% |
+| `markshare1` | 0 | 0.0% |
+| `markshare_4_0` | 0 | 0.0% |
+| `markshare_5_0` | 0 | 0.0% |
+| `neos-1425699` | 0 | 0.0% |
+| `neos-3072252-nete` | 143 | 16.1% |
+| `neos-3611689-kaihu` | 58 | 24.1% |
+| `neos-5140963-mincio` | 26 | 0.0% |
+| `neos-5192052-neckar` | 3 | 0.0% |
+| `neos5` | 0 | 0.0% |
+| `noswot` | 28 | 0.0% |
+| `opt1217` | 0 | 0.0% |
+| `p0201` | 15 | 37.8% |
+| `pk1` | 0 | 0.0% |
+| `ran12x21` | 7 | 0.9% |
+| `ran13x13` | 7 | 10.8% |
+| `rlp1` | 0 | 0.0% |
+| `supportcase14` | 0 | 0.0% |
+| `supportcase16` | 0 | 0.0% |
+| `timtab1` | 349 | 16.8% |
+
+Root gap closed is (bound after cuts - bound before) / (final objective - bound before) on the cuts-on run, for the 30 of 30 instances whose CSV row carries the column and whose root gap was not already zero.
 
 **The time limit decides some of these, not the solver.** A row that stops at the limit with a small gap says "needs more time than we gave it", not "cannot"; which side of the limit such a row lands on moves with the machine's speed rather than with anything about the search. The remedy is a longer limit, and the reason this table does not already use one is that the set already adds up to 21 minutes of solve time per run at this one.
 
