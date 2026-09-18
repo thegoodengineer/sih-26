@@ -392,6 +392,8 @@ bool write_stats_json(const std::string& path, const Model& model, const Solutio
                    {"fingerprint", fmt::format("{:016x}", model.fingerprint())}};
   blob["result"] = {{"status", to_string(solution.status)},
                     {"algorithm", solution.algorithm},
+                    {"engine_rule", solution.engine_rule},
+                    {"engine_reason", solution.engine_reason},
                     {"objective", json_number(solution.objective)},
                     {"dual_bound", json_number(solution.dual_bound)},
                     {"absolute_gap", json_number(solution.absolute_gap)},

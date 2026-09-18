@@ -20,6 +20,7 @@
 
 #include <fmt/format.h>
 
+#include "core/engine_selection.hpp"
 #include "core/iis.hpp"
 #include "core/resource_limits.hpp"
 #include "core/status_guard.hpp"
@@ -637,9 +638,17 @@ Solution solve_unguarded(const Model& model, const Options& options, SolveContro
     // vertex, produces no basis, and on the small instances we benchmark today the simplex
     // is both faster and exact. It is selected explicitly, and it becomes the automatic
     // choice only once there is evidence for a crossover point to switch on.
-    const bool want_pdhg = requested == "pdhg";
-    const bool want_ipm = requested == "ipm";
-    const bool want_dual = requested == "dual-simplex" || requested == "auto";
+    // ENGINE SELECTION (#284): "auto" is a rule-based decision from the model's shape,
+    // made in engine_selection.cpp and carried on the answer as engine_rule/engine_reason.
+    // The paragraph above is the measurement behind the default rule; the other rules
+    // name theirs in the reason.
+    const bool warm_given = control != nullptr && control->has_starting_basis();
+    const EngineSelection chosen = select_engine(model, options, warm_given);
+    if (requested == "auto")
+      logger.info("Engine selection: {} - {}", chosen.algorithm, chosen.reason);
+    const bool want_pdhg = chosen.algorithm == "pdhg";
+    const bool want_ipm = chosen.algorithm == "ipm";
+    const bool want_dual = chosen.algorithm == "dual-simplex";
     // One place runs the engine on whichever model - reduced or original - is being solved,
     // so the polish of a PDHG answer happens before postsolve in both cases.
     const auto run_lp_engine = [&](const Model& target) -> Solution {
@@ -666,18 +675,38 @@ Solution solve_unguarded(const Model& model, const Options& options, SolveContro
         // rest of the pipeline wants, at the cost of a few pivots from an optimal point.
         // The crossover runs on what the budget has left too, which is why it is handed
         // engine_options rather than the caller's (#289).
-        if (engine_options.get_bool("crossover")) {
-          return crossover_to_vertex(target, std::move(interior),
-                                     with_the_time_that_is_left(options), logger, control,
-                                     timer);
+        if (engine_options.get_bool("crossover") && interior.status == SolveStatus::kOptimal) {
+          interior =
+              crossover_to_vertex(target, std::move(interior),
+                                  with_the_time_that_is_left(options), logger, control, timer);
+        }
+        // A SELECTED interior point that declines - a factor beyond its budget, a
+        // numerical failure, no answer at all - is not the end of the solve: the selector
+        // chose it from the model's shape, and the shape can lie (a dense model can be
+        // cheap to pivot on). The dual simplex then runs from scratch on the time that is
+        // left, and the message records the fallback. A limit is not retried: the time
+        // is gone either way. An explicit algorithm=ipm is reported as it came back.
+        const bool declined = interior.status == SolveStatus::kNumericalError ||
+                              interior.status == SolveStatus::kNotSolved;
+        if (requested == "auto" && declined) {
+          logger.warning("the interior point declined ({}); falling back to the dual simplex",
+                         interior.message);
+          Solution fallback =
+              solve_dual_simplex(target, with_the_time_that_is_left(options), logger, control);
+          const std::string note = fmt::format(
+              "the interior point declined ({}) and the solve fell back to the dual simplex",
+              interior.message.empty() ? std::string(to_string(interior.status))
+                                       : interior.message);
+          fallback.message = fallback.message.empty() ? note : fallback.message + "; " + note;
+          return fallback;
         }
         return interior;
       }
       return want_dual ? solve_dual_simplex(target, engine_options, logger, control)
                        : solve_primal_simplex(target, engine_options, logger, control);
     };
-    if (requested != "auto" && requested != "simplex" && !want_pdhg && !want_dual &&
-        !want_ipm) {
+    if (requested != "auto" && requested != "simplex" && requested != "pdhg" &&
+        requested != "dual-simplex" && requested != "ipm") {
       solution.status = SolveStatus::kNotSolved;
       solution.algorithm = "none";
       solution.message = fmt::format(
@@ -731,6 +760,10 @@ Solution solve_unguarded(const Model& model, const Options& options, SolveContro
       }
       solution = with_presolve(run_lp_engine, &presolve_proved_it);
     }
+    // The decision travels on the answer, whichever path produced it (postsolve builds a
+    // fresh Solution, so this is set after the engine ran, not before).
+    solution.engine_rule = chosen.rule;
+    solution.engine_reason = chosen.reason;
     if (presolve_proved_it) {
       logger.info("Result: {} (proved during presolve)  {:.3f}s", to_string(solution.status),
                   solution.solve_seconds);

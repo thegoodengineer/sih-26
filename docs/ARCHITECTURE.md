@@ -111,7 +111,11 @@ cap for a caller who wants one.
    an optional lower-triangular Hessian. Coefficients below `kZeroDrop` are dropped here and
    nowhere later, and `docs/BENCHMARKS.md` §5 records what that costs.
 2. **Classify.** Integrality → branch and bound; a Hessian → convex QP (or MIQP nodes);
-   otherwise an LP engine chosen by `algorithm`: `auto` is the dual simplex.
+   otherwise an LP engine chosen by `algorithm`: `auto` is a rule table on the model's shape
+   (`src/core/engine_selection.cpp`, #284): the dual simplex below 20,000 rows and 100,000
+   nonzeros, the interior point with crossover above either, PDHG from 100,000 rows, and a
+   starting basis always the dual simplex; every threshold names its CSV, the answer carries
+   the rule and the reason, and an interior point that declines falls back to the dual simplex.
 3. **Presolve** (LP path). Reductions are recorded on a stack. The reduced model is scaled
    (Ruiz then Pock–Chambolle) inside the simplex entry point; the scaled and unscaled
    attempts share one time budget.

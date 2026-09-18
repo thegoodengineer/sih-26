@@ -1091,6 +1091,8 @@ Solution postsolve(const Result& result, const Model& original, const Solution& 
   // reporting kFeasible with no reason attached whenever presolve was on.
   solution.stopped_by = reduced.stopped_by;
   solution.algorithm = reduced.algorithm;
+  solution.engine_rule = reduced.engine_rule;
+  solution.engine_reason = reduced.engine_reason;
   solution.message = reduced.message;
   solution.iterations = reduced.iterations;
   solution.polish_iterations = reduced.polish_iterations;

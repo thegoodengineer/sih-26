@@ -520,6 +520,11 @@ class Solution {
 
   /// Which engine produced this: "simplex-primal", "pdhg-cpu", "branch-and-cut", ...
   std::string algorithm;
+  /// How that engine was chosen for an LP (#284): the rule tag ("requested",
+  /// "warm-start", "size:ipm", ...) and one sentence naming the statistics and the
+  /// measurement behind it. Empty for the classes with one engine.
+  std::string engine_rule;
+  std::string engine_reason;
 
   /// Free-form detail, especially for kNumericalError and kModelError.
   std::string message;

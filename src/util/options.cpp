@@ -127,11 +127,14 @@ const std::vector<OptionSpec>& Options::registry() {
     s.push_back({"algorithm",
                  OptionType::String,
                  std::string("auto"),
-                 "LP engine: auto (the dual simplex, #65: 78/89 on the Netlib full set "
-                 "against the primal's 74/89, in 0.37x the time), simplex (the primal), "
-                 "dual-simplex, pdhg, or ipm (#56: Mehrotra predictor-corrector on the "
-                 "normal equations with a sparse LDL^T; produces no basis and does not "
-                 "certify infeasibility or unboundedness).",
+                 "LP engine: auto (a rule-based selection from the model's shape, #284: "
+                 "the dual simplex below 20,000 rows and 100,000 nonzeros, where it passes "
+                 "80 of 89 Netlib instances; the interior point with crossover above either; "
+                 "PDHG from 100,000 rows; a starting basis always means the dual simplex; "
+                 "the answer's engine_rule/engine_reason say which rule fired and why), "
+                 "simplex (the primal), dual-simplex, pdhg, or ipm (#56: Mehrotra "
+                 "predictor-corrector on the normal equations with a sparse LDL^T; produces "
+                 "no basis and does not certify infeasibility or unboundedness).",
                  0.0,
                  0.0,
                  {"auto", "simplex", "dual-simplex", "pdhg", "ipm"}});

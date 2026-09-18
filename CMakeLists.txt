@@ -184,6 +184,7 @@ set(SANKHYA_CORE_SOURCES
   src/core/model.cpp
   src/core/resource_limits.cpp
   src/core/solve.cpp
+  src/core/engine_selection.cpp
   src/io/line_reader.cpp
   src/io/lp_reader.cpp
   src/io/mps_bounds.cpp
