@@ -436,6 +436,41 @@ const std::vector<OptionSpec>& Options::registry() {
                  0.0,
                  kNoLimit,
                  {}});
+    s.push_back({"conflict_analysis",
+                 OptionType::Bool,
+                 false,
+                 "MILP: learn from every node proved infeasible which of its branching "
+                 "decisions were to blame, and prune later nodes that repeat them (#292). A "
+                 "conflict is stored only after it is proved again from the global bounds. Off "
+                 "by measurement: on the MIPLIB set at 60 s it proves and reaches the same "
+                 "instances, saves nodes on three, and halves throughput on enlight8.",
+                 0.0,
+                 0.0,
+                 {}});
+    s.push_back({"conflict_minimize",
+                 OptionType::Bool,
+                 true,
+                 "MILP: shrink each conflict by dropping decisions the proof does not need "
+                 "(a bounded deletion filter).",
+                 0.0,
+                 0.0,
+                 {}});
+    s.push_back({"conflict_max",
+                 OptionType::Int,
+                 std::int64_t{10000},
+                 "MILP: how many learned conflicts to hold; a full store forgets the least "
+                 "used tenth. Forgetting weakens pruning, never correctness.",
+                 1.0,
+                 1e7,
+                 {}});
+    s.push_back({"conflict_max_size",
+                 OptionType::Int,
+                 std::int64_t{32},
+                 "MILP: a conflict with more decisions than this is not stored; long "
+                 "conflicts rarely fire again.",
+                 1.0,
+                 1e6,
+                 {}});
     s.push_back({"pool_diversity",
                  OptionType::Bool,
                  false,
@@ -634,6 +669,17 @@ const std::vector<OptionSpec>& Options::registry() {
          OptionType::String,
          std::string(""),
          "Also write the profile as JSON to this file; empty writes the log table only.",
+         0.0,
+         0.0,
+         {},
+         /*planned_for=*/std::string(""),
+         /*case_sensitive=*/true});
+    s.push_back(
+        {"conflict_out",
+         OptionType::String,
+         std::string(""),
+         "MILP: write the learned conflicts and their statistics as JSON to this file, in "
+         "the indices of the model the search ran on (presolved, if presolve ran).",
          0.0,
          0.0,
          {},

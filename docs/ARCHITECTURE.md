@@ -365,3 +365,46 @@ machine's noise, with identical answers in every mode.
 There is no GPU timing and no memory statistic. The CUDA path has no profiler hook yet, and
 peak resident memory is not portably measurable from this binary; neither is reported rather
 than guessed.
+
+## 11. Conflict analysis: learning from infeasible nodes
+
+`conflict_analysis` (#292, `src/mip/conflict.hpp`, `src/mip/branch_and_bound_conflicts.cpp`)
+learns, from each node proved infeasible, which of its branching decisions were to blame, and
+uses that in every later node's propagation. It is OFF by default, by measurement: on the
+30-instance MIPLIB set at 60 s, on and off reach and prove the same 14 and 9
+(`bench/results/miplib-292-{on,off}-778d1fc.csv`); it saves nodes on three of the proved
+instances (supportcase16 91 against 127, supportcase14 102 against 124, flugpl 437 against
+469) and costs throughput where infeasible nodes are cheap and many (enlight8 explores 23,040
+nodes against 49,918).
+
+- **What is learned.** A set of bound literals `x_j <= v` / `x_j >= v` on integer columns,
+  taken from the node's branching decisions, that the rows and the GLOBAL column bounds cannot
+  satisfy together. The learned constraint is the bound disjunction "one of them is false".
+  Because it is proved from the global bounds it is globally valid; there are no node-local
+  conflicts.
+- **When a set counts as proved.** Only after it is checked again from scratch: the literals
+  applied to the global bounds, then node propagation (which may empty the box), then, for a
+  node whose LP was infeasible, the LP's Farkas multipliers re-evaluated conservatively on the
+  propagated box (every coefficient counted at its true bound, no coefficient rounded to
+  zero, a margin that scales with the aggregation). Neither the LP's status nor its
+  multipliers are taken on trust; a set that does not pass is counted as rejected and dropped.
+  Numerical failures, time limits and interrupts never reach the analysis at all.
+- **Minimisation.** The literals the Farkas proof leans on are tried first, then a deletion
+  filter drops each decision the check still passes without, at most 32 checks per conflict.
+  The node's own decision is kept without a check, since its parent's solved LP shows it is
+  needed.
+- **Use.** At the start of each propagation sweep: a conflict whose literals all hold prunes
+  the node without an LP, and one with a single undecided literal fixes that literal false,
+  which is an integer bound one step past it.
+- **Store.** Canonical sorted literals, exact duplicates rejected, at most `conflict_max`
+  (10,000) held and `conflict_max_size` (32) literals each. A full store forgets the least
+  used tenth, ordered by uses, then last use, then age: a total order, so a rerun keeps the
+  same conflicts. Forgetting weakens pruning and never changes the feasible region.
+- **Budget.** Work, not seconds: verification calls may not run more than 8 per explored node
+  ahead (plus a start-up allowance), so the analysis is deterministic under
+  `deterministic=true` and cannot eat a search that finds infeasible nodes cheaply.
+
+Conflicts live in the indices of the model the search runs on, which is the presolved model
+when presolve ran; they are solver metadata and are not mapped back. `conflict_out=<path>`
+writes them and their statistics as JSON for diagnostics, and the log's `Conflicts:` line and
+the profiler's `conflict analysis` region report their cost.

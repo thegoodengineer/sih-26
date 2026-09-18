@@ -221,8 +221,14 @@ Solution BranchAndBound::run() {
     current_warm_ = std::move(nodes_[static_cast<std::size_t>(node_index)].warm);
 
     if (!propagate()) {
+      const bool by_conflict = conflict_pruned_;
       leave();
       ++nodes_pruned_;
+      if (by_conflict) {
+        ++conflict_stats_.nodes_pruned;
+      } else {
+        analyze_conflict(node_index, ConflictSource::kPropagation, nullptr);
+      }
       continue;
     }
 
@@ -234,6 +240,7 @@ Solution BranchAndBound::run() {
     if (relaxation.status == SolveStatus::kInfeasible) {
       leave();
       ++nodes_pruned_;
+      analyze_conflict(node_index, ConflictSource::kLp, &relaxation.farkas_dual);
       continue;
     }
     if (relaxation.status == SolveStatus::kUnbounded) {
@@ -422,6 +429,8 @@ Solution BranchAndBound::run() {
                    reported(best_open_bound), gap, timer_.elapsed_seconds());
     }
   }
+
+  report_conflicts();
 
   // ---- Report ------------------------------------------------------------------------------
   double final_bound = incumbent_internal_;

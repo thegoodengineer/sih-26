@@ -64,6 +64,7 @@ void BranchAndBound::leave() {
 }
 
 bool BranchAndBound::propagate() {
+  conflict_pruned_ = false;
   const Index rows = working_.num_rows();
   const CsrView by_row(working_.matrix);
 
@@ -98,6 +99,8 @@ bool BranchAndBound::propagate() {
   // the first pass or two.
   for (int sweep = 0; sweep < 3; ++sweep) {
     bool changed = false;
+    // Learned conflicts (#292) first: they are cheap, and a bound one implies feeds the rows.
+    if (!conflicts_.entries().empty() && !propagate_conflicts(&changed)) return false;
     for (Index i = 0; i < rows; ++i) {
       const auto ui = static_cast<std::size_t>(i);
       const ColumnView row = by_row.row(i);

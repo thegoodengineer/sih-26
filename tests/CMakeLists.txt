@@ -47,6 +47,7 @@ add_executable(sankhya_tests
   unit/test_branch_and_bound.cpp
   unit/test_node_selection.cpp
   unit/test_solution_pool.cpp
+  unit/test_conflict.cpp
   unit/test_profiler.cpp
   unit/test_expression.cpp
   unit/test_nonlinear_model.cpp

@@ -23,6 +23,7 @@
 #include "sankhya/qp.hpp"
 #include "sankhya/solve_control.hpp"
 
+#include "conflict.hpp"
 #include "cuts.hpp"
 #include "solution_pool.hpp"
 
@@ -191,6 +192,7 @@ class BranchAndBound {
     pool_gap_ = options.get_double("pool_gap");
     // A complete search with nowhere to keep what it finds would enumerate for nothing.
     pool_complete_ = options.get_bool("pool_complete") && pool_.enabled();
+    init_conflicts();
   }
 
   Solution run();
@@ -378,6 +380,18 @@ class BranchAndBound {
     return sense_ * internal + original_.objective_offset;
   }
 
+  // ---- Conflict analysis (branch_and_bound_conflicts.cpp, #292) -------------------------
+
+  void init_conflicts();
+  /// Every stored conflict against the current box: false when one holds entirely, else
+  /// the bound each conflict with one undecided literal implies. Called from propagate().
+  bool propagate_conflicts(bool* changed);
+  /// Learn from a node just proved infeasible; the caller has already left it, so the
+  /// working bounds are the global ones. `farkas` is the node LP's certificate, if any.
+  void analyze_conflict(Index node_index, ConflictSource source,
+                        const std::vector<double>* farkas);
+  void report_conflicts();
+
   // ---- Cut rounds (branch_and_bound_cuts.cpp, #221) ------------------------------------
 
   /// The root round: cover, Gomory and MIR candidates, filtered, appended, the root
@@ -499,6 +513,21 @@ class BranchAndBound {
   /// uses a comparable age).
   static constexpr Count kCutRowAgeLimit = 50;
   Count nodes_pruned_ = 0;
+
+  /// Conflict analysis (#292): the learned conflicts, their statistics, and whether the
+  /// search is inside an analysis (whose trial propagations must not count as uses).
+  bool conflicts_enabled_ = false;
+  bool conflict_minimize_ = true;
+  std::size_t conflict_max_size_ = 0;
+  ConflictStore conflicts_;
+  ConflictStats conflict_stats_;
+  bool analysing_ = false;
+  bool conflict_pruned_ = false;  ///< the last propagate() failed on a stored conflict
+  /// Verification calls one analysis may spend minimising, and the total the analyses may
+  /// spend per node explored, plus a start-up allowance.
+  static constexpr int kConflictMinimizeChecks = 32;
+  static constexpr Count kConflictChecksPerNode = 8;
+  static constexpr Count kConflictChecksBase = 2000;
   Timer timer_;
 };
 
