@@ -51,6 +51,7 @@
 namespace sankhya::mip {
 
 Solution BranchAndBound::run() {
+  init_heuristics();
   global_lower_ = working_.col_lower;
   global_upper_ = working_.col_upper;
   if (options_.get_bool("enable_root_cuts")) {
@@ -311,7 +312,9 @@ Solution BranchAndBound::run() {
       continue;
     }
 
-    try_rounding(relaxation.col_value);
+    // Primal heuristics (#290): rounding every node as before, and the ones #290 added,
+    // on their own schedules and budgets. They propose; offer_incumbent() decides.
+    run_node_heuristics(node_index, relaxation);
 
     if (most_fractional(relaxation.col_value) < 0) {
       // Integral relaxation: this node's optimum is a MILP solution.
@@ -332,8 +335,11 @@ Solution BranchAndBound::run() {
     // lives on the same saved_ stack propagate() already pushed onto for this node, so the
     // leave() below - already here for the branching case - undoes diving's fixes too.
     if (node_index == 0) {
-      dive_from_root(relaxation.col_value);
+      run_root_dive(relaxation.col_value);
       current_warm_ = children_warm;
+      // The feasibility pump only when rounding, repair and the dive all came back empty:
+      // its value is an incumbent where there is none, and it costs LP solves.
+      run_root_pump(relaxation);
     }
 
     // The branching decision, with the node's bounds still entered: strong branching
@@ -520,6 +526,7 @@ Solution BranchAndBound::run() {
                to_string(solution.status), solution.objective, solution.dual_bound,
                solution.nodes, solution.solve_seconds);
   logger_.info("Nodes pruned {}, tree {} node(s) at exit", nodes_pruned_, open_.size());
+  report_heuristics();
   logger_.info(
       "Node selection {}: {} node(s) taken deepest-first, {} by the policy, deepest node at "
       "depth {}",

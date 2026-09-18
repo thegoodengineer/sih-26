@@ -354,8 +354,12 @@ TEST(ResourceLimits, ALimitedSearchWithNoIncumbentSaysWhatThePointIs) {
   // Under nine nodes this model has no integer point yet. The convention (#223) is to report
   // the last LP relaxation and say in the message that it is fractional - a limit is not a
   // reason to return nothing, and it is not a reason to call a fractional point a solution.
+  // The primal heuristics of #290 find an integer point for this model at the root, which
+  // removes the situation this test is about; they are switched off so the search still
+  // reaches its node limit with no incumbent, the case whose reporting is under test.
   const Model model = milp_with_a_negative_optimum();
   Options options = quiet();
+  options.set_bool("mip_heuristics", false);
   options.set_int("node_limit", 4);
   const Solution stopped = solve(model, options);
   ASSERT_EQ(stopped.status, SolveStatus::kNodeLimit) << stopped.message;
