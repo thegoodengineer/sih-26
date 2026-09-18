@@ -67,6 +67,32 @@ bool BranchAndBound::propagate() {
   const Index rows = working_.num_rows();
   const CsrView by_row(working_.matrix);
 
+  // EVERY INTEGER COLUMN IS ROUNDED, AND EVERY BOX IS CHECKED, BEFORE ANY ROW IS READ (#328).
+  // The row sweeps below round an integer column only while walking a row it appears in, and
+  // check a box for collapse in the same place. A column that appears in no row - an
+  // objective-only integer column, legal MPS - was therefore never rounded and never checked:
+  // x1 in [0.5, 2.5] stayed fractional at the root, the down child x1 <= floor(0.5) = 0 left
+  // it at [0.5, 0], and that crossed box went to the node LP, came back at x1 = 0.5 and was
+  // branched on again, forever. The search reported the root bound until its node limit. Both
+  // steps are cheap and neither depends on the rows, so they happen once per node, here.
+  for (const Index j : integer_columns_) {
+    const auto u = static_cast<std::size_t>(j);
+    if (is_finite_bound(working_.col_lower[u])) {
+      const double rounded = std::ceil(working_.col_lower[u] - integrality_tolerance_);
+      if (rounded != working_.col_lower[u]) tighten_lower(u, rounded);
+    }
+    if (is_finite_bound(working_.col_upper[u])) {
+      const double rounded = std::floor(working_.col_upper[u] + integrality_tolerance_);
+      if (rounded != working_.col_upper[u]) tighten_upper(u, rounded);
+    }
+  }
+  for (Index j = 0; j < working_.num_cols(); ++j) {
+    const auto u = static_cast<std::size_t>(j);
+    if (working_.col_lower[u] > working_.col_upper[u] + tol::kPrimalFeasibility) {
+      return false;  // the box is empty, so the node is: no LP is asked to solve it
+    }
+  }
+
   // A handful of sweeps. Propagation to a fixed point can be slow and rarely pays for
   // itself at a node; Savelsbergh's observation is that most of the tightening happens in
   // the first pass or two.
