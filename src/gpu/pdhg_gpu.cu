@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // SANKHYA - GPU-accelerated restarted PDHG for LP.
 //
-// References (written from the papers; per ENGINEERING_RULES.md no solver source was consulted):
+// References (written from the papers; per ENGINEERING_RULES.md no solver source was
+// consulted):
 //   [CP11]  Chambolle & Pock, "A first-order primal-dual algorithm for convex problems with
 //           applications to imaging", JMIV 40(1), 2011. Algorithm 1 is the iteration below.
 //   [PDLP]  Applegate et al., "Practical Large-Scale LP using PDHG", NeurIPS 2021.
@@ -53,18 +54,26 @@ constexpr int kBlockSize = 256;
 // Each returns false from the enclosing function, which the caller treats as a GPU failure
 // and either logs + falls back, or frees resources before returning.
 
-#define CUDA_CHECK(expr)           \
-  do {                              \
+#define CUDA_CHECK(expr)                     \
+  do {                                       \
     if ((expr) != cudaSuccess) return false; \
   } while (0)
 
-#define CS_CHECK(expr)             \
-  do {                              \
+#define CS_CHECK(expr)                                   \
+  do {                                                   \
     if ((expr) != CUSPARSE_STATUS_SUCCESS) return false; \
   } while (0)
 
+// A kernel launch reports its failure (bad configuration, out of resources) through
+// cudaPeekAtLastError, not through the launch statement, and not reliably through a later
+// copy. Checked after every launch below and mapped to the same fallback as any other
+// device failure.
+static bool launch_ok() {
+  return cudaPeekAtLastError() == cudaSuccess;
+}
+
 // ---- cuSPARSE scalar constants (host pointers, valid as alpha/beta) -----
-static const double kOne  = 1.0;
+static const double kOne = 1.0;
 static const double kZero = 0.0;
 
 // ---- CUDA kernels -------------------------------------------------------
@@ -73,16 +82,12 @@ static const double kZero = 0.0;
 //   x_next = proj_[col_lo, col_hi](x - tau*(cost + at_y))
 //   extrapolated = 2*x_next - x    (the [CP11] extrapolation / over-relaxation)
 //   dx = x_next - x
-__global__ void k_primal_update(
-    const double* __restrict__ x,
-    const double* __restrict__ at_y,
-    const double* __restrict__ cost,
-    const double* __restrict__ col_lo,
-    const double* __restrict__ col_hi,
-    double* __restrict__ x_next,
-    double* __restrict__ extrapolated,
-    double* __restrict__ dx,
-    double tau, int n) {
+__global__ void k_primal_update(const double* __restrict__ x, const double* __restrict__ at_y,
+                                const double* __restrict__ cost,
+                                const double* __restrict__ col_lo,
+                                const double* __restrict__ col_hi, double* __restrict__ x_next,
+                                double* __restrict__ extrapolated, double* __restrict__ dx,
+                                double tau, int n) {
   const int j = blockIdx.x * blockDim.x + threadIdx.x;
   if (j >= n) return;
   double xnj = x[j] - tau * (cost[j] + at_y[j]);
@@ -98,14 +103,10 @@ __global__ void k_primal_update(
 //   v = y + sigma * a_x
 //   y_next = v - sigma * proj_[row_lo, row_hi](v / sigma)   (Moreau identity)
 //   dy = y_next - y
-__global__ void k_dual_update(
-    const double* __restrict__ y,
-    const double* __restrict__ a_x,
-    const double* __restrict__ row_lo,
-    const double* __restrict__ row_hi,
-    double* __restrict__ y_next,
-    double* __restrict__ dy,
-    double sigma, int m) {
+__global__ void k_dual_update(const double* __restrict__ y, const double* __restrict__ a_x,
+                              const double* __restrict__ row_lo,
+                              const double* __restrict__ row_hi, double* __restrict__ y_next,
+                              double* __restrict__ dy, double sigma, int m) {
   const int i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i >= m) return;
   const double v = y[i] + sigma * a_x[i];
@@ -119,7 +120,7 @@ __global__ void k_dual_update(
 
 // [PDLP] §3.1: movement_x[j] = 0.5 * omega * dx[j]^2
 __global__ void k_movement_x(const double* __restrict__ dx, double* __restrict__ out,
-                              double omega, int n) {
+                             double omega, int n) {
   const int j = blockIdx.x * blockDim.x + threadIdx.x;
   if (j >= n) return;
   const double d = dx[j];
@@ -128,7 +129,7 @@ __global__ void k_movement_x(const double* __restrict__ dx, double* __restrict__
 
 // [PDLP] §3.1: movement_y[i] = 0.5 * dy[i]^2 / omega
 __global__ void k_movement_y(const double* __restrict__ dy, double* __restrict__ out,
-                              double omega, int m) {
+                             double omega, int m) {
   const int i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i >= m) return;
   const double d = dy[i];
@@ -162,7 +163,10 @@ static double* dev_zeros(std::size_t count) {
   if (count == 0) return nullptr;
   double* p = nullptr;
   if (cudaMalloc(&p, count * sizeof(double)) != cudaSuccess) return nullptr;
-  if (cudaMemset(p, 0, count * sizeof(double)) != cudaSuccess) { cudaFree(p); return nullptr; }
+  if (cudaMemset(p, 0, count * sizeof(double)) != cudaSuccess) {
+    cudaFree(p);
+    return nullptr;
+  }
   return p;
 }
 
@@ -187,8 +191,8 @@ static bool dh_copy(const double* dev, double* host, std::size_t count) {
 // ---- CUB sum reduction --------------------------------------------------
 // Reduces `count` elements of `d_in` into `d_out` (single device double).
 // `d_temp` / `temp_bytes` are reused across calls; reallocated if too small.
-static bool cub_sum(double* d_in, int count, double* d_out,
-                    void*& d_temp, std::size_t& temp_bytes) {
+static bool cub_sum(double* d_in, int count, double* d_out, void*& d_temp,
+                    std::size_t& temp_bytes) {
   if (count == 0) {
     return cudaMemset(d_out, 0, sizeof(double)) == cudaSuccess;
   }
@@ -210,20 +214,20 @@ struct GpuState {
   double *d_x{}, *d_xn{}, *d_ext{}, *d_dx{}, *d_aty{}, *d_xsum{};
   double *d_y{}, *d_yn{}, *d_dy{}, *d_ax{}, *d_adx{}, *d_ysum{};
   double *d_tmpn{}, *d_tmpm{};  // n-element and m-element reduction scratch
-  double *d_scalar{};           // single-element result for reductions
+  double* d_scalar{};           // single-element result for reductions
   // Problem constants (device)
   double *d_cost{}, *d_clo{}, *d_chi{}, *d_rlo{}, *d_rhi{};
   // CSR matrix (device)
-  int    *d_rowptr{}, *d_colidx{};
-  double *d_vals{};
+  int *d_rowptr{}, *d_colidx{};
+  double* d_vals{};
   // CUB temp
-  void   *d_cub{};
+  void* d_cub{};
   std::size_t cub_bytes{};
   // cuSPARSE SpMV buffer (single buffer, sized to max of NT and T)
-  void   *d_spmv{};
+  void* d_spmv{};
   std::size_t spmv_bytes{};
   // cuSPARSE handles
-  cusparseHandle_t    cs{};
+  cusparseHandle_t cs{};
   cusparseSpMatDescr_t mat{};
   cusparseDnVecDescr_t vn{};  // n-element dense vector
   cusparseDnVecDescr_t vm{};  // m-element dense vector
@@ -231,27 +235,41 @@ struct GpuState {
   int n{}, m{}, nnz{};
 
   ~GpuState() {
-    if (vm)  cusparseDestroyDnVec(vm);
-    if (vn)  cusparseDestroyDnVec(vn);
+    if (vm) cusparseDestroyDnVec(vm);
+    if (vn) cusparseDestroyDnVec(vn);
     if (mat) cusparseDestroySpMat(mat);
-    if (cs)  cusparseDestroy(cs);
-    cudaFree(d_x);    cudaFree(d_xn);   cudaFree(d_ext);  cudaFree(d_dx);
-    cudaFree(d_aty);  cudaFree(d_xsum);
-    cudaFree(d_y);    cudaFree(d_yn);   cudaFree(d_dy);   cudaFree(d_ax);
-    cudaFree(d_adx);  cudaFree(d_ysum);
-    cudaFree(d_tmpn); cudaFree(d_tmpm); cudaFree(d_scalar);
-    cudaFree(d_cost); cudaFree(d_clo);  cudaFree(d_chi);
-    cudaFree(d_rlo);  cudaFree(d_rhi);
-    cudaFree(d_rowptr); cudaFree(d_colidx); cudaFree(d_vals);
-    cudaFree(d_cub);  cudaFree(d_spmv);
+    if (cs) cusparseDestroy(cs);
+    cudaFree(d_x);
+    cudaFree(d_xn);
+    cudaFree(d_ext);
+    cudaFree(d_dx);
+    cudaFree(d_aty);
+    cudaFree(d_xsum);
+    cudaFree(d_y);
+    cudaFree(d_yn);
+    cudaFree(d_dy);
+    cudaFree(d_ax);
+    cudaFree(d_adx);
+    cudaFree(d_ysum);
+    cudaFree(d_tmpn);
+    cudaFree(d_tmpm);
+    cudaFree(d_scalar);
+    cudaFree(d_cost);
+    cudaFree(d_clo);
+    cudaFree(d_chi);
+    cudaFree(d_rlo);
+    cudaFree(d_rhi);
+    cudaFree(d_rowptr);
+    cudaFree(d_colidx);
+    cudaFree(d_vals);
+    cudaFree(d_cub);
+    cudaFree(d_spmv);
   }
 
   [[nodiscard]] bool alloc_ok() const {
     // Every pointer that should be non-null: check the ones we always need
-    return d_x && d_xn && d_ext && d_dx && d_aty && d_xsum &&
-           d_y && d_yn && d_dy && d_ax && d_adx && d_ysum &&
-           d_tmpn && d_tmpm && d_scalar &&
-           d_cost && d_clo && d_chi;
+    return d_x && d_xn && d_ext && d_dx && d_aty && d_xsum && d_y && d_yn && d_dy && d_ax &&
+           d_adx && d_ysum && d_tmpn && d_tmpm && d_scalar && d_cost && d_clo && d_chi;
   }
 };
 
@@ -265,9 +283,8 @@ static bool spmv_nt(GpuState& g, double* d_in_n, double* d_out_m) {
   }
   CS_CHECK(cusparseDnVecSetValues(g.vn, d_in_n));
   CS_CHECK(cusparseDnVecSetValues(g.vm, d_out_m));
-  CS_CHECK(cusparseSpMV(g.cs, CUSPARSE_OPERATION_NON_TRANSPOSE,
-      &kOne, g.mat, g.vn, &kZero, g.vm, CUDA_R_64F,
-      CUSPARSE_SPMV_ALG_DEFAULT, g.d_spmv));
+  CS_CHECK(cusparseSpMV(g.cs, CUSPARSE_OPERATION_NON_TRANSPOSE, &kOne, g.mat, g.vn, &kZero,
+                        g.vm, CUDA_R_64F, CUSPARSE_SPMV_ALG_DEFAULT, g.d_spmv));
   return true;
 }
 
@@ -279,9 +296,8 @@ static bool spmv_t(GpuState& g, double* d_in_m, double* d_out_n) {
   }
   CS_CHECK(cusparseDnVecSetValues(g.vm, d_in_m));
   CS_CHECK(cusparseDnVecSetValues(g.vn, d_out_n));
-  CS_CHECK(cusparseSpMV(g.cs, CUSPARSE_OPERATION_TRANSPOSE,
-      &kOne, g.mat, g.vm, &kZero, g.vn, CUDA_R_64F,
-      CUSPARSE_SPMV_ALG_DEFAULT, g.d_spmv));
+  CS_CHECK(cusparseSpMV(g.cs, CUSPARSE_OPERATION_TRANSPOSE, &kOne, g.mat, g.vm, &kZero, g.vn,
+                        CUDA_R_64F, CUSPARSE_SPMV_ALG_DEFAULT, g.d_spmv));
   return true;
 }
 
@@ -303,8 +319,7 @@ struct Residuals {
 
   [[nodiscard]] bool meets_project_standard() const {
     return absolute_primal <= tol::kPrimalFeasibility &&
-           absolute_dual   <= tol::kDualFeasibility &&
-           gap_as_verified <= tol::kDualityGap &&
+           absolute_dual <= tol::kDualFeasibility && gap_as_verified <= tol::kDualityGap &&
            complementarity <= 1e-6;
   }
 };
@@ -323,8 +338,8 @@ static double euclidean_norm(const std::vector<double>& v) {
 }
 
 static Residuals evaluate(const Problem& prob, const std::vector<double>& x,
-                          const std::vector<double>& y,
-                          std::vector<double>& activity, std::vector<double>& reduced) {
+                          const std::vector<double>& y, std::vector<double>& activity,
+                          std::vector<double>& reduced) {
   const Model& model = *prob.model;
   const Index rows = model.num_rows();
   const Index cols = model.num_cols();
@@ -356,11 +371,15 @@ static Residuals evaluate(const Problem& prob, const std::vector<double>& x,
     const auto u = static_cast<std::size_t>(j);
     const double d = reduced[u];
     if (d > 0.0) {
-      if (is_finite_bound(model.col_lower[u])) bound_contrib += d * model.col_lower[u];
-      else dual_viol += d * d;
+      if (is_finite_bound(model.col_lower[u]))
+        bound_contrib += d * model.col_lower[u];
+      else
+        dual_viol += d * d;
     } else if (d < 0.0) {
-      if (is_finite_bound(model.col_upper[u])) bound_contrib += d * model.col_upper[u];
-      else dual_viol += d * d;
+      if (is_finite_bound(model.col_upper[u]))
+        bound_contrib += d * model.col_upper[u];
+      else
+        dual_viol += d * d;
     }
   }
 
@@ -369,11 +388,15 @@ static Residuals evaluate(const Problem& prob, const std::vector<double>& x,
     const auto u = static_cast<std::size_t>(i);
     const double yi = y[u];
     if (yi > 0.0) {
-      if (is_finite_bound(model.row_upper[u])) support += yi * model.row_upper[u];
-      else dual_viol += yi * yi;
+      if (is_finite_bound(model.row_upper[u]))
+        support += yi * model.row_upper[u];
+      else
+        dual_viol += yi * yi;
     } else if (yi < 0.0) {
-      if (is_finite_bound(model.row_lower[u])) support += yi * model.row_lower[u];
-      else dual_viol += yi * yi;
+      if (is_finite_bound(model.row_lower[u]))
+        support += yi * model.row_lower[u];
+      else
+        dual_viol += yi * yi;
     }
   }
   r.absolute_dual = std::sqrt(dual_viol);
@@ -384,19 +407,24 @@ static Residuals evaluate(const Problem& prob, const std::vector<double>& x,
     const auto u = static_cast<std::size_t>(i);
     if (model.row_lower[u] == model.row_upper[u]) continue;
     const double lo_sl = is_finite_bound(model.row_lower[u])
-        ? activity[u] - model.row_lower[u] : std::numeric_limits<double>::infinity();
+                             ? activity[u] - model.row_lower[u]
+                             : std::numeric_limits<double>::infinity();
     const double hi_sl = is_finite_bound(model.row_upper[u])
-        ? model.row_upper[u] - activity[u] : std::numeric_limits<double>::infinity();
+                             ? model.row_upper[u] - activity[u]
+                             : std::numeric_limits<double>::infinity();
     r.complementarity = std::max(r.complementarity, std::fabs(y[u]) * std::min(lo_sl, hi_sl));
   }
   for (Index j = 0; j < cols; ++j) {
     const auto u = static_cast<std::size_t>(j);
     if (model.col_lower[u] == model.col_upper[u]) continue;
     const double lo_sl = is_finite_bound(model.col_lower[u])
-        ? x[u] - model.col_lower[u] : std::numeric_limits<double>::infinity();
+                             ? x[u] - model.col_lower[u]
+                             : std::numeric_limits<double>::infinity();
     const double hi_sl = is_finite_bound(model.col_upper[u])
-        ? model.col_upper[u] - x[u] : std::numeric_limits<double>::infinity();
-    r.complementarity = std::max(r.complementarity, std::fabs(reduced[u]) * std::min(lo_sl, hi_sl));
+                             ? model.col_upper[u] - x[u]
+                             : std::numeric_limits<double>::infinity();
+    r.complementarity =
+        std::max(r.complementarity, std::fabs(reduced[u]) * std::min(lo_sl, hi_sl));
   }
 
   double pobj = 0.0;
@@ -446,39 +474,39 @@ Solution solve_pdhg_gpu(const Model& model, const Options& options, Logger& logg
   prob.model = &model;
   prob.cost.resize(n);
   for (Index j = 0; j < cols; ++j)
-    prob.cost[static_cast<std::size_t>(j)] = sense * model.col_cost[static_cast<std::size_t>(j)];
+    prob.cost[static_cast<std::size_t>(j)] =
+        sense * model.col_cost[static_cast<std::size_t>(j)];
   prob.cost_norm = euclidean_norm(prob.cost);
   {
     double bsq = 0.0;
     for (Index i = 0; i < rows; ++i) {
       const auto u = static_cast<std::size_t>(i);
-      const double b = is_finite_bound(model.row_lower[u]) ? model.row_lower[u]
-                     : (is_finite_bound(model.row_upper[u]) ? model.row_upper[u] : 0.0);
+      const double b = is_finite_bound(model.row_lower[u])
+                           ? model.row_lower[u]
+                           : (is_finite_bound(model.row_upper[u]) ? model.row_upper[u] : 0.0);
       bsq += b * b;
     }
     prob.bound_norm = std::sqrt(bsq);
   }
 
   // ---- Preconditioning (CPU, one-off) ------------------------------------
-  constexpr int kRuizIter  = 10;
+  constexpr int kRuizIter = 10;
   constexpr int kPowerIter = 30;
   const Scaling scaling = build_scaling(model, prob.cost, kRuizIter);
-  const double spectral_norm =
-      estimate_spectral_norm(scaling.matrix, kPowerIter,
-                             static_cast<unsigned>(options.get_int("random_seed")) + 1u);
+  const double spectral_norm = estimate_spectral_norm(
+      scaling.matrix, kPowerIter, static_cast<unsigned>(options.get_int("random_seed")) + 1u);
 
   // ---- Build CSR on CPU via CsrView --------------------------------------
   const CsrView csr(scaling.matrix);
   const int nnz = static_cast<int>(csr.values().size());
 
   // ---- Solver parameters -------------------------------------------------
-  const double tolerance       = options.get_double("pdhg_tolerance");
+  const double tolerance = options.get_double("pdhg_tolerance");
   const ResourceLimits limits(options, logger);
-  const Count iteration_limit = limits.iteration_limit() < 0
-                                    ? 1000000
-                                    : static_cast<Count>(limits.iteration_limit());
-  const bool use_restarts      = options.get_bool("pdhg_restart");
-  const bool stop_at_request   = options.get_bool("pdhg_stop_at_request");
+  const Count iteration_limit =
+      limits.iteration_limit() < 0 ? 1000000 : static_cast<Count>(limits.iteration_limit());
+  const bool use_restarts = options.get_bool("pdhg_restart");
+  const bool stop_at_request = options.get_bool("pdhg_stop_at_request");
 
   logger.info("Solving LP with CUDA restarted PDHG on {}: {} rows, {} columns, {} nonzeros",
               device_desc, rows, cols, model.num_nonzeros());
@@ -489,21 +517,37 @@ Solution solve_pdhg_gpu(const Model& model, const Options& options, Logger& logg
 
   // ---- GPU resource allocation -------------------------------------------
   GpuState g;
-  g.n = ni; g.m = mi; g.nnz = nnz;
+  g.n = ni;
+  g.m = mi;
+  g.nnz = nnz;
 
-  g.d_x    = dev_zeros(n); g.d_xn   = dev_zeros(n); g.d_ext  = dev_zeros(n);
-  g.d_dx   = dev_zeros(n); g.d_aty  = dev_zeros(n); g.d_xsum = dev_zeros(n);
-  g.d_y    = dev_zeros(m); g.d_yn   = dev_zeros(m); g.d_dy   = dev_zeros(m);
-  g.d_ax   = dev_zeros(m); g.d_adx  = dev_zeros(m); g.d_ysum = dev_zeros(m);
-  g.d_tmpn = dev_zeros(n); g.d_tmpm = dev_zeros(m); g.d_scalar = dev_zeros(1);
-  g.d_cost = dev_zeros(n); g.d_clo  = dev_zeros(n); g.d_chi  = dev_zeros(n);
-  if (m > 0) { g.d_rlo = dev_zeros(m); g.d_rhi = dev_zeros(m); }
+  g.d_x = dev_zeros(n);
+  g.d_xn = dev_zeros(n);
+  g.d_ext = dev_zeros(n);
+  g.d_dx = dev_zeros(n);
+  g.d_aty = dev_zeros(n);
+  g.d_xsum = dev_zeros(n);
+  g.d_y = dev_zeros(m);
+  g.d_yn = dev_zeros(m);
+  g.d_dy = dev_zeros(m);
+  g.d_ax = dev_zeros(m);
+  g.d_adx = dev_zeros(m);
+  g.d_ysum = dev_zeros(m);
+  g.d_tmpn = dev_zeros(n);
+  g.d_tmpm = dev_zeros(m);
+  g.d_scalar = dev_zeros(1);
+  g.d_cost = dev_zeros(n);
+  g.d_clo = dev_zeros(n);
+  g.d_chi = dev_zeros(n);
+  if (m > 0) {
+    g.d_rlo = dev_zeros(m);
+    g.d_rhi = dev_zeros(m);
+  }
   g.d_rowptr = dev_int(m + 1);
   g.d_colidx = nnz > 0 ? dev_int(static_cast<std::size_t>(nnz)) : nullptr;
-  g.d_vals   = nnz > 0 ? dev_zeros(static_cast<std::size_t>(nnz)) : nullptr;
+  g.d_vals = nnz > 0 ? dev_zeros(static_cast<std::size_t>(nnz)) : nullptr;
 
-  if (!g.alloc_ok() || !g.d_rowptr ||
-      (m > 0 && (!g.d_rlo || !g.d_rhi)) ||
+  if (!g.alloc_ok() || !g.d_rowptr || (m > 0 && (!g.d_rlo || !g.d_rhi)) ||
       (nnz > 0 && (!g.d_colidx || !g.d_vals))) {
     logger.warning("GPU PDHG: device allocation failed; falling back to CPU solver");
     return pdhg::solve_pdhg(model, options, logger, control);
@@ -532,8 +576,10 @@ Solution solve_pdhg_gpu(const Model& model, const Options& options, Logger& logg
     for (Index j = 0; j < cols; ++j) {
       const auto u = static_cast<std::size_t>(j);
       double v = 0.0;
-      if (!std::isinf(scaling.col_lower[u]) && v < scaling.col_lower[u]) v = scaling.col_lower[u];
-      if (!std::isinf(scaling.col_upper[u]) && v > scaling.col_upper[u]) v = scaling.col_upper[u];
+      if (!std::isinf(scaling.col_lower[u]) && v < scaling.col_lower[u])
+        v = scaling.col_lower[u];
+      if (!std::isinf(scaling.col_upper[u]) && v > scaling.col_upper[u])
+        v = scaling.col_upper[u];
       x0[u] = v;
     }
     if (!hd_copy(x0.data(), g.d_x, n)) {
@@ -555,22 +601,24 @@ Solution solve_pdhg_gpu(const Model& model, const Options& options, Logger& logg
 
   // Create CSR matrix descriptor.  When nnz=0, d_colidx/d_vals are nullptr;
   // cusparseCreateCsr accepts null pointers when nnz=0.
-  if (cusparseCreateCsr(&g.mat,
-        static_cast<int64_t>(mi), static_cast<int64_t>(ni), static_cast<int64_t>(nnz),
-        g.d_rowptr, g.d_colidx, g.d_vals,
-        CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
-        CUSPARSE_INDEX_BASE_ZERO, CUDA_R_64F) != CUSPARSE_STATUS_SUCCESS) return cs_failed();
+  if (cusparseCreateCsr(&g.mat, static_cast<int64_t>(mi), static_cast<int64_t>(ni),
+                        static_cast<int64_t>(nnz), g.d_rowptr, g.d_colidx, g.d_vals,
+                        CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I, CUSPARSE_INDEX_BASE_ZERO,
+                        CUDA_R_64F) != CUSPARSE_STATUS_SUCCESS)
+    return cs_failed();
 
   // Create dense vector descriptors; dimension is pinned at construction, data updated later.
   // vn: n-element (input to NT SpMV, output of T SpMV)
   // vm: m-element (output of NT SpMV, input to T SpMV)
-  void* vn_init = (g.d_x  ? g.d_x  : g.d_scalar);  // non-null placeholder
-  void* vm_init = (g.d_y  ? g.d_y  : g.d_scalar);
-  if (cusparseCreateDnVec(&g.vn, static_cast<int64_t>(ni), vn_init, CUDA_R_64F)
-      != CUSPARSE_STATUS_SUCCESS) return cs_failed();
+  void* vn_init = (g.d_x ? g.d_x : g.d_scalar);  // non-null placeholder
+  void* vm_init = (g.d_y ? g.d_y : g.d_scalar);
+  if (cusparseCreateDnVec(&g.vn, static_cast<int64_t>(ni), vn_init, CUDA_R_64F) !=
+      CUSPARSE_STATUS_SUCCESS)
+    return cs_failed();
   if (mi > 0) {
-    if (cusparseCreateDnVec(&g.vm, static_cast<int64_t>(mi), vm_init, CUDA_R_64F)
-        != CUSPARSE_STATUS_SUCCESS) return cs_failed();
+    if (cusparseCreateDnVec(&g.vm, static_cast<int64_t>(mi), vm_init, CUDA_R_64F) !=
+        CUSPARSE_STATUS_SUCCESS)
+      return cs_failed();
   }
 
   // Query SpMV buffer sizes and allocate a single buffer for both operations.
@@ -578,14 +626,16 @@ Solution solve_pdhg_gpu(const Model& model, const Options& options, Logger& logg
     std::size_t bytes_nt = 0, bytes_t = 0;
     cusparseDnVecSetValues(g.vn, g.d_ext);
     cusparseDnVecSetValues(g.vm, g.d_ax);
-    if (cusparseSpMV_bufferSize(g.cs, CUSPARSE_OPERATION_NON_TRANSPOSE,
-          &kOne, g.mat, g.vn, &kZero, g.vm, CUDA_R_64F,
-          CUSPARSE_SPMV_ALG_DEFAULT, &bytes_nt) != CUSPARSE_STATUS_SUCCESS) return cs_failed();
+    if (cusparseSpMV_bufferSize(g.cs, CUSPARSE_OPERATION_NON_TRANSPOSE, &kOne, g.mat, g.vn,
+                                &kZero, g.vm, CUDA_R_64F, CUSPARSE_SPMV_ALG_DEFAULT,
+                                &bytes_nt) != CUSPARSE_STATUS_SUCCESS)
+      return cs_failed();
     cusparseDnVecSetValues(g.vm, g.d_y);
     cusparseDnVecSetValues(g.vn, g.d_aty);
-    if (cusparseSpMV_bufferSize(g.cs, CUSPARSE_OPERATION_TRANSPOSE,
-          &kOne, g.mat, g.vm, &kZero, g.vn, CUDA_R_64F,
-          CUSPARSE_SPMV_ALG_DEFAULT, &bytes_t) != CUSPARSE_STATUS_SUCCESS) return cs_failed();
+    if (cusparseSpMV_bufferSize(g.cs, CUSPARSE_OPERATION_TRANSPOSE, &kOne, g.mat, g.vm, &kZero,
+                                g.vn, CUDA_R_64F, CUSPARSE_SPMV_ALG_DEFAULT,
+                                &bytes_t) != CUSPARSE_STATUS_SUCCESS)
+      return cs_failed();
     g.spmv_bytes = std::max(bytes_nt, bytes_t);
     if (g.spmv_bytes > 0) {
       if (cudaMalloc(&g.d_spmv, g.spmv_bytes) != cudaSuccess) return cs_failed();
@@ -621,8 +671,10 @@ Solution solve_pdhg_gpu(const Model& model, const Options& options, Logger& logg
     for (Index j = 0; j < cols; ++j) {
       const auto u = static_cast<std::size_t>(j);
       double v = 0.0;
-      if (!std::isinf(scaling.col_lower[u]) && v < scaling.col_lower[u]) v = scaling.col_lower[u];
-      if (!std::isinf(scaling.col_upper[u]) && v > scaling.col_upper[u]) v = scaling.col_upper[u];
+      if (!std::isinf(scaling.col_lower[u]) && v < scaling.col_lower[u])
+        v = scaling.col_lower[u];
+      if (!std::isinf(scaling.col_upper[u]) && v > scaling.col_upper[u])
+        v = scaling.col_upper[u];
       x_restart[u] = v;
     }
   }
@@ -653,36 +705,56 @@ Solution solve_pdhg_gpu(const Model& model, const Options& options, Logger& logg
 
   while (!gpu_error) {
     if (iteration >= iteration_limit) break;
-    if (stop.should_stop([&]() {
-          Progress p;
-          p.phase = Progress::Phase::kLp;
-          p.iterations = iteration;
-          p.objective = best.primal;
-          p.best_bound = sense * best.dual_objective + model.objective_offset;
-          return p;
-        }, &stop_status)) break;
+    if (stop.should_stop(
+            [&]() {
+              Progress p;
+              p.phase = Progress::Phase::kLp;
+              p.iterations = iteration;
+              p.objective = best.primal;
+              p.best_bound = sense * best.dual_objective + model.objective_offset;
+              return p;
+            },
+            &stop_status))
+      break;
 
-    const double tau   = eta / omega;
+    const double tau = eta / omega;
     const double sigma = eta * omega;
 
     // 1. A^T y  [cuPDLP §3, transpose SpMV]
-    if (!spmv_t(g, g.d_y, g.d_aty)) { gpu_error = true; break; }
+    if (!spmv_t(g, g.d_y, g.d_aty)) {
+      gpu_error = true;
+      break;
+    }
 
     // 2. Primal update  [CP11 Alg.1]
-    if (ni > 0) k_primal_update<<<bn, kBlockSize>>>(
-        g.d_x, g.d_aty, g.d_cost, g.d_clo, g.d_chi,
-        g.d_xn, g.d_ext, g.d_dx, tau, ni);
+    if (ni > 0)
+      k_primal_update<<<bn, kBlockSize>>>(g.d_x, g.d_aty, g.d_cost, g.d_clo, g.d_chi, g.d_xn,
+                                          g.d_ext, g.d_dx, tau, ni);
+    if (!launch_ok()) {
+      gpu_error = true;
+      break;
+    }
 
     // 3. A * extrapolated  [CP11 Alg.1 dual step]
-    if (!spmv_nt(g, g.d_ext, g.d_ax)) { gpu_error = true; break; }
+    if (!spmv_nt(g, g.d_ext, g.d_ax)) {
+      gpu_error = true;
+      break;
+    }
 
     // 4. Dual update  [CP11 Alg.1]
-    if (mi > 0) k_dual_update<<<bm, kBlockSize>>>(
-        g.d_y, g.d_ax, g.d_rlo, g.d_rhi,
-        g.d_yn, g.d_dy, sigma, mi);
+    if (mi > 0)
+      k_dual_update<<<bm, kBlockSize>>>(g.d_y, g.d_ax, g.d_rlo, g.d_rhi, g.d_yn, g.d_dy, sigma,
+                                        mi);
+    if (!launch_ok()) {
+      gpu_error = true;
+      break;
+    }
 
     // 5. A * dx  [PDLP §3.1 interaction term]
-    if (!spmv_nt(g, g.d_dx, g.d_adx)) { gpu_error = true; break; }
+    if (!spmv_nt(g, g.d_dx, g.d_adx)) {
+      gpu_error = true;
+      break;
+    }
 
     // 6. Movement  [PDLP §3.1]
     double movement = 0.0;
@@ -690,13 +762,19 @@ Solution solve_pdhg_gpu(const Model& model, const Options& options, Logger& logg
       double mv_x = 0.0, mv_y = 0.0;
       if (ni > 0) {
         k_movement_x<<<bn, kBlockSize>>>(g.d_dx, g.d_tmpn, omega, ni);
-        if (!cub_sum(g.d_tmpn, ni, g.d_scalar, g.d_cub, g.cub_bytes) ||
-            !dh_copy(g.d_scalar, &mv_x, 1)) { gpu_error = true; break; }
+        if (!launch_ok() || !cub_sum(g.d_tmpn, ni, g.d_scalar, g.d_cub, g.cub_bytes) ||
+            !dh_copy(g.d_scalar, &mv_x, 1)) {
+          gpu_error = true;
+          break;
+        }
       }
       if (mi > 0) {
         k_movement_y<<<bm, kBlockSize>>>(g.d_dy, g.d_tmpm, omega, mi);
-        if (!cub_sum(g.d_tmpm, mi, g.d_scalar, g.d_cub, g.cub_bytes) ||
-            !dh_copy(g.d_scalar, &mv_y, 1)) { gpu_error = true; break; }
+        if (!launch_ok() || !cub_sum(g.d_tmpm, mi, g.d_scalar, g.d_cub, g.cub_bytes) ||
+            !dh_copy(g.d_scalar, &mv_y, 1)) {
+          gpu_error = true;
+          break;
+        }
       }
       movement = mv_x + mv_y;
     }
@@ -706,20 +784,23 @@ Solution solve_pdhg_gpu(const Model& model, const Options& options, Logger& logg
     if (mi > 0 && !gpu_error) {
       k_pointwise_mul<<<bm, kBlockSize>>>(g.d_dy, g.d_adx, g.d_tmpm, mi);
       double raw = 0.0;
-      if (!cub_sum(g.d_tmpm, mi, g.d_scalar, g.d_cub, g.cub_bytes) ||
-          !dh_copy(g.d_scalar, &raw, 1)) { gpu_error = true; break; }
+      if (!launch_ok() || !cub_sum(g.d_tmpm, mi, g.d_scalar, g.d_cub, g.cub_bytes) ||
+          !dh_copy(g.d_scalar, &raw, 1)) {
+        gpu_error = true;
+        break;
+      }
       interaction = std::fabs(raw);
     }
     if (gpu_error) break;
 
     // 8. Adaptive step size  [PDLP §3.1]
     const bool no_info = (interaction <= 0.0);
-    const double limit = no_info ? std::numeric_limits<double>::infinity()
-                                 : movement / interaction;
+    const double limit =
+        no_info ? std::numeric_limits<double>::infinity() : movement / interaction;
     // exponent floor of 2 avoids the shrink=0 collapse on the first iteration  [PDLP §3.1]
     const double exp = static_cast<double>(std::max<Count>(2, iteration + 1));
     const double shrink = 1.0 - std::pow(exp, -0.3);
-    const double grow   = 1.0 + std::pow(exp, -0.6);
+    const double grow = 1.0 + std::pow(exp, -0.6);
     const double proposed = std::min(shrink * limit, grow * eta);
 
     if (eta <= limit) {
@@ -729,6 +810,10 @@ Solution solve_pdhg_gpu(const Model& model, const Options& options, Logger& logg
       // Accumulate running sums
       if (ni > 0) k_accum_n<<<bn, kBlockSize>>>(g.d_x, g.d_xsum, ni);
       if (mi > 0) k_accum_m<<<bm, kBlockSize>>>(g.d_y, g.d_ysum, mi);
+      if (!launch_ok()) {
+        gpu_error = true;
+        break;
+      }
       ++averaged;
       ++iteration;
     }
@@ -741,7 +826,8 @@ Solution solve_pdhg_gpu(const Model& model, const Options& options, Logger& logg
 
     // Download current iterates
     if (!dh_copy(g.d_x, h_x.data(), n) || !dh_copy(g.d_y, h_y.data(), m)) {
-      gpu_error = true; break;
+      gpu_error = true;
+      break;
     }
 
     // Evaluate current iterate
@@ -758,33 +844,44 @@ Solution solve_pdhg_gpu(const Model& model, const Options& options, Logger& logg
     std::vector<double> avg_x, avg_y;
     if (averaged > 0) {
       if (!dh_copy(g.d_xsum, h_xsum.data(), n) || !dh_copy(g.d_ysum, h_ysum.data(), m)) {
-        gpu_error = true; break;
+        gpu_error = true;
+        break;
       }
       const double cnt = static_cast<double>(averaged);
       std::vector<double> xav(n), yav(m);
       for (std::size_t j = 0; j < n; ++j) xav[j] = h_xsum[j] / cnt;
       for (std::size_t i = 0; i < m; ++i) yav[i] = h_ysum[i] / cnt;
       unscale(xav, yav);
-      avg_x = x_unscaled; avg_y = y_unscaled;
+      avg_x = x_unscaled;
+      avg_y = y_unscaled;
       avg = evaluate(prob, avg_x, avg_y, activity, reduced_costs);
       if (avg.worst() < cur.worst()) {
-        chosen = &avg; chosen_x = &avg_x; chosen_y = &avg_y;
+        chosen = &avg;
+        chosen_x = &avg_x;
+        chosen_y = &avg_y;
       }
     }
 
     const Residuals& better = *chosen;
     if (better.worst() < best.worst()) {
-      best = better; best_x = *chosen_x; best_y = *chosen_y;
+      best = better;
+      best_x = *chosen_x;
+      best_y = *chosen_y;
     }
 
-    if (!logged_table) { logger.begin_iteration_table(); logged_table = true; }
+    if (!logged_table) {
+      logger.begin_iteration_table();
+      logged_table = true;
+    }
     logger.iteration(iteration, sense * better.primal_objective + model.objective_offset,
                      better.primal, better.dual, timer.elapsed_seconds());
 
-    const bool stop_here = better.meets_request(tolerance) &&
-                           (stop_at_request || better.meets_project_standard());
+    const bool stop_here =
+        better.meets_request(tolerance) && (stop_at_request || better.meets_project_standard());
     if (stop_here) {
-      best = better; best_x = *chosen_x; best_y = *chosen_y;
+      best = better;
+      best_x = *chosen_x;
+      best_y = *chosen_y;
       converged = true;
       break;
     }
@@ -794,8 +891,9 @@ Solution solve_pdhg_gpu(const Model& model, const Options& options, Logger& logg
       const double kkt = better.worst();
       const Count since = iteration - last_restart;
       const bool sufficient = kkt <= 0.2 * restart_kkt;
-      const bool artificial = since >= std::max<Count>(
-          kEvaluationInterval, static_cast<Count>(0.36 * static_cast<double>(iteration)));
+      const bool artificial =
+          since >= std::max<Count>(kEvaluationInterval,
+                                   static_cast<Count>(0.36 * static_cast<double>(iteration)));
 
       if (sufficient || artificial) {
         // Primal weight update towards observed ratio of dual/primal movement  [PDLP §3.2]
@@ -812,56 +910,68 @@ Solution solve_pdhg_gpu(const Model& model, const Options& options, Logger& logg
         cudaMemset(g.d_xsum, 0, n * sizeof(double));
         cudaMemset(g.d_ysum, 0, m * sizeof(double));
         averaged = 0;
-        x_restart = h_x; y_restart = h_y;
+        x_restart = h_x;
+        y_restart = h_y;
         restart_kkt = kkt;
         last_restart = iteration;
         ++restarts;
-        logger.verbose("restart {} at iteration {}: KKT {:.3e}, primal weight {:.3e}",
-                       restarts, iteration, kkt, omega);
+        logger.verbose("restart {} at iteration {}: KKT {:.3e}, primal weight {:.3e}", restarts,
+                       iteration, kkt, omega);
       }
     }
   }  // end while
 
   if (gpu_error) {
-    logger.warning("GPU PDHG: CUDA error during solve; falling back to CPU solver");
-    return pdhg::solve_pdhg(model, options, logger, control);
+    // The CPU engine takes over on what the budget has left (#289): the seconds already
+    // spent on the device are not handed out a second time.
+    Options remaining = options;
+    if (limits.has_time_limit()) {
+      remaining.set_double("time_limit", limits.remaining_seconds(timer.elapsed_seconds()));
+    }
+    logger.warning(
+        "GPU PDHG: CUDA error during solve after {:.2f}s; falling back to the CPU "
+        "solver on the remaining budget",
+        timer.elapsed_seconds());
+    return pdhg::solve_pdhg(model, remaining, logger, control);
   }
 
   // ---- Extract solution --------------------------------------------------
   for (Index j = 0; j < cols; ++j)
-    solution.col_value[static_cast<std::size_t>(j)] = best_x.empty() ? 0.0
-        : best_x[static_cast<std::size_t>(j)];
+    solution.col_value[static_cast<std::size_t>(j)] =
+        best_x.empty() ? 0.0 : best_x[static_cast<std::size_t>(j)];
 
   const Residuals final_r = evaluate(prob, best_x, best_y, activity, reduced_costs);
   for (Index j = 0; j < cols; ++j)
-    solution.col_dual[static_cast<std::size_t>(j)] = sense * reduced_costs[static_cast<std::size_t>(j)];
+    solution.col_dual[static_cast<std::size_t>(j)] =
+        sense * reduced_costs[static_cast<std::size_t>(j)];
   for (Index i = 0; i < rows; ++i)
-    solution.row_dual[static_cast<std::size_t>(i)] = sense * (-best_y[static_cast<std::size_t>(i)]);
+    solution.row_dual[static_cast<std::size_t>(i)] =
+        sense * (-best_y[static_cast<std::size_t>(i)]);
 
-  solution.iterations    = iteration;
+  solution.iterations = iteration;
   solution.solve_seconds = timer.elapsed_seconds();
 
   const bool verifiable = converged && final_r.meets_project_standard();
   if (verifiable) {
-    solution.status  = SolveStatus::kOptimal;
+    solution.status = SolveStatus::kOptimal;
     solution.message = fmt::format(
         "CUDA PDHG converged after {} iterations and {} restarts; absolute primal {:.3e}, "
         "dual {:.3e}, relative gap {:.3e}",
         iteration, restarts, final_r.absolute_primal, final_r.absolute_dual,
         final_r.gap_as_verified);
   } else if (converged) {
-    solution.status  = SolveStatus::kFeasible;
+    solution.status = SolveStatus::kFeasible;
     solution.message = fmt::format(
         "CUDA PDHG met requested tolerance {:.1e} after {} iterations but NOT project standard "
         "(primal {:.3e} vs {:.1e}, dual {:.3e} vs {:.1e}, gap {:.3e} vs {:.1e})",
-        tolerance, iteration,
-        final_r.absolute_primal, tol::kPrimalFeasibility,
-        final_r.absolute_dual,   tol::kDualFeasibility,
-        final_r.gap_as_verified, tol::kDualityGap);
+        tolerance, iteration, final_r.absolute_primal, tol::kPrimalFeasibility,
+        final_r.absolute_dual, tol::kDualFeasibility, final_r.gap_as_verified,
+        tol::kDualityGap);
   } else {
-    solution.status = (stop_status == SolveStatus::kTimeLimit ||
-                       stop_status == SolveStatus::kInterrupted)
-        ? stop_status : SolveStatus::kIterationLimit;
+    solution.status =
+        (stop_status == SolveStatus::kTimeLimit || stop_status == SolveStatus::kInterrupted)
+            ? stop_status
+            : SolveStatus::kIterationLimit;
     solution.message = fmt::format(
         "CUDA PDHG stopped at relative primal {:.3e}, dual {:.3e}, gap {:.3e} after {} "
         "iterations and {} restarts (target {:.1e})",
@@ -879,8 +989,8 @@ Solution solve_pdhg_gpu(const Model& model, const Options& options, Logger& logg
   logger.info("Status: {}   objective {:.10e}   iterations {}   restarts {}   time {:.3f}s",
               to_string(solution.status), solution.objective, solution.iterations, restarts,
               solution.solve_seconds);
-  logger.info("Relative residuals: primal {:.3e}, dual {:.3e}, gap {:.3e}",
-              final_r.primal, final_r.dual, final_r.gap);
+  logger.info("Relative residuals: primal {:.3e}, dual {:.3e}, gap {:.3e}", final_r.primal,
+              final_r.dual, final_r.gap);
   if (!solution.message.empty()) logger.info("{}", solution.message);
   return solution;
 }
