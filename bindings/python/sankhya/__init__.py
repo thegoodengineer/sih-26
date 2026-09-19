@@ -336,6 +336,134 @@ class Result:
         return self._certificate(lib.sankhya_solution_primal_ray_length,
                                  lib.sankhya_solution_primal_ray, "unbounded ray")
 
+    # ---- Sensitivity ranging (--option ranging=True; #220) ---------------------------------
+
+    @property
+    def has_ranging(self) -> bool:
+        """Whether ranging was requested and computed. Check before reading the four
+        properties below; they read as empty, not as an error, when this is False."""
+        return bool(_library().sankhya_solution_has_ranging(self._handle))
+
+    @property
+    def ranging_basis_degenerate(self) -> bool:
+        """True when a basic variable sits on a bound, so the ranges below are of the
+        reported basis rather than of a unique optimum."""
+        return bool(_library().sankhya_solution_ranging_basis_degenerate(self._handle))
+
+    @property
+    def col_ranging_lower(self) -> list[float]:
+        """How far each column's cost can fall before the optimal basis changes, in the
+        model's own sense. Empty when ``has_ranging`` is False."""
+        if not self.has_ranging:
+            return []
+        return self._vector(_library().sankhya_solution_col_ranging_lower, self._cols,
+                            "column cost ranging (lower)")
+
+    @property
+    def col_ranging_upper(self) -> list[float]:
+        """How far each column's cost can rise before the optimal basis changes."""
+        if not self.has_ranging:
+            return []
+        return self._vector(_library().sankhya_solution_col_ranging_upper, self._cols,
+                            "column cost ranging (upper)")
+
+    @property
+    def row_ranging_lower(self) -> list[float]:
+        """How far each row's active bound can fall before the basis becomes primal
+        infeasible (or, for a non-binding row, before its far bound would bind)."""
+        if not self.has_ranging:
+            return []
+        return self._vector(_library().sankhya_solution_row_ranging_lower, self._rows,
+                            "row bound ranging (lower)")
+
+    @property
+    def row_ranging_upper(self) -> list[float]:
+        """How far each row's active bound can rise before the basis becomes primal
+        infeasible."""
+        if not self.has_ranging:
+            return []
+        return self._vector(_library().sankhya_solution_row_ranging_upper, self._rows,
+                            "row bound ranging (upper)")
+
+    # ---- Irreducible Infeasible Subsystem (--option compute_iis=True; #217) ----------------
+
+    def _index_vector(self, function, count: int, what: str) -> list[int]:
+        if count == 0:
+            return []
+        buffer = (ctypes.c_int * count)()
+        _check(function(self._handle, buffer, count), f"reading {what}")
+        return list(buffer)
+
+    @property
+    def iis_rows(self) -> list[int]:
+        """Row indices (0-based) in the Irreducible Infeasible Subsystem. Empty unless
+        ``compute_iis`` was set and the verdict is infeasible."""
+        lib = _library()
+        return self._index_vector(lib.sankhya_solution_iis_rows,
+                                  lib.sankhya_solution_iis_row_count(self._handle), "IIS rows")
+
+    @property
+    def iis_col_lower(self) -> list[int]:
+        """Column indices (0-based) whose LOWER bound is in the IIS."""
+        lib = _library()
+        return self._index_vector(
+            lib.sankhya_solution_iis_col_lower,
+            lib.sankhya_solution_iis_col_lower_count(self._handle), "IIS column lower bounds")
+
+    @property
+    def iis_col_upper(self) -> list[int]:
+        """Column indices (0-based) whose UPPER bound is in the IIS."""
+        lib = _library()
+        return self._index_vector(
+            lib.sankhya_solution_iis_col_upper,
+            lib.sankhya_solution_iis_col_upper_count(self._handle), "IIS column upper bounds")
+
+    @property
+    def iis_inconclusive(self) -> bool:
+        """True when the deletion filter could not prove every retained element necessary,
+        so the IIS above may not be irreducible."""
+        return bool(_library().sankhya_solution_iis_inconclusive(self._handle))
+
+    @property
+    def iis_witnesses(self) -> list[list[float]]:
+        """One witness per IIS element, in the order ``iis_rows`` then ``iis_col_lower`` then
+        ``iis_col_upper``: a point (one value per column) that satisfies every OTHER element
+        of the IIS and violates this one - the deletion filter's own evidence the element is
+        necessary."""
+        lib = _library()
+        count = lib.sankhya_solution_iis_witness_count(self._handle)
+        witnesses = []
+        for index in range(count):
+            buffer = (ctypes.c_double * self._cols)()
+            _check(lib.sankhya_solution_iis_witness(self._handle, index, buffer, self._cols),
+                  f"reading IIS witness {index}")
+            witnesses.append(list(buffer))
+        return witnesses
+
+    # ---- Solution pool (--option pool_size=N; #225) -----------------------------------------
+
+    @property
+    def pool_size(self) -> int:
+        """Number of integer-feasible points the search kept. 0 unless branch and bound
+        produced one. Member 0 is always the reported solution."""
+        return _library().sankhya_solution_pool_size(self._handle)
+
+    def pool_objective(self, index: int) -> float:
+        """Member ``index``'s objective, in the model's own sense with the offset included."""
+        objective = ctypes.c_double()
+        _check(_library().sankhya_solution_pool_objective(self._handle, index, objective),
+              f"reading pool member {index}'s objective")
+        return objective.value
+
+    def pool_col_values(self, index: int) -> list[float]:
+        """Member ``index``'s column values, in the order the columns were added."""
+        buffer = (ctypes.c_double * self._cols)()
+        _check(
+            _library().sankhya_solution_pool_col_values(self._handle, index, buffer,
+                                                        self._cols),
+            f"reading pool member {index}'s column values")
+        return list(buffer)
+
     def __repr__(self) -> str:
         return f"<sankhya.Result {self.status} objective={self.objective:.10g}>"
 

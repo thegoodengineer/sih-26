@@ -227,6 +227,32 @@ def _declare(lib: ctypes.CDLL) -> None:
         getattr(lib, name).argtypes = [solution_p, c_double_p, ctypes.c_int]
         getattr(lib, name).restype = ctypes.c_int
 
+    # Sensitivity ranging (#220), the IIS (#217) and the solution pool (#225) - #261.
+    for name in ("sankhya_solution_has_ranging", "sankhya_solution_ranging_basis_degenerate",
+                 "sankhya_solution_iis_row_count", "sankhya_solution_iis_col_lower_count",
+                 "sankhya_solution_iis_col_upper_count", "sankhya_solution_iis_inconclusive",
+                 "sankhya_solution_iis_witness_count", "sankhya_solution_pool_size"):
+        getattr(lib, name).argtypes = [solution_p]
+        getattr(lib, name).restype = ctypes.c_int
+    for name in ("sankhya_solution_col_ranging_lower", "sankhya_solution_col_ranging_upper",
+                 "sankhya_solution_row_ranging_lower", "sankhya_solution_row_ranging_upper"):
+        getattr(lib, name).argtypes = [solution_p, c_double_p, ctypes.c_int]
+        getattr(lib, name).restype = ctypes.c_int
+    for name in ("sankhya_solution_iis_rows", "sankhya_solution_iis_col_lower",
+                 "sankhya_solution_iis_col_upper"):
+        getattr(lib, name).argtypes = [solution_p, c_int_p, ctypes.c_int]
+        getattr(lib, name).restype = ctypes.c_int
+    lib.sankhya_solution_iis_witness.argtypes = [
+        solution_p, ctypes.c_int, c_double_p, ctypes.c_int,
+    ]
+    lib.sankhya_solution_iis_witness.restype = ctypes.c_int
+    lib.sankhya_solution_pool_objective.argtypes = [solution_p, ctypes.c_int, c_double_p]
+    lib.sankhya_solution_pool_objective.restype = ctypes.c_int
+    lib.sankhya_solution_pool_col_values.argtypes = [
+        solution_p, ctypes.c_int, c_double_p, ctypes.c_int,
+    ]
+    lib.sankhya_solution_pool_col_values.restype = ctypes.c_int
+
 
 _cached: ctypes.CDLL | None = None
 

@@ -720,4 +720,153 @@ sankhya_status sankhya_solution_primal_ray(const sankhya_solution* solution, dou
   return copy_certificate(solution->solution.primal_ray, values, count, "unbounded ray");
 }
 
+namespace {
+
+/// Copy an Index vector out as plain `int`, refusing a size mismatch - the int32_t ->
+/// int narrowing is exact on every platform this builds for. Certificate-shaped: an empty
+/// source with count 0 is not an error, the same as copy_certificate above but for the IIS's
+/// row/column index lists rather than a vector<double>.
+sankhya_status copy_index_certificate(const std::vector<sankhya::Index>& source,
+                                      int* destination, int count, const char* what) {
+  if (source.empty() && count == 0) return ok();
+  if (destination == nullptr) return fail(SANKHYA_ERROR_ARGUMENT, "destination is null");
+  if (count < 0 || static_cast<std::size_t>(count) != source.size()) {
+    return fail(SANKHYA_ERROR_ARGUMENT, std::string("wrong buffer size for ") + what +
+                                            ": the solution has " +
+                                            std::to_string(source.size()) + " entries, " +
+                                            std::to_string(count) + " were offered");
+  }
+  for (std::size_t i = 0; i < source.size(); ++i) destination[i] = static_cast<int>(source[i]);
+  return ok();
+}
+
+}  // namespace
+
+int sankhya_solution_has_ranging(const sankhya_solution* solution) {
+  if (solution == nullptr) return 0;
+  return solution->solution.col_ranging_lower.empty() ? 0 : 1;
+}
+
+sankhya_status sankhya_solution_col_ranging_lower(const sankhya_solution* solution,
+                                                  double* values, int count) {
+  if (solution == nullptr) return fail(SANKHYA_ERROR_ARGUMENT, "solution is null");
+  return copy_certificate(solution->solution.col_ranging_lower, values, count,
+                          "column cost ranging (lower)");
+}
+
+sankhya_status sankhya_solution_col_ranging_upper(const sankhya_solution* solution,
+                                                  double* values, int count) {
+  if (solution == nullptr) return fail(SANKHYA_ERROR_ARGUMENT, "solution is null");
+  return copy_certificate(solution->solution.col_ranging_upper, values, count,
+                          "column cost ranging (upper)");
+}
+
+sankhya_status sankhya_solution_row_ranging_lower(const sankhya_solution* solution,
+                                                  double* values, int count) {
+  if (solution == nullptr) return fail(SANKHYA_ERROR_ARGUMENT, "solution is null");
+  return copy_certificate(solution->solution.row_ranging_lower, values, count,
+                          "row bound ranging (lower)");
+}
+
+sankhya_status sankhya_solution_row_ranging_upper(const sankhya_solution* solution,
+                                                  double* values, int count) {
+  if (solution == nullptr) return fail(SANKHYA_ERROR_ARGUMENT, "solution is null");
+  return copy_certificate(solution->solution.row_ranging_upper, values, count,
+                          "row bound ranging (upper)");
+}
+
+int sankhya_solution_ranging_basis_degenerate(const sankhya_solution* solution) {
+  if (solution == nullptr) return 0;
+  return solution->solution.ranging_basis_degenerate ? 1 : 0;
+}
+
+int sankhya_solution_iis_row_count(const sankhya_solution* solution) {
+  if (solution == nullptr) return 0;
+  return static_cast<int>(solution->solution.iis_rows.size());
+}
+
+sankhya_status sankhya_solution_iis_rows(const sankhya_solution* solution, int* indices,
+                                         int count) {
+  if (solution == nullptr) return fail(SANKHYA_ERROR_ARGUMENT, "solution is null");
+  return copy_index_certificate(solution->solution.iis_rows, indices, count, "IIS rows");
+}
+
+int sankhya_solution_iis_col_lower_count(const sankhya_solution* solution) {
+  if (solution == nullptr) return 0;
+  return static_cast<int>(solution->solution.iis_col_lo.size());
+}
+
+sankhya_status sankhya_solution_iis_col_lower(const sankhya_solution* solution, int* indices,
+                                              int count) {
+  if (solution == nullptr) return fail(SANKHYA_ERROR_ARGUMENT, "solution is null");
+  return copy_index_certificate(solution->solution.iis_col_lo, indices, count,
+                                "IIS column lower bounds");
+}
+
+int sankhya_solution_iis_col_upper_count(const sankhya_solution* solution) {
+  if (solution == nullptr) return 0;
+  return static_cast<int>(solution->solution.iis_col_hi.size());
+}
+
+sankhya_status sankhya_solution_iis_col_upper(const sankhya_solution* solution, int* indices,
+                                              int count) {
+  if (solution == nullptr) return fail(SANKHYA_ERROR_ARGUMENT, "solution is null");
+  return copy_index_certificate(solution->solution.iis_col_hi, indices, count,
+                                "IIS column upper bounds");
+}
+
+int sankhya_solution_iis_inconclusive(const sankhya_solution* solution) {
+  if (solution == nullptr) return 0;
+  return solution->solution.iis_inconclusive ? 1 : 0;
+}
+
+int sankhya_solution_iis_witness_count(const sankhya_solution* solution) {
+  if (solution == nullptr) return 0;
+  return static_cast<int>(solution->solution.iis_witnesses.size());
+}
+
+sankhya_status sankhya_solution_iis_witness(const sankhya_solution* solution, int index,
+                                            double* values, int count) {
+  if (solution == nullptr) return fail(SANKHYA_ERROR_ARGUMENT, "solution is null");
+  const auto& witnesses = solution->solution.iis_witnesses;
+  if (index < 0 || static_cast<std::size_t>(index) >= witnesses.size()) {
+    return fail(SANKHYA_ERROR_ARGUMENT, "IIS witness index " + std::to_string(index) +
+                                            " is out of range (" +
+                                            std::to_string(witnesses.size()) + " available)");
+  }
+  return copy_vector(witnesses[static_cast<std::size_t>(index)], values, count, "IIS witness");
+}
+
+int sankhya_solution_pool_size(const sankhya_solution* solution) {
+  if (solution == nullptr) return 0;
+  return static_cast<int>(solution->solution.pool.size());
+}
+
+sankhya_status sankhya_solution_pool_objective(const sankhya_solution* solution, int index,
+                                               double* objective) {
+  if (solution == nullptr) return fail(SANKHYA_ERROR_ARGUMENT, "solution is null");
+  if (objective == nullptr) return fail(SANKHYA_ERROR_ARGUMENT, "objective is null");
+  const auto& pool = solution->solution.pool;
+  if (index < 0 || static_cast<std::size_t>(index) >= pool.size()) {
+    return fail(SANKHYA_ERROR_ARGUMENT, "pool index " + std::to_string(index) +
+                                            " is out of range (" + std::to_string(pool.size()) +
+                                            " available)");
+  }
+  *objective = pool[static_cast<std::size_t>(index)].objective;
+  return ok();
+}
+
+sankhya_status sankhya_solution_pool_col_values(const sankhya_solution* solution, int index,
+                                                double* values, int count) {
+  if (solution == nullptr) return fail(SANKHYA_ERROR_ARGUMENT, "solution is null");
+  const auto& pool = solution->solution.pool;
+  if (index < 0 || static_cast<std::size_t>(index) >= pool.size()) {
+    return fail(SANKHYA_ERROR_ARGUMENT, "pool index " + std::to_string(index) +
+                                            " is out of range (" + std::to_string(pool.size()) +
+                                            " available)");
+  }
+  return copy_vector(pool[static_cast<std::size_t>(index)].col_value, values, count,
+                     "pool member column values");
+}
+
 }  // extern "C"

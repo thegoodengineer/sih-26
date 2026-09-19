@@ -390,6 +390,114 @@ int sankhya_solution_primal_ray_length(const sankhya_solution* solution);
 sankhya_status sankhya_solution_primal_ray(const sankhya_solution* solution, double* values,
                                            int count);
 
+/* ---- Sensitivity ranging (`--option ranging=true`; #220) ------------------------------ */
+
+/**
+ * 1 when ranging was computed - col_ranging_lower/upper then have the model's column count
+ * and row_ranging_lower/upper its row count - and 0 otherwise.
+ *
+ * Ask this before reading any of the four vectors below, the role
+ * sankhya_solution_claims_a_point plays for col_values: at 0 they are still safe to copy
+ * (length 0), but empty rather than ranged.
+ */
+int sankhya_solution_has_ranging(const sankhya_solution* solution);
+
+/**
+ * How far column j's cost can fall (lower) or rise (upper) before the optimal basis
+ * changes, in the model's own sense. Same contract as sankhya_solution_col_values, except
+ * that length 0 is not an error - see sankhya_solution_has_ranging.
+ */
+sankhya_status sankhya_solution_col_ranging_lower(const sankhya_solution* solution,
+                                                  double* values, int count);
+sankhya_status sankhya_solution_col_ranging_upper(const sankhya_solution* solution,
+                                                  double* values, int count);
+
+/**
+ * How far row i's active bound can fall (lower) or rise (upper) before the basis becomes
+ * primal infeasible; for a non-binding row, how far the far bound can move before it binds.
+ * Same contract as the column ranges above, with `count` equal to the row count.
+ */
+sankhya_status sankhya_solution_row_ranging_lower(const sankhya_solution* solution,
+                                                  double* values, int count);
+sankhya_status sankhya_solution_row_ranging_upper(const sankhya_solution* solution,
+                                                  double* values, int count);
+
+/**
+ * 1 when a basic variable sits on a bound, so the vertex has more than one basis and the
+ * ranges above are of the reported one, not of a unique optimum. 0 otherwise, including
+ * when ranging was not computed at all.
+ */
+int sankhya_solution_ranging_basis_degenerate(const sankhya_solution* solution);
+
+/* ---- Irreducible Infeasible Subsystem (`--option compute_iis=true`; #217) ------------- */
+
+/** Row indices (0-based) in the IIS. 0 when none was computed. */
+int sankhya_solution_iis_row_count(const sankhya_solution* solution);
+
+/** Copy the IIS row indices. Same contract as sankhya_solution_col_values, except that
+ * length 0 is not an error: no IIS computed and an IIS with no row both report it. */
+sankhya_status sankhya_solution_iis_rows(const sankhya_solution* solution, int* indices,
+                                         int count);
+
+/** Column indices (0-based) whose LOWER bound is in the IIS. */
+int sankhya_solution_iis_col_lower_count(const sankhya_solution* solution);
+sankhya_status sankhya_solution_iis_col_lower(const sankhya_solution* solution, int* indices,
+                                              int count);
+
+/** Column indices (0-based) whose UPPER bound is in the IIS. */
+int sankhya_solution_iis_col_upper_count(const sankhya_solution* solution);
+sankhya_status sankhya_solution_iis_col_upper(const sankhya_solution* solution, int* indices,
+                                              int count);
+
+/**
+ * 1 when the deletion filter could not prove every retained element necessary - a trial
+ * solve hit a limit or a numerical error instead of reaching a verdict - so the IIS may not
+ * be irreducible. 0 when it is confirmed irreducible, including when none was computed.
+ */
+int sankhya_solution_iis_inconclusive(const sankhya_solution* solution);
+
+/**
+ * Number of IIS witnesses: one per element, in the order rows, then column lower bounds,
+ * then column upper bounds - so witness k corresponds to row iis_rows[k] while
+ * k < sankhya_solution_iis_row_count, and to the column arrays beyond that. 0 when no IIS
+ * was computed, or when sankhya_solution_iis_inconclusive is 1 for an element this witness
+ * would otherwise cover.
+ */
+int sankhya_solution_iis_witness_count(const sankhya_solution* solution);
+
+/**
+ * Copy witness `index`: a point, one value per model column, that satisfies every OTHER
+ * element of the IIS and violates this one - the deletion filter's own evidence that the
+ * element is necessary, kept so a caller can check irreducibility by arithmetic alone.
+ * `count` must equal the model's column count. `index` out of range is
+ * SANKHYA_ERROR_ARGUMENT.
+ */
+sankhya_status sankhya_solution_iis_witness(const sankhya_solution* solution, int index,
+                                            double* values, int count);
+
+/* ---- Solution pool (`--option pool_size=N`; #225) -------------------------------------- */
+
+/**
+ * Number of integer-feasible points the search kept, each a distinct integer assignment.
+ * 0 unless branch and bound produced one. Member 0 is always the reported solution, so
+ * col_values/objective and pool member 0 agree exactly.
+ */
+int sankhya_solution_pool_size(const sankhya_solution* solution);
+
+/**
+ * Member `index`'s objective, in the model's own sense with the offset included.
+ * `index` out of range is SANKHYA_ERROR_ARGUMENT.
+ */
+sankhya_status sankhya_solution_pool_objective(const sankhya_solution* solution, int index,
+                                               double* objective);
+
+/**
+ * Copy member `index`'s column values. `count` must equal the model's column count.
+ * `index` out of range is SANKHYA_ERROR_ARGUMENT.
+ */
+sankhya_status sankhya_solution_pool_col_values(const sankhya_solution* solution, int index,
+                                                double* values, int count);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif
