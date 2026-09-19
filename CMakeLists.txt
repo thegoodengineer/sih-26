@@ -84,6 +84,29 @@ FetchContent_Declare(nlohmann_json
 
 FetchContent_MakeAvailable(fmt cli11 nlohmann_json)
 
+# fmt 10.2.1 encodes a lookup table as a char32_t string literal with code points above
+# U+10FFFF (e.g. U"\x9999999a"), which nvcc's tokenizer rejects even for host-only code.
+# Patch fractional_part_rounding_thresholds to use a constexpr array instead.  Only done
+# when building with MSVC+CUDA because that is the only toolchain affected.
+if(MSVC AND SANKHYA_ENABLE_CUDA)
+  FetchContent_GetProperties(fmt SOURCE_DIR fmt_SOURCE_DIR)
+  set(_fmt_header "${fmt_SOURCE_DIR}/include/fmt/format.h")
+  if(EXISTS "${_fmt_header}")
+    file(READ "${_fmt_header}" _fmt_src)
+    string(FIND "${_fmt_src}" "0x9999999au" _already_patched)
+    if(_already_patched EQUAL -1)
+      string(REPLACE
+        [=[return U"\x9999999a\x828f5c29\x80418938\x80068db9\x8000a7c6\x800010c7"
+         U"\x800001ae\x8000002b"[index];]=]
+        [=[constexpr uint32_t _t[] = {0x9999999au,0x828f5c29u,0x80418938u,0x80068db9u,
+    0x8000a7c6u,0x800010c7u,0x800001aeu,0x8000002bu}; return _t[index];]=]
+        _fmt_src "${_fmt_src}")
+      file(WRITE "${_fmt_header}" "${_fmt_src}")
+      message(STATUS "Patched fmt/format.h: replaced char32_t string literal with uint32_t array (nvcc workaround)")
+    endif()
+  endif()
+endif()
+
 # Dependency headers are pulled into our translation units, so our -Werror set is applied to
 # their code as well as ours - fmt 10.2.1's ranges.h trips -Wtautological-compare on GCC 16,
 # for instance. Re-export each dependency's include directories as SYSTEM so the compiler
@@ -142,7 +165,15 @@ endif()
 add_library(sankhya_flags INTERFACE)
 
 if(MSVC)
-  target_compile_options(sankhya_flags INTERFACE /W4 /WX /permissive- /Zc:__cplusplus)
+  target_compile_options(sankhya_flags INTERFACE
+    "$<$<COMPILE_LANGUAGE:CXX>:/W4;/WX;/permissive-;/Zc:__cplusplus>")
+  target_compile_definitions(sankhya_flags INTERFACE _CRT_SECURE_NO_WARNINGS)
+  if(SANKHYA_ENABLE_CUDA)
+    # CCCL (bundled with CUDA toolkit) requires the conforming preprocessor; pass it
+    # to the host compiler for all CUDA translation units.
+    target_compile_options(sankhya_flags INTERFACE
+      "$<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=/Zc:preprocessor>")
+  endif()
 else()
   set(SANKHYA_GCC_WARNINGS
     -Wall -Wextra -Werror -Wshadow -Wconversion -Wsign-conversion -Wcast-qual

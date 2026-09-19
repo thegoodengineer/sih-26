@@ -1670,6 +1670,89 @@ def robustness_section(path: Path | None) -> str:
     return chr(10).join(out)
 
 
+def gpu_section(path: Path | None) -> str:
+    """CPU vs GPU PDHG crossover: at what size does the GPU backend beat the CPU (#19)."""
+    if path is None:
+        return chr(10).join([
+            "Not yet run. Reproduce with:",
+            "",
+            "```",
+            "python bench/runners/gpu_report.py --binary build_gpu/sankhya",
+            "```",
+            "",
+        ])
+    rows = read_csv(path)
+    if not rows:
+        return "No GPU benchmark results yet." + chr(10)
+
+    commit = rows[0].get("git_commit", "unknown")
+    machine = rows[0].get("machine", "unknown")
+    gpu = rows[0].get("gpu", "") or "not recorded"
+    if "-dirty" in commit:
+        return (f"`{path.name}` is stamped `{commit}`: produced from a modified tree, so it "
+                "cannot be cited. Re-run `bench/runners/gpu_report.py` on a clean checkout "
+                "of a commit on `main`." + chr(10))
+
+    # Build a table: rows = sizes, cols = (cpu_1e-4, gpu_1e-4, speedup_1e-4, cpu_1e-8, ...)
+    sizes = sorted({(int(r["rows"]), int(r["cols"])) for r in rows})
+
+    def lookup(nrows: int, ncols: int, alg: str, tol: float) -> dict | None:
+        # The tolerance is compared as a number: the runner wrote "0.0001" once and this
+        # looked for "1e-04", and the 1e-4 columns of the table came out empty.
+        for r in rows:
+            try:
+                same_tol = abs(float(r.get("tolerance", "nan")) - tol) <= 1e-3 * tol
+            except ValueError:
+                same_tol = False
+            if (int(r.get("rows", 0)) == nrows and int(r.get("cols", 0)) == ncols
+                    and r.get("algorithm") == alg and same_tol):
+                return r
+        return None
+
+    lines = [
+        f"Source CSV: `bench/results/{path.name}`  ",
+        f"Commit `{commit}` · machine `{machine}`",
+        "",
+        "Both columns time PDHG alone (`pdhg_polish=false`) on the solver's own clock, to the "
+        "tolerance named; a warm-up GPU solve absorbed CUDA's context creation before the "
+        "timed ones. The GPU pays a per-iteration launch and transfer cost that a small model "
+        "cannot amortise; the crossover is where the parallel products start to pay for it.",
+        "",
+        "| rows×cols | CPU 1e-4 (s) | GPU 1e-4 (s) | speedup | CPU 1e-8 (s) | GPU 1e-8 (s) | speedup |",
+        "|----------:|-------------:|-------------:|--------:|-------------:|-------------:|--------:|",
+    ]
+    for nrows, ncols in sizes:
+        cpu4 = lookup(nrows, ncols, "pdhg-cpu", 1e-4)
+        gpu4 = lookup(nrows, ncols, "pdhg-cuda", 1e-4)
+        cpu8 = lookup(nrows, ncols, "pdhg-cpu", 1e-8)
+        gpu8 = lookup(nrows, ncols, "pdhg-cuda", 1e-8)
+
+        def fmt_s(r: dict | None) -> str:
+            return f"{float(r['seconds']):.3f}" if r else "—"
+
+        def fmt_speedup(cpu: dict | None, gpu: dict | None) -> str:
+            if not cpu or not gpu:
+                return "—"
+            try:
+                s = float(cpu["seconds"]) / float(gpu["seconds"])
+                return f"**{s:.2f}×**" if s > 1 else f"{s:.2f}×"
+            except (ZeroDivisionError, ValueError):
+                return "—"
+
+        lines.append(
+            f"| {nrows}×{ncols} | {fmt_s(cpu4)} | {fmt_s(gpu4)} | {fmt_speedup(cpu4, gpu4)} "
+            f"| {fmt_s(cpu8)} | {fmt_s(gpu8)} | {fmt_speedup(cpu8, gpu8)} |"
+        )
+
+    lines += [
+        "",
+        f"GPU: {gpu}.  ",
+        "Instances are synthetic KKT LPs with ~5 nonzeros per column (seed 42).",
+        "",
+    ]
+    return chr(10).join(lines)
+
+
 def main() -> int:
     # Both tiers, separately. Reporting only one was the whole of issue #53: the small set
     # is 8/8, which reads as a solved problem, and the medium tier is the number that says
@@ -1697,6 +1780,7 @@ def main() -> int:
     # family's evidence - they measure the SELECTOR, not an engine.
     auto_scale_csvs = {shape: newest(f"auto-scale-{shape}-*.csv")
                        for shape in ("random", "staircase", "refinery")}
+    gpu_csv = newest("gpu-*.csv")
 
     # Legacy untagged CSVs predate the tier tag; fall back so an old results directory still
     # generates something rather than failing.
@@ -1772,6 +1856,15 @@ than one blended number. It is also the engine the GPU work targets, so its CPU 
 the baseline every GPU claim will be measured against.
 
 {pdhg_section(pdhg_csv)}
+---
+
+### 1g. GPU PDHG crossover — when the GPU wins
+
+The GPU backend (`algorithm=pdhg gpu=true`) offloads the matrix-vector products to CUDA.
+Small problems spend more time on data transfer than on computation; the crossover point
+below is where the GPU overtakes the CPU.
+
+{gpu_section(gpu_csv)}
 ---
 
 ### 1f. Scale — how far up this goes
@@ -1867,9 +1960,7 @@ of Beale and Kuhn.
   The comparison in section 4 uses solver-internal time on both sides for that reason.
 - The failures in section 1b are real and are not going to be quietly dropped from a later
   edition of this file. Each one carries the issue tracking it.
-- One engine named in PS26119 is not measured on this page at all: there is no GPU backend
-  on `main` - the CUDA backend is PR #274, open, not yet built or measured on a GPU
-  (#16-#19). The interior-point method (`algorithm=ipm`, #56) is opt-in and produces no
+- The GPU PDHG backend is measured in section 1g. The interior-point method (`algorithm=ipm`, #56) is opt-in and produces no
   basis, so it is not the engine behind any Netlib or MIPLIB table above - sections 1f to
   1f.3 are the exception, where it appears beside the others: since the AMD ordering (#193)
   it reaches 5,000 rows on the random shape and 20,000 on the staircase, and solves the

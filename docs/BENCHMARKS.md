@@ -347,6 +347,20 @@ A ratio above 1 means restarts saved iterations on that instance.
 
 ---
 
+### 1g. GPU PDHG crossover — when the GPU wins
+
+The GPU backend (`algorithm=pdhg gpu=true`) offloads the matrix-vector products to CUDA.
+Small problems spend more time on data transfer than on computation; the crossover point
+below is where the GPU overtakes the CPU.
+
+Not yet run. Reproduce with:
+
+```
+python bench/runners/gpu_report.py --binary build_gpu/sankhya
+```
+
+---
+
 ### 1f. Scale — how far up this goes
 
 Every tier above is Netlib-sized: the largest instance in the full set has 12,230 columns, and
@@ -783,9 +797,7 @@ Reading the table: the `conditioning` cliff is `kZeroDrop` (`tolerances.hpp`), t
   The comparison in section 4 uses solver-internal time on both sides for that reason.
 - The failures in section 1b are real and are not going to be quietly dropped from a later
   edition of this file. Each one carries the issue tracking it.
-- One engine named in PS26119 is not measured on this page at all: there is no GPU backend
-  on `main` - the CUDA backend is PR #274, open, not yet built or measured on a GPU
-  (#16-#19). The interior-point method (`algorithm=ipm`, #56) is opt-in and produces no
+- The GPU PDHG backend is measured in section 1g. The interior-point method (`algorithm=ipm`, #56) is opt-in and produces no
   basis, so it is not the engine behind any Netlib or MIPLIB table above - sections 1f to
   1f.3 are the exception, where it appears beside the others: since the AMD ordering (#193)
   it reaches 5,000 rows on the random shape and 20,000 on the staircase, and solves the

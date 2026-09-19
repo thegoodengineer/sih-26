@@ -31,7 +31,9 @@
 #include <string>
 #include <vector>
 
-#include <fmt/format.h>
+// fmt/format.h uses Unicode string literals that nvcc cannot parse; use snprintf instead.
+#include <cstdio>
+#include <string>
 
 #include "../core/resource_limits.hpp"
 #include "../core/stop_controller.hpp"
@@ -882,26 +884,32 @@ Solution solve_pdhg_multi_gpu(const Model& model, const Options& options,
   const bool verifiable = converged && final_r.meets_project_standard();
   if (verifiable) {
     solution.status = SolveStatus::kOptimal;
-    solution.message = fmt::format(
-        "CUDA multi-GPU PDHG ({} devices) converged after {} iterations and {} restarts; "
-        "absolute primal {:.3e}, dual {:.3e}, relative gap {:.3e}",
+    char buf[256];
+    std::snprintf(buf, sizeof(buf),
+        "CUDA multi-GPU PDHG (%d devices) converged after %ld iterations and %ld restarts; "
+        "absolute primal %.3e, dual %.3e, relative gap %.3e",
         K, iteration, restarts, final_r.absolute_primal, final_r.absolute_dual,
         final_r.gap_as_verified);
+    solution.message = buf;
   } else if (converged) {
     solution.status = SolveStatus::kFeasible;
-    solution.message = fmt::format(
-        "CUDA multi-GPU PDHG ({} devices) met requested tolerance {:.1e} after {} iterations "
+    char buf[256];
+    std::snprintf(buf, sizeof(buf),
+        "CUDA multi-GPU PDHG (%d devices) met requested tolerance %.1e after %ld iterations "
         "but NOT project standard",
         K, tolerance, iteration);
+    solution.message = buf;
   } else {
     solution.status =
         (stop_status == SolveStatus::kTimeLimit || stop_status == SolveStatus::kInterrupted)
             ? stop_status
             : SolveStatus::kIterationLimit;
-    solution.message = fmt::format(
-        "CUDA multi-GPU PDHG ({} devices) stopped at relative primal {:.3e}, dual {:.3e}, "
-        "gap {:.3e} after {} iterations and {} restarts (target {:.1e})",
+    char buf[256];
+    std::snprintf(buf, sizeof(buf),
+        "CUDA multi-GPU PDHG (%d devices) stopped at relative primal %.3e, dual %.3e, "
+        "gap %.3e after %ld iterations and %ld restarts (target %.1e)",
         K, final_r.primal, final_r.dual, final_r.gap, iteration, restarts, tolerance);
+    solution.message = buf;
   }
 
   if (verifiable) {
