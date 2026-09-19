@@ -423,11 +423,11 @@ class SparseLu {
   /// e~ = e_step^T U_current^-1, i.e. a BTRAN through U ALONE (no L, no earlier retas),
   /// seeded at a single step. Shares the push logic with ft_forward_substitute() below.
   ///
-  /// Writes into the member ft_scratch_/ft_scratch_touched_ rather than an out-parameter
+  /// Writes into the members ft_btran_scratch_/ft_btran_touched_ rather than an out-parameter
   /// (issue #279's follow-up): the result is genuinely sparse - e~'s only possible nonzero
   /// positions are `step` and whatever POSITION >= step's own the elimination pushes reach,
   /// so the loop starts at step's own position (everything earlier is provably zero, not
-  /// merely usually zero) and ft_scratch_touched_ records exactly which positions the push
+  /// merely usually zero) and ft_btran_touched_ records exactly which positions the push
   /// actually set, so update_forrest_tomlin() never has to sweep all m to find them.
   void ft_btran_unit(Index step) const;
   void ft_apply_retas(double* residual_by_step) const;      ///< FTRAN: oldest first

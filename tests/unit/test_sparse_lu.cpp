@@ -731,6 +731,56 @@ TEST(SparseLuForrestTomlin, ManyUpdatesInSequenceStayCorrect) {
   EXPECT_LT(worst, 1e-7) << "stacked updates drift from a fresh factorization by " << worst;
 }
 
+TEST(SparseLuForrestTomlin, SparseEnteringColumnsStackLikeDenseOnes) {
+  // The stacking test above replaces columns with DENSE entering vectors, so every entry of
+  // alpha is nonzero and the sparse spike, the partial BTRAN started at the leaving
+  // position and the sparse row eta (#279's follow-up) all degenerate to the dense sweeps
+  // they replaced. This one enters columns with a tenth of their entries set, on a sparser
+  // 60-row basis, over 120 updates, so the touched lists are genuinely partial and an entry
+  // left over from a previous update would show up as drift. Measured at the commit that
+  // added it: 1.4e-7 here against 1.2e-7 for the dense formulation on the same sequence,
+  // both set by this harness's own conditioning, so the bound is 1e-6.
+  std::mt19937 rng(20260919);
+  std::uniform_real_distribution<double> value(-3.0, 3.0);
+  std::uniform_real_distribution<double> unit(0.0, 1.0);
+  constexpr Index m = 60;
+  TestMatrix current = random_basis(rng, m, 0.08);
+  SparseLu lu;
+  ASSERT_TRUE(lu.factorize(current.columns(), m, tol::kPivotTolerance, kThreshold));
+  double worst = 0.0;
+  int applied = 0;
+  for (int step = 0; step < 120; ++step) {
+    const Index leaving = static_cast<Index>((step * 7) % m);
+    std::vector<double> entering(static_cast<std::size_t>(m), 0.0);
+    for (Index i = 0; i < m; ++i) {
+      if (unit(rng) < 0.1) entering[static_cast<std::size_t>(i)] = value(rng);
+    }
+    entering[static_cast<std::size_t>(leaving)] += 6.0;
+    std::vector<double> alpha = entering;
+    lu.solve(alpha.data());
+    if (!lu.update_forrest_tomlin(leaving, alpha.data())) break;
+    ++applied;
+    current = with_column_replaced(current, m, leaving, entering);
+    SparseLu reference;
+    ASSERT_TRUE(reference.factorize(current.columns(), m, tol::kPivotTolerance, kThreshold));
+    std::vector<double> rhs(static_cast<std::size_t>(m));
+    for (double& v : rhs) v = value(rng);
+    std::vector<double> a = rhs;
+    lu.solve(a.data());
+    std::vector<double> b = rhs;
+    reference.solve(b.data());
+    worst = std::max(worst, max_difference(a, b));
+    std::vector<double> at = rhs;
+    lu.solve_transpose(at.data());
+    std::vector<double> bt = rhs;
+    reference.solve_transpose(bt.data());
+    worst = std::max(worst, max_difference(at, bt));
+  }
+  EXPECT_GE(applied, 60) << "the update was rejected too early to test stacking";
+  EXPECT_LT(worst, 1e-6) << "sparse entering columns drift from a fresh factorization by "
+                         << worst;
+}
+
 TEST(SparseLuForrestTomlin, RejectsAnUnsafePivotInsteadOfDividingByIt) {
   constexpr Index m = 4;
   TestMatrix matrix(m);
