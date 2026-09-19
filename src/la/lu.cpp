@@ -1098,8 +1098,12 @@ void SparseLu::ft_init() {
   ft_base_row_nonzeros_ = static_cast<Index>(u_steps_.size());
   ft_row_fill_ = ft_base_row_nonzeros_;
   ft_scratch_.assign(static_cast<std::size_t>(m), 0.0);
+  ft_btran_scratch_.assign(static_cast<std::size_t>(m), 0.0);
+  ft_btran_touched_.clear();
   ft_spike_.assign(static_cast<std::size_t>(m), 0.0);
-  ft_r_.assign(static_cast<std::size_t>(m), 0.0);
+  ft_spike_marked_.assign(static_cast<std::size_t>(m), false);
+  ft_spike_touched_.clear();
+  ft_work_nz_.clear();
   ft_reta_pivot_step_.clear();
   ft_reta_start_.assign(1, 0);
   ft_reta_steps_.clear();
@@ -1154,23 +1158,38 @@ void SparseLu::ft_erase(Index owner_step, Index referenced_step) {
   }
 }
 
-void SparseLu::ft_btran_unit(Index step, double* e_tilde_by_step) const {
+void SparseLu::ft_btran_unit(Index step) const {
+  // Clear exactly the entries the PREVIOUS call left nonzero, in O(prior nnz) rather than
+  // O(m): a push out of this loop only ever reaches a position >= its source's own position
+  // (lu.hpp's own invariant - a step's row only references positions at or after it), and
+  // this loop starts at step's own position, so nothing before it is ever written below -
+  // whatever a fill(0, m) used to zero there was never read either way. ft_btran_scratch_ is
+  // touched ONLY here and in update_forrest_tomlin() reading this call's own output, unlike
+  // ft_scratch_ (see lu.hpp) - the incremental clear below is only valid because nothing else
+  // writes into this buffer between two calls.
+  for (Index touched : ft_btran_touched_) {
+    ft_btran_scratch_[static_cast<std::size_t>(touched)] = 0.0;
+  }
+  ft_btran_touched_.clear();
+
   // e~^T = e_step^T U_current^-1: forward substitution seeded with a single 1, in increasing
   // POSITION order (ft_step_at_ says which step that position currently holds), pushing each
   // resolved step's value into the later steps its own row references. Positions before
-  // step's own start at 0 and push nothing, so this only ever touches step's own position
-  // onward - the "partial" in "partial BTRAN".
-  std::fill(e_tilde_by_step, e_tilde_by_step + m_, 0.0);
-  e_tilde_by_step[static_cast<std::size_t>(step)] = 1.0;
-  for (Index k = 0; k < m_; ++k) {
+  // step's own start at 0 and push nothing - not merely usually zero, but zero BY THE
+  // INVARIANT above - so the loop starts there directly rather than discovering it m times
+  // over (issue #279's follow-up: "the partial BTRAN started at the leaving position").
+  const auto us0 = static_cast<std::size_t>(step);
+  ft_btran_scratch_[us0] = 1.0;
+  for (Index k = ft_position_[us0]; k < m_; ++k) {
     const auto uk = static_cast<std::size_t>(k);
     const Index occupant = ft_step_at_[uk];
     const auto us = static_cast<std::size_t>(occupant);
-    const double value = e_tilde_by_step[us] / ft_diag_[us];
-    e_tilde_by_step[us] = value;
+    const double value = ft_btran_scratch_[us] / ft_diag_[us];
+    ft_btran_scratch_[us] = value;
     if (value == 0.0) continue;
+    ft_btran_touched_.push_back(occupant);
     for (const auto& [other_step, coefficient] : ft_row_[us]) {
-      e_tilde_by_step[static_cast<std::size_t>(other_step)] -= coefficient * value;
+      ft_btran_scratch_[static_cast<std::size_t>(other_step)] -= coefficient * value;
     }
   }
 }
@@ -1266,50 +1285,80 @@ bool SparseLu::update_forrest_tomlin(Index leaving_position, const double* alpha
   // eq. 11 via #243's alpha), from the fully solved `alpha` the caller already has:
   // work_by_step[s] = alpha[pivot_col_[s]] is what back-substitution through the CURRENT U
   // produced from a~, so multiplying that same U forward through it recovers a~ again - the
-  // identity U * work_by_step == a~, read the other way. Both loops here are over STEP
-  // directly, since ft_row_/ft_diag_ are step-keyed and never need a position lookup. No
-  // zero-fill of work_ first: every entry is about to be overwritten by the loop below.
+  // identity U * work_by_step == a~, read the other way. This loop is the one place this
+  // update genuinely must touch every position: `alpha` is a plain dense array with no
+  // sparsity pattern of its own, so finding its nonzeros costs one linear scan regardless.
+  // It costs nothing extra to collect that pattern into ft_work_nz_ while scanning, though -
+  // issue #279's follow-up ("a sparse spike... walk ft_row_/ft_col_ from the nonzeros of
+  // alpha") is what everything from here on reads instead of a second 0..m sweep.
+  ft_work_nz_.clear();
   for (Index s = 0; s < m; ++s) {
-    work_[static_cast<std::size_t>(s)] =
-        alpha[static_cast<std::size_t>(pivot_col_[static_cast<std::size_t>(s)])];
+    const auto us = static_cast<std::size_t>(s);
+    const double value = alpha[static_cast<std::size_t>(pivot_col_[us])];
+    work_[us] = value;
+    if (value != 0.0) ft_work_nz_.push_back(s);
   }
-  // ft_spike_/ft_r_ are member scratch, sized once by ft_init(), for the same reason work_
-  // is: this runs on the pivot path several hundred times a second.
+  // ft_spike_ is member scratch, sized once by ft_init(), for the same reason work_ is: this
+  // runs on the pivot path several hundred times a second. Cleared here from whatever the
+  // PREVIOUS call left touched (O(prior nnz)), then rebuilt as a genuine sparse
+  // matrix-vector product: spike = U * work, computed by walking work's nonzero columns
+  // (ft_work_nz_) and pushing each one's contribution into every row that references it
+  // (ft_col_) plus its own diagonal term - the column-wise dual of the row-wise gather this
+  // replaces, and mathematically identical to it: a row untouched by this push has no
+  // nonzero term in the original sum either, since every one of its entries multiplies some
+  // work_[other_step] that this loop has already established is exactly 0.
   std::vector<double>& spike = ft_spike_;
-  for (Index step = 0; step < m; ++step) {
-    const auto us = static_cast<std::size_t>(step);
-    double value = ft_diag_[us] * work_[us];
-    for (const auto& [other_step, coefficient] : ft_row_[us]) {
-      value += coefficient * work_[static_cast<std::size_t>(other_step)];
+  for (Index touched : ft_spike_touched_) {
+    const auto ut = static_cast<std::size_t>(touched);
+    spike[ut] = 0.0;
+    ft_spike_marked_[ut] = false;
+  }
+  ft_spike_touched_.clear();
+  const auto spike_add = [&](Index index, double delta) {
+    const auto ui = static_cast<std::size_t>(index);
+    if (!ft_spike_marked_[ui]) {
+      ft_spike_marked_[ui] = true;
+      spike[ui] = delta;
+      ft_spike_touched_.push_back(index);
+    } else {
+      spike[ui] += delta;
     }
-    spike[us] = value;
+  };
+  for (Index s : ft_work_nz_) {
+    const auto us = static_cast<std::size_t>(s);
+    const double w = work_[us];
+    spike_add(s, ft_diag_[us] * w);
+    for (const auto& [row, coefficient] : ft_col_[us]) spike_add(row, coefficient * w);
   }
 
   // The row eta: r^T = u-bar_p^T U^-1, where u-bar_p is s0's OWN off-diagonal row (about to
   // be eliminated, since s0 is moving to the last position and nothing can validly reference
   // a row that isn't there any more). Forrest & Tomlin's shortcut (eq. 12): computing the
   // partial BTRAN of a unit vector at s0 gives the same r after scaling by -diag(s0), since
-  // u-bar_p^T = e_p^T U - diag(s0) e_p^T, and e_p^T U U^-1 cancels the first term.
+  // u-bar_p^T = e_p^T U - diag(s0) e_p^T, and e_p^T U U^-1 cancels the first term. r is never
+  // materialised as its own m-sized array below (issue #279's follow-up: "a sparse r") -
+  // ft_btran_touched_ IS r's support (s0 itself excluded, always exactly 0 by
+  // construction), and ft_btran_scratch_[step] scaled by -old_diagonal_s0 is its value, so
+  // both read sites just walk that list.
   const double old_diagonal_s0 = ft_diag_[static_cast<std::size_t>(s0)];
-  ft_btran_unit(s0, ft_scratch_.data());
-  std::vector<double>& r = ft_r_;
-  for (Index step = 0; step < m; ++step) {
-    const auto us = static_cast<std::size_t>(step);
-    r[us] = (step == s0) ? 0.0  // r's own pivot entry is always exactly 0
-                         : -old_diagonal_s0 * ft_scratch_[us];
-  }
+  ft_btran_unit(s0);
 
   // Applying R^-1 to the spike modifies only its s0 entry (R^-1 = I - e_s0 r^T): the new
   // diagonal, once s0 reaches the last position, is spike[s0] minus r's dot product with the
   // whole spike. Every OTHER entry of the spike is installed unchanged below - R^-1 does not
   // touch them, which is the entire reason this costs one small row eta and not a rewrite of
-  // every step the spike touches.
+  // every step the spike touches. Both sums below are over the TOUCHED lists rather than
+  // 0..m: an entry missing from ft_spike_touched_ is exactly 0 by the clear above, and one
+  // missing from ft_btran_touched_ is exactly 0 by ft_btran_unit's own contract.
   double largest = 0.0;
-  for (Index k = 0; k < m; ++k)
-    largest = std::max(largest, std::fabs(spike[static_cast<std::size_t>(k)]));
+  for (Index touched : ft_spike_touched_) {
+    largest = std::max(largest, std::fabs(spike[static_cast<std::size_t>(touched)]));
+  }
   double dot = 0.0;
-  for (Index k = 0; k < m; ++k) {
-    dot += r[static_cast<std::size_t>(k)] * spike[static_cast<std::size_t>(k)];
+  for (Index step : ft_btran_touched_) {
+    if (step == s0) continue;
+    const double r_value = -old_diagonal_s0 * ft_btran_scratch_[static_cast<std::size_t>(step)];
+    dot += r_value * spike[static_cast<std::size_t>(step)];
   }
   const double new_diagonal = spike[static_cast<std::size_t>(s0)] - dot;
   // Both rejections happen here, before the first write below: a caller that reads false
@@ -1330,8 +1379,10 @@ bool SparseLu::update_forrest_tomlin(Index leaving_position, const double* alpha
   for (const auto& [other_step, value] : old_column) ft_erase(other_step, s0);
 
   // Install the new column: every OTHER step whose row now references s0, unchanged from
-  // the spike (R^-1 never touched these). Valid regardless of position, once s0 is last.
-  for (Index step = 0; step < m; ++step) {
+  // the spike (R^-1 never touched these). Valid regardless of position, once s0 is last. A
+  // step outside ft_spike_touched_ has spike 0, so it would never pass the threshold below
+  // anyway - walking the touched list instead of 0..m changes nothing this loop installs.
+  for (Index step : ft_spike_touched_) {
     if (step == s0) continue;
     const double value = spike[static_cast<std::size_t>(step)];
     if (std::fabs(value) >= kDropTolerance) ft_set(step, s0, value);
@@ -1355,11 +1406,13 @@ bool SparseLu::update_forrest_tomlin(Index leaving_position, const double* alpha
 
   // File the row eta: R is applied between L and U on every later solve (ft_apply_retas() /
   // ft_apply_retas_transposed()), not folded into U - see lu.hpp for why U alone cannot
-  // represent it.
+  // represent it. Walking ft_btran_touched_ (r's own support, s0 already excluded above)
+  // rather than 0..m is the "sparse r" this file's other reads of it already rely on.
   ft_reta_pivot_step_.push_back(s0);
-  for (Index step = 0; step < m; ++step) {
-    const double value = r[static_cast<std::size_t>(step)];
-    if (step != s0 && std::fabs(value) >= kDropTolerance) {
+  for (Index step : ft_btran_touched_) {
+    if (step == s0) continue;
+    const double value = -old_diagonal_s0 * ft_btran_scratch_[static_cast<std::size_t>(step)];
+    if (std::fabs(value) >= kDropTolerance) {
       ft_reta_steps_.push_back(step);
       ft_reta_values_.push_back(value);
     }

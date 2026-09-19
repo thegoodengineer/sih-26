@@ -386,12 +386,35 @@ class SparseLu {
   std::vector<Index> ft_reta_steps_;
   std::vector<double> ft_reta_values_;
 
-  mutable std::vector<double> ft_scratch_;  ///< step-indexed scratch, reused across calls
+  /// Step-indexed scratch for solve()'s own Forrest-Tomlin back-substitution
+  /// (ft_back_substitute()): every position is written exactly once per call, so it needs no
+  /// separate touched list - see the comment at its one call site.
+  mutable std::vector<double> ft_scratch_;
+  /// e~ = e_step^T U_current^-1, step-indexed, built by ft_btran_unit() for
+  /// update_forrest_tomlin() alone. Deliberately NOT ft_scratch_ above, despite the similar
+  /// name and shape: solve() runs constantly BETWEEN two update_forrest_tomlin() calls (every
+  /// FTRAN while Forrest-Tomlin is active) and would silently invalidate a touched list kept
+  /// on that buffer by overwriting it for an unrelated reason. ft_btran_touched_ is the
+  /// sparse pattern THIS buffer's last ft_btran_unit() call actually set - dense entries
+  /// outside it are exactly 0, since every read this file does of ft_btran_scratch_ goes
+  /// through this list (issue #279's follow-up: "a sparse r").
+  mutable std::vector<double> ft_btran_scratch_;
+  mutable std::vector<Index> ft_btran_touched_;
   /// Per-update scratch for update_forrest_tomlin(), sized to m by ft_init() and reused
   /// across calls for the same reason work_ is: several hundred updates a second must not
-  /// each allocate two fresh vectors.
+  /// each allocate a fresh vector. ft_spike_marked_/ft_spike_touched_ are the same
+  /// dense-accumulator-plus-pattern pair sparse.hpp's own SparseVector documents - kept as
+  /// plain members here rather than that class so update_forrest_tomlin's existing
+  /// dense-array field names (spike, ft_diag_, ...) did not all need to change shape.
   std::vector<double> ft_spike_;
-  std::vector<double> ft_r_;
+  mutable std::vector<bool> ft_spike_marked_;
+  mutable std::vector<Index> ft_spike_touched_;
+  /// Nonzero steps of the CURRENT call's alpha-by-step vector (work_), collected for free
+  /// while work_ is gathered from the caller's dense `alpha` (that gather is the one place
+  /// this update genuinely must touch all m - alpha itself carries no sparsity pattern of
+  /// its own). Everything downstream of the gather walks this list instead of 0..m (issue
+  /// #279's follow-up: "a sparse spike... walk ft_row_/ft_col_ from the nonzeros of alpha").
+  mutable std::vector<Index> ft_work_nz_;
 
   void ft_init();
   void ft_set(Index owner_step, Index referenced_step, double value);
@@ -399,7 +422,14 @@ class SparseLu {
   /// The partial BTRAN identified by Forrest & Tomlin as the way to compute the row-eta:
   /// e~ = e_step^T U_current^-1, i.e. a BTRAN through U ALONE (no L, no earlier retas),
   /// seeded at a single step. Shares the push logic with ft_forward_substitute() below.
-  void ft_btran_unit(Index step, double* e_tilde_by_step) const;
+  ///
+  /// Writes into the member ft_scratch_/ft_scratch_touched_ rather than an out-parameter
+  /// (issue #279's follow-up): the result is genuinely sparse - e~'s only possible nonzero
+  /// positions are `step` and whatever POSITION >= step's own the elimination pushes reach,
+  /// so the loop starts at step's own position (everything earlier is provably zero, not
+  /// merely usually zero) and ft_scratch_touched_ records exactly which positions the push
+  /// actually set, so update_forrest_tomlin() never has to sweep all m to find them.
+  void ft_btran_unit(Index step) const;
   void ft_apply_retas(double* residual_by_step) const;      ///< FTRAN: oldest first
   void ft_apply_retas_transposed(double* z_by_step) const;  ///< BTRAN: newest first
   void ft_back_substitute(double* residual_by_step, double* solution_by_step) const;
